@@ -1,127 +1,113 @@
-"""Merkmalsberechnung fuer die BioBox-Bildanalyse.
-
-Die Merkmale sind so gewaehlt, dass sie drei Ziele bedienen:
-  A-M2 Computer-Vision-Pipeline   -> Flaeche, Form, Groesse
-  A-M3 Gesundheitsbewertung       -> Farbe, Stressanteile, Fragmentierung
-  A-M4 Digital-Twin-Modell        -> Zeitreihe LA[t], Wachstumsrate
-Zusaetzlich Qualitaetskennzahlen, damit schlechte Bilder erkennbar sind.
-"""
+"""Merkmalsberechnung fuer die BioBox-Bildanalyse."""
 
 import cv2
 import numpy as np
 
 
-def groesse_und_form(maske, mm_pro_px):
-    """Flaeche, Ausdehnung, Umfang, Kompaktheit, Fragmentierung."""
+def segmentieren(bild):
+    """Trennt gruene Pflanzenpixel vom Hintergrund (Excess Green + Otsu)."""
+    b, g, r = cv2.split(bild.astype(np.float32))
+    exg = 2 * g - r - b
+    exg = cv2.normalize(exg, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    _, maske = cv2.threshold(exg, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    maske = cv2.morphologyEx(maske, cv2.MORPH_OPEN, kern)
+    maske = cv2.morphologyEx(maske, cv2.MORPH_CLOSE, kern)
+
+    # kleine Restflecken verwerfen
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(maske, 8)
+    sauber = np.zeros_like(maske)
+    for i in range(1, n):
+        if stats[i, cv2.CC_STAT_AREA] >= 50:
+            sauber[labels == i] = 255
+    return sauber
+
+
+def marker_finden(bild, marker_mm):
+    """Sucht den hellen quadratischen Marker, liefert mm pro Pixel."""
+    grau = cv2.cvtColor(bild, cv2.COLOR_BGR2GRAY)
+    _, hell = cv2.threshold(grau, 180, 255, cv2.THRESH_BINARY)
+    konturen, _ = cv2.findContours(hell, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    for k in konturen:
+        flaeche = cv2.contourArea(k)
+        if flaeche < 200:
+            continue
+        x, y, b, h = cv2.boundingRect(k)
+        if b > bild.shape[1] * 0.4 or h > bild.shape[0] * 0.4:
+            continue                                  # zu gross -> Fehlerkennung
+        if 0.85 < b / h < 1.15 and flaeche / (b * h) > 0.85:
+            return marker_mm / ((b + h) / 2), (x, y, b, h)
+    return None, None
+
+
+def berechnen(bild, maske, mm_pro_px):
+    """Alle Merkmale eines Bildes. Reihenfolge = Spaltenreihenfolge der CSV."""
     w = {}
     pixel = cv2.countNonZero(maske)
     w["pflanzen_pixel"] = pixel
-    w["bedeckungsgrad_pct"] = round(100 * pixel / maske.size, 2)
 
-    if pixel == 0:
-        for k in ["blattflaeche_cm2", "bbox_breite_mm", "bbox_hoehe_mm",
-                  "umfang_mm", "kompaktheit", "groesste_komponente_pct",
-                  "teilflaechen", "blattanzahl_schaetzung"]:
+    # --- Groesse und Form ---
+    if pixel > 0:
+        konturen, _ = cv2.findContours(maske, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        umfang = sum(cv2.arcLength(k, True) for k in konturen)
+        _, _, bb, bh = cv2.boundingRect(np.vstack(konturen))
+
+        w["blattflaeche_cm2"] = round(pixel * mm_pro_px ** 2 / 100, 2) if mm_pro_px else None
+        w["durchmesser_mm"] = round(max(bb, bh) * mm_pro_px, 1) if mm_pro_px else None
+        # Kompaktheit: 1.0 = Kreis, kleiner = zerklueftet. Reagiert auf Welken.
+        w["kompaktheit"] = round(4 * np.pi * pixel / umfang ** 2, 4) if umfang else None
+
+        n, _, stats, _ = cv2.connectedComponentsWithStats(maske, 8)
+        groesste = max(stats[1:, cv2.CC_STAT_AREA]) if n > 1 else 0
+        w["groesste_komponente_pct"] = round(100 * groesste / pixel, 1)
+    else:
+        for k in ["blattflaeche_cm2", "durchmesser_mm", "kompaktheit",
+                  "groesste_komponente_pct"]:
             w[k] = None
-        return w
 
-    if mm_pro_px is not None:
-        w["blattflaeche_cm2"] = round(pixel * mm_pro_px ** 2 / 100, 2)
+    # --- Farbe ---
+    if pixel > 0:
+        m = maske > 0
+        b, g, r = cv2.split(bild.astype(np.float32))
+        w["mittel_r"] = round(float(r[m].mean()), 1)
+        w["mittel_g"] = round(float(g[m].mean()), 1)
+        w["mittel_b"] = round(float(b[m].mean()), 1)
+
+        hsv = cv2.cvtColor(bild, cv2.COLOR_BGR2HSV)
+        h_, s_, _ = cv2.split(hsv.astype(np.float32))
+        w["mittel_h"] = round(float(h_[m].mean()), 1)
+        w["mittel_s"] = round(float(s_[m].mean()), 1)
+        w["gruenindex"] = round(float((g / (b + g + r + 1e-6))[m].mean()), 4)
+
+        gelb = cv2.bitwise_and(cv2.inRange(hsv, (15, 60, 20), (33, 255, 255)), maske)
+        braun = cv2.bitwise_and(cv2.inRange(hsv, (5, 40, 15), (20, 255, 160)), maske)
+        w["gelbanteil_pct"] = round(100 * cv2.countNonZero(gelb) / pixel, 2)
+        w["braunanteil_pct"] = round(100 * cv2.countNonZero(braun) / pixel, 2)
     else:
-        w["blattflaeche_cm2"] = None
-
-    konturen, _ = cv2.findContours(maske, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    umfang_px = sum(cv2.arcLength(k, True) for k in konturen)
-
-    alle = np.vstack(konturen)
-    x, y, b, h = cv2.boundingRect(alle)
-
-    # Kompaktheit: 1.0 = Kreis, kleiner = zerklueftet/ausgebreitet.
-    # Reagiert auf Welken und Streckungswachstum, unabhaengig vom Massstab.
-    w["kompaktheit"] = round(float(4 * np.pi * pixel / (umfang_px ** 2)), 4) \
-        if umfang_px > 0 else None
-
-    if mm_pro_px is not None:
-        w["bbox_breite_mm"] = round(b * mm_pro_px, 1)
-        w["bbox_hoehe_mm"] = round(h * mm_pro_px, 1)
-        w["umfang_mm"] = round(umfang_px * mm_pro_px, 1)
-    else:
-        w["bbox_breite_mm"] = w["bbox_hoehe_mm"] = w["umfang_mm"] = None
-
-    # Fragmentierung: faellt der Wert ploetzlich, ist meist die
-    # Segmentierung gescheitert, nicht die Pflanze zerfallen.
-    anzahl, _, stats, _ = cv2.connectedComponentsWithStats(maske, 8)
-    flaechen = sorted(stats[1:, cv2.CC_STAT_AREA], reverse=True) if anzahl > 1 else []
-    w["teilflaechen"] = len(flaechen)
-    w["groesste_komponente_pct"] = round(100 * flaechen[0] / pixel, 1) if flaechen else None
-
-    # Grobe Blattzahl ueber Distanztransformation. Bei Ueberlappung
-    # systematisch zu niedrig -> nur Zusatzinfo, keine Primaergroesse.
-    dist = cv2.distanceTransform(maske, cv2.DIST_L2, 5)
-    if dist.max() > 0:
-        _, peaks = cv2.threshold(dist, 0.5 * dist.max(), 255, 0)
-        n, _ = cv2.connectedComponents(peaks.astype(np.uint8))
-        w["blattanzahl_schaetzung"] = n - 1
-    else:
-        w["blattanzahl_schaetzung"] = None
-
-    return w
-
-
-def farbe_und_stress(bild, maske):
-    """Rohfarbwerte plus Gelb-/Braunanteil als Stressindikatoren."""
-    w = {}
-    pixel = cv2.countNonZero(maske)
-    if pixel == 0:
         for k in ["mittel_r", "mittel_g", "mittel_b", "mittel_h", "mittel_s",
-                  "mittel_v", "exg_mittel", "gruenindex", "gelbanteil_pct",
-                  "braunanteil_pct", "stressanteil_pct"]:
+                  "gruenindex", "gelbanteil_pct", "braunanteil_pct"]:
             w[k] = None
-        return w
 
-    m = maske > 0
-    b, g, r = cv2.split(bild.astype(np.float32))
-
-    # Rohe Mittelwerte mitschreiben, damit spaeter neue Indizes berechnet
-    # werden koennen, ohne alle Bilder erneut zu verarbeiten.
-    w["mittel_r"] = round(float(r[m].mean()), 1)
-    w["mittel_g"] = round(float(g[m].mean()), 1)
-    w["mittel_b"] = round(float(b[m].mean()), 1)
-
-    hsv = cv2.cvtColor(bild, cv2.COLOR_BGR2HSV)
-    h_, s_, v_ = cv2.split(hsv.astype(np.float32))
-    w["mittel_h"] = round(float(h_[m].mean()), 1)
-    w["mittel_s"] = round(float(s_[m].mean()), 1)
-    w["mittel_v"] = round(float(v_[m].mean()), 1)
-
-    w["exg_mittel"] = round(float((2 * g - r - b)[m].mean()), 1)
-    w["gruenindex"] = round(float((g / (b + g + r + 1e-6))[m].mean()), 4)
-
-    gelb = cv2.bitwise_and(cv2.inRange(hsv, (15, 60, 20), (33, 255, 255)), maske)
-    braun = cv2.bitwise_and(cv2.inRange(hsv, (5, 40, 15), (20, 255, 160)), maske)
-    w["gelbanteil_pct"] = round(100 * cv2.countNonZero(gelb) / pixel, 2)
-    w["braunanteil_pct"] = round(100 * cv2.countNonZero(braun) / pixel, 2)
-    w["stressanteil_pct"] = round(
-        100 * cv2.countNonZero(cv2.bitwise_or(gelb, braun)) / pixel, 2)
-    return w
-
-
-def bildqualitaet(bild, maske):
-    """Kennzahlen zur Beurteilung, ob das Bild ueberhaupt brauchbar ist."""
-    w = {}
+    # --- Bildqualitaet ---
     grau = cv2.cvtColor(bild, cv2.COLOR_BGR2GRAY)
-    w["schaerfe"] = round(float(cv2.Laplacian(grau, cv2.CV_64F).var()), 1)
+    lap = cv2.Laplacian(grau, cv2.CV_64F)
+    # Schaerfe nur auf der Pflanze - der schwarze Hintergrund haette sonst
+    # jedes Bild unscharf aussehen lassen.
+    w["schaerfe"] = round(float(lap[maske > 0].var()), 1) if pixel > 0 else None
     w["bildhelligkeit"] = round(float(grau.mean()), 1)
-
-    g = bild[:, :, 1]
-    w["ueberbelichtet_pct"] = round(100 * float((g > 250).sum()) / g.size, 2)
-    w["unterbelichtet_pct"] = round(100 * float((grau < 5).sum()) / grau.size, 2)
-
-    if cv2.countNonZero(maske) > 0:
-        # Schaerfe nur auf der Pflanze - aussagekraeftiger als das Gesamtbild,
-        # weil ein schwarzer Hintergrund die Gesamtvarianz nach unten zieht.
-        w["schaerfe_pflanze"] = round(
-            float(cv2.Laplacian(grau, cv2.CV_64F)[maske > 0].var()), 1)
-    else:
-        w["schaerfe_pflanze"] = None
+    w["ueberbelichtet_pct"] = round(100 * float((bild[:, :, 1] > 250).sum()) / grau.size, 2)
+    w["mm_pro_pixel"] = round(mm_pro_px, 4) if mm_pro_px else None
     return w
+
+
+def kontrollbild(bild, maske, marker_box, pfad):
+    """Bild mit eingezeichneter Kontur zur Sichtpruefung."""
+    anzeige = cv2.convertScaleAbs(bild, alpha=3.0)     # nur zum Anschauen aufhellen
+    konturen, _ = cv2.findContours(maske, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(anzeige, konturen, -1, (0, 0, 255), 2)
+    if marker_box:
+        x, y, b, h = marker_box
+        cv2.rectangle(anzeige, (x, y), (x + b, y + h), (255, 0, 0), 2)
+    cv2.imwrite(pfad, anzeige)
