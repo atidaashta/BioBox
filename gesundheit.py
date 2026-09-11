@@ -86,8 +86,8 @@ def referenz_bilden(zeilen):
         "gelbanteil":  statistics.median(z["gelbanteil_pct"] for z in basis),
         "braunanteil": statistics.median(z["braunanteil_pct"] for z in basis),
         "bilder":      len(basis),
-        "von":         basis[0]["zeitpunkt"],
-        "bis":         basis[-1]["zeitpunkt"],
+        "von":         basis[0]["bild"],
+        "bis":         basis[-1]["bild"],
     }
     return ref, len(basis)
 
@@ -180,23 +180,21 @@ def bewerten(zeilen):
     # 3. Trend ueber 24 h - Richtung ist aussagekraeftiger als der Absolutwert
     for i, z in enumerate(zeilen):
         z["gesundheit_trend_24h"] = None
-        if z["gesundheit"] is None or z.get("stunden_seit_start") is None:
+        if z["gesundheit"] is None:
             continue
         ziel = z["stunden_seit_start"] - 24
         frueher = [v for v in zeilen[:i + 1]
-                   if v.get("stunden_seit_start") is not None
-                   and v["stunden_seit_start"] <= ziel and v["gesundheit"] is not None]
+                   if v["stunden_seit_start"] <= ziel and v["gesundheit"] is not None]
         if frueher:
             z["gesundheit_trend_24h"] = round(z["gesundheit"] - frueher[-1]["gesundheit"], 2)
 
     # 4. Wachstumsstillstand ergaenzen (nicht farbbasiert, aber relevant)
     for i, z in enumerate(zeilen):
-        if z.get("blattflaeche_cm2") is None or z.get("stunden_seit_start") is None:
+        if z.get("blattflaeche_cm2") is None:
             continue
         ziel = z["stunden_seit_start"] - WARN_STILLSTAND_H
         frueher = [v for v in zeilen[:i + 1]
-                   if v.get("stunden_seit_start") is not None
-                   and v["stunden_seit_start"] <= ziel
+                   if v["stunden_seit_start"] <= ziel
                    and v.get("blattflaeche_cm2") is not None]
         if frueher and z["blattflaeche_cm2"] <= frueher[-1]["blattflaeche_cm2"] * 1.01:
             vorhanden = z["gesundheitswarnung"]

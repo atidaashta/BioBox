@@ -1,0 +1,14 @@
+# Bilder gehoeren nicht ins Git-Repository.
+# Ueber die Projektlaufzeit entstehen mehrere Gigabyte.
+bilder/
+
+# Wird bei jedem Lauf neu erzeugt.
+auswertung/
+
+# Python-Bytecode, erzeugt Python automatisch beim Import.
+__pycache__/
+*.pyc
+
+# Betriebssystem
+Thumbs.db
+.DS_Store
