@@ -3,13 +3,14 @@
 | | |
 |---|---|
 | **Dokument-ID** | BB-SPEC-HEALTH-001 |
-| **Version** | 0.1 (Entwurf) |
-| **Datum** | 10.09.2026 |
+| **Version** | 0.2 (Entwurf) |
+| **Datum** | 13.09.2026 |
 | **Autorin** | Atida Ashta |
 | **Arbeitspaket** | 3. Gesundheitsbewertungssystem, PSP 3.1–3.8 |
 | **Meilenstein** | A-M3 |
 | **Vorgänger** | BB-SPEC-IMG-001 (Bildaufnahme) |
 | **Status** | Entwurf – Kennlinien noch nicht an realen Pflanzen kalibriert |
+| **Änderung 0.2** | Skala von 0–10 auf **0–100** umgestellt (Abgleich mit Bench-Report Grid Tanushi, 13.09.2026) |
 
 ---
 
@@ -76,9 +77,9 @@ Bedingungen:
 
 ## 5. Teilscores und Kennlinien
 
-Jeder Teilscore läuft von 0 bis 10 und ist eine **lineare Kennlinie** zwischen einem Wert für 10 Punkte und einem Wert für 0 Punkte. Linear und nicht z. B. sigmoid, weil jeder Zwischenwert von Hand nachrechenbar sein soll — eine Anforderung an die Verteidigbarkeit der Arbeit.
+Jeder Teilscore läuft von 0 bis 100 und ist eine **lineare Kennlinie** zwischen einem Wert für 100 Punkte und einem Wert für 0 Punkte. Linear und nicht z. B. sigmoid, weil jeder Zwischenwert von Hand nachrechenbar sein soll — eine Anforderung an die Verteidigbarkeit der Arbeit.
 
-| Teilscore | Eingangsgröße | 10 Punkte bei | 0 Punkte bei |
+| Teilscore | Eingangsgröße | 100 Punkte bei | 0 Punkte bei |
 |---|---|---|---|
 | `score_gruen` | `gruenindex` / Referenz | ≥ 1,00 | ≤ 0,85 |
 | `score_saettigung` | `mittel_s` / Referenz | ≥ 0,95 | ≤ 0,70 |
@@ -104,7 +105,12 @@ gesundheit_roh = 0,30 · score_gruen
                + 0,10 · score_farbton
 ```
 
-Summe der Gewichte = 1,0, Ergebnis daher wieder 0 bis 10.
+Summe der Gewichte = 1,0, Ergebnis daher wieder 0 bis 100.
+
+**Zur Skala:** Ursprünglich war 0–10 vorgesehen. Auf 0–100 umgestellt, weil der
+Bench-Harness von Grid Tanushi (13.09.2026) bereits einen `healthScore` auf
+0–100 ausgibt. Zwei Skalen für dieselbe Größe im selben Projekt wären eine
+sichere Fehlerquelle, spätestens beim Eintrag in die Datenbank.
 
 **Begründung:** Der Grünindex erhält das höchste Gewicht, weil er direkt mit dem Chlorophyllgehalt und damit der Photosyntheseleistung zusammenhängt. Gelb und Braun folgen als konkrete Schadbilder. Sättigung und Farbton sind unspezifischer und wirken eher unterstützend; sie erhalten deshalb weniger Gewicht, werden aber nicht weggelassen, weil sie früher reagieren als die Flächenanteile.
 
@@ -124,15 +130,15 @@ Das Fenster ist in **Bildern** definiert, nicht in Stunden. Bei dem in BB-SPEC-I
 
 | Score | Kategorie | Bedeutung |
 |---|---|---|
-| 8,5 – 10 | sehr gut | keine Abweichung vom Referenzzustand |
-| 7,0 – 8,5 | gut | geringe Abweichung, kein Handlungsbedarf |
-| 5,0 – 7,0 | beobachten | erkennbare Abweichung, Ursache prüfen |
-| 3,0 – 5,0 | auffällig | deutliche Verschlechterung, Eingriff erwägen |
-| 0 – 3,0 | kritisch | massive Abweichung, sofortige Prüfung |
+| 85 – 100 | sehr gut | keine Abweichung vom Referenzzustand |
+| 70 – 85 | gut | geringe Abweichung, kein Handlungsbedarf |
+| 50 – 70 | beobachten | erkennbare Abweichung, Ursache prüfen |
+| 30 – 50 | auffällig | deutliche Verschlechterung, Eingriff erwägen |
+| 0 – 30 | kritisch | massive Abweichung, sofortige Prüfung |
 
 ### 7.3 Trend
 
-Zusätzlich wird `gesundheit_trend_24h` als Differenz zum Wert vor 24 Stunden ausgegeben. Für die Beurteilung ist die **Richtung oft aussagekräftiger als der Absolutwert**: Ein Score von 7,0 mit fallender Tendenz ist bedenklicher als ein stabiler Score von 6,0.
+Zusätzlich wird `gesundheit_trend_24h` als Differenz zum Wert vor 24 Stunden ausgegeben. Für die Beurteilung ist die **Richtung oft aussagekräftiger als der Absolutwert**: Ein Score von 70 mit fallender Tendenz ist bedenklicher als ein stabiler Score von 60.
 
 ---
 
@@ -170,7 +176,15 @@ Schädlinge, Mehltau und Wurzelprobleme sind aus einem Farbmittelwert nicht able
 **9.4 Die Referenz ist nur so gut wie die Pflanze zu Beginn.**
 Siehe Abschnitt 2.
 
-**9.5 Die Kennlinien sind noch nicht an realen Pflanzen kalibriert.**
+**9.5 Die Farbwerte hängen vom Spektrum der Beleuchtung ab.**
+Der Bench-Report vom 13.09.2026 hat unter unkontrolliertem Tageslicht ein
+Grundrauschen von rund 3 Punkten `healthScore` über 12 Minuten gemessen, bei
+völlig unveränderter Pflanze. Ursache war die Belichtungsautomatik in Verbindung
+mit wechselndem Licht. Für die BioBox ist das weitgehend konstruktiv ausgeschlossen,
+weil BB-SPEC-IMG-001 Belichtung, Weißabgleich und LED-Zustand für jede Aufnahme
+festschreibt. Offen bleibt der Einfluss des LED-Spektrums selbst, siehe H-6.
+
+**9.6 Die Kennlinien sind noch nicht an realen Pflanzen kalibriert.**
 Alle Zahlenwerte in Abschnitt 5 und 8 sind begründete Startwerte aus Tests mit simulierten Bildern. Die Kalibrierung ist Gegenstand von PSP 3.8.
 
 ---
@@ -180,7 +194,7 @@ Alle Zahlenwerte in Abschnitt 5 und 8 sind begründete Startwerte aus Tests mit 
 **10.1 Funktionstest mit simulierten Verläufen**
 20 Bilder derselben Pflanze, ab Bild 11 künstlich zunehmend vergilbt.
 Erwartung: konstant 10 in der Referenzphase, danach monoton fallend, Warnungen in der Reihenfolge Vergilbung → Chlorose → Nekrose.
-*Ergebnis: bestätigt. Score fiel von 10,0 auf 2,1; Warnungen erschienen in der erwarteten Reihenfolge.*
+*Ergebnis: bestätigt. Score fiel von 100 auf 21; Warnungen erschienen in der erwarteten Reihenfolge.*
 
 **10.2 Nullprobe**
 Gesunde Pflanze über 7 Tage ohne Eingriff.
@@ -191,7 +205,7 @@ Eine Pflanze wird kontrolliert unter Stress gesetzt (z. B. 5 Tage ohne Bewässer
 Kernfrage: Erkennt das System den Stress **früher** als das bloße Auge? Genau darin liegt der Nutzen des Systems.
 
 **10.4 Abgleich mit unabhängiger Einschätzung**
-Mindestens 20 Aufnahmen werden von einer Person unabhängig auf einer Skala von 1 bis 10 beurteilt. Verglichen wird die Rangkorrelation zwischen manueller Beurteilung und berechnetem Score.
+Mindestens 20 Aufnahmen werden von einer Person unabhängig auf einer Skala von 1 bis 10 beurteilt. Die Skala der manuellen Beurteilung wird dabei linear auf 0–100 gestreckt. Verglichen wird die Rangkorrelation zwischen manueller Beurteilung und berechnetem Score.
 Abnahmekriterium: Rangkorrelation ≥ 0,7.
 
 **10.5 Robustheitstest**
@@ -204,22 +218,22 @@ Bewusst schlechte Bilder (unscharf, überbelichtet, Marker verdeckt) werden eing
 Anforderung an Edona Peraj: Ergänzung der Tabelle `image_measurements` um folgende Felder. Im Konzeptentwurf ist bisher nur `stress_score` vorgesehen; das reicht für die Darstellung nicht aus.
 
 ```sql
-health_score          NUMERIC(4,2),   -- geglaetteter Wert 0..10
-health_score_raw      NUMERIC(4,2),   -- ungeglaetteter Wert
+health_score          NUMERIC(5,1),   -- geglaetteter Wert 0..100
+health_score_raw      NUMERIC(5,1),   -- ungeglaetteter Wert
 health_category       TEXT,           -- sehr gut | gut | beobachten | auffaellig | kritisch
-health_trend_24h      NUMERIC(4,2),
+health_trend_24h      NUMERIC(5,1),
 health_warnings       TEXT,           -- semikolongetrennt
-score_green           NUMERIC(4,2),
-score_yellow          NUMERIC(4,2),
-score_brown           NUMERIC(4,2),
-score_saturation      NUMERIC(4,2),
-score_hue             NUMERIC(4,2),
+score_green           NUMERIC(5,1),
+score_yellow          NUMERIC(5,1),
+score_brown           NUMERIC(5,1),
+score_saturation      NUMERIC(5,1),
+score_hue             NUMERIC(5,1),
 scoring_version       TEXT NOT NULL   -- Version der Gewichte und Kennlinien
 ```
 
 `scoring_version` ist verpflichtend: Werden Gewichte oder Kennlinien angepasst, sind alte und neue Scores nicht mehr vergleichbar. Ohne dieses Feld ist später nicht rekonstruierbar, welche Regel einen gespeicherten Wert erzeugt hat.
 
-Vorschlag für die Darstellung im Dashboard: Gesamtscore als Zahl mit Kategoriefarbe, darunter die fünf Teilscores als Balken. Der Nutzen liegt in der Aufschlüsselung — ein Wert von 6,0 mit `score_braun` = 2 bedeutet etwas völlig anderes als 6,0 mit `score_farbton` = 2.
+Vorschlag für die Darstellung im Dashboard: Gesamtscore als Zahl mit Kategoriefarbe, darunter die fünf Teilscores als Balken. Der Nutzen liegt in der Aufschlüsselung — ein Wert von 60 mit `score_braun` = 20 bedeutet etwas völlig anderes als 60 mit `score_farbton` = 20.
 
 ---
 
@@ -232,3 +246,4 @@ Vorschlag für die Darstellung im Dashboard: Gesamtscore als Zahl mit Kategorief
 | H-3 | Glättungsfenster an tatsächliche Aufnahmerate anpassen | nach Inbetriebnahme |
 | H-4 | Umgang mit sehr starker Vergilbung (siehe 9.1) | offen |
 | H-5 | Erfassung unterer Blattetagen (Seitenkamera?) — optionales Ziel A-O1 | offen |
+| H-6 | Verhalten der Farbmetriken unter rot/blau-lastigem LED-Spektrum; ggf. Graukarte im Bildfeld | vor M2 |

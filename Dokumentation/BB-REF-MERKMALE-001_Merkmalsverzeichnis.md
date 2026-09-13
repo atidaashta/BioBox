@@ -3,16 +3,21 @@
 | | |
 |---|---|
 | **Dokument-ID** | BB-REF-MERKMALE-001 |
-| **Version** | 1.0 |
-| **Datum** | 10.09.2026 |
+| **Version** | 2.0 |
+| **Datum** | 13.09.2026 |
 | **Autorin** | Atida Ashta |
-| **Gilt für** | `auswertung/ergebnisse.csv` und `auswertung/gesundheit.csv` |
+| **Gilt für** | `auswertung/ergebnis.csv` |
+| **Änderung 2.0** | Eine gemeinsame Ergebnisdatei statt zwei; Gesundheitsskala 0–100 |
 
 ---
 
-## 1. `ergebnisse.csv` — Messwerte
+## 1. Aufbau
 
-Eine Zeile je Bild, zeitlich sortiert.
+Eine Datei, `auswertung/ergebnis.csv`, eine Zeile je Bild, zeitlich sortiert.
+Sie enthält Bildname, Messwerte aus der Computer-Vision-Pipeline und die
+Gesundheitsbewertung nebeneinander.
+
+## 2. Identifikation und Messwerte
 
 ### Identifikation
 
@@ -20,6 +25,7 @@ Eine Zeile je Bild, zeitlich sortiert.
 |---|---|---|---|
 | `bild` | — | Dateiname ohne Endung. Enthält den Aufnahmezeitpunkt. | Zuordnung zu Maske und Kontrollbild |
 | `stunden_seit_start` | h | Abstand zur ersten Aufnahme | Zeitachse aller Diagramme und Modelle |
+| `zeitquelle` | — | `name` oder `dateidatum` | Nur `name` ist verlässlich; das Dateidatum ändert sich beim Kopieren |
 
 ### Größe und Form
 
@@ -67,26 +73,24 @@ Eine Zeile je Bild, zeitlich sortiert.
 
 ---
 
-## 2. `gesundheit.csv` — Bewertung
-
-Bewusst als eigene Datei geführt: Die Messwerte in `ergebnisse.csv` sind Rohdaten und ändern sich nicht mehr. Die Bewertung hängt dagegen von Gewichten und Kennlinien ab, die im Testbetrieb noch angepasst werden. Getrennte Dateien halten diese Trennung sichtbar.
+### Gesundheitsbewertung
 
 | Spalte | Einheit | Bedeutung |
 |---|---|---|
-| `bild` | — | Verknüpfung zu `ergebnisse.csv` |
-| `stunden_seit_start` | h | Zeitachse |
-| `gesundheit` | 0–10 | geglätteter Wert (gleitender Median über 5 Bilder) — **Anzeigewert** |
-| `gesundheit_roh` | 0–10 | ungeglätteter Einzelwert |
-| `gesundheit_kategorie` | Text | sehr gut / gut / beobachten / auffällig / kritisch |
+| `gesundheit` | 0–100 | geglätteter Wert (gleitender Median über 5 Bilder) — **Anzeigewert** |
+| `gesundheit_roh` | 0–100 | ungeglätteter Einzelwert |
+| `gesundheit_kategorie` | Text | sehr gut (≥85) / gut (≥70) / beobachten (≥50) / auffällig (≥30) / kritisch |
 | `gesundheit_trend_24h` | — | Änderung gegenüber vor 24 h; Richtung ist oft aussagekräftiger als der Absolutwert |
 | `gesundheitswarnung` | Text | vergilbung / nekrose / chlorose / entfaerbung / wachstumsstillstand |
-| `score_gruen` | 0–10 | Teilscore, Gewicht 0,30 |
-| `score_gelb` | 0–10 | Teilscore, Gewicht 0,25 |
-| `score_braun` | 0–10 | Teilscore, Gewicht 0,20 |
-| `score_saettigung` | 0–10 | Teilscore, Gewicht 0,15 |
-| `score_farbton` | 0–10 | Teilscore, Gewicht 0,10 |
+| `score_gruen` | 0–100 | Teilscore, Gewicht 0,30 |
+| `score_gelb` | 0–100 | Teilscore, Gewicht 0,25 |
+| `score_braun` | 0–100 | Teilscore, Gewicht 0,20 |
+| `score_saettigung` | 0–100 | Teilscore, Gewicht 0,15 |
+| `score_farbton` | 0–100 | Teilscore, Gewicht 0,10 |
 
-Berechnung siehe BB-SPEC-HEALTH-001.
+Berechnung siehe BB-SPEC-HEALTH-001. Leer bleiben diese Spalten, solange weniger
+als drei brauchbare Bilder für eine Referenz vorliegen, sowie bei jedem Bild mit
+`brauchbar = False`.
 
 ---
 
@@ -109,7 +113,7 @@ Der Vollständigkeit halber dokumentiert — diese Größen wurden geprüft und 
 
 ## 4. Diagramme
 
-`grafiken.py` erzeugt aus beiden Dateien folgende PNG-Dateien in `auswertung/grafiken/`. Bilder mit `brauchbar = False` werden ausgelassen.
+`grafiken.py` erzeugt aus `ergebnis.csv` folgende PNG-Dateien in `auswertung/grafiken/`. Bilder mit `brauchbar = False` werden ausgelassen.
 
 | Datei | Inhalt |
 |---|---|
@@ -120,4 +124,22 @@ Der Vollständigkeit halber dokumentiert — diese Größen wurden geprüft und 
 | `05_teilscores.png` | Aufschlüsselung der letzten Aufnahme in die fünf Teilscores |
 | `06_bildqualitaet.png` | Maßstab und Bildhelligkeit über der Zeit, beide müssen konstant bleiben |
 
+Die Zeitachse aller Diagramme zeigt Datum und Uhrzeit aus dem Bildnamen, nicht
+die Nummer der Aufnahme. Bei Zeiträumen über 72 Stunden wird nur das Datum
+beschriftet.
+
 Zu `06`: Die eingezeichneten roten Linien markieren ±1 % um den Mittelwert des Maßstabs. Verlässt die Kurve dieses Band, hat sich der Aufbau bewegt — das ist das Abnahmekriterium aus BB-SPEC-IMG-001, Abschnitt 8.3.
+
+
+---
+
+## 5. Skripte
+
+| Datei | Aufgabe | Selbst aufrufen? |
+|---|---|---|
+| `analyse.py` | Computer-Vision-Pipeline: Segmentierung, Marker, Messwerte, Zeitreihe, Qualitätsprüfung. Ruft `gesundheit` auf und schreibt `ergebnis.csv`. | ja |
+| `gesundheit.py` | Bewertung 0–100 aus den Farbmerkmalen | nein, wird importiert |
+| `grafiken.py` | Diagramme aus `ergebnis.csv` | ja |
+
+Vorgesehen für später: `zwilling.py` für das Digital-Twin-Modell (A-M4), ebenfalls
+auf Basis von `ergebnis.csv`.

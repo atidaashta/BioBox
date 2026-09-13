@@ -3,12 +3,13 @@
 | | |
 |---|---|
 | **Dokument-ID** | BB-SPEC-IMG-001 |
-| **Version** | 0.1 (Entwurf) |
-| **Datum** | 10.09.2026 |
+| **Version** | 0.2 (Entwurf) |
+| **Datum** | 13.09.2026 |
 | **Autorin** | Atida Ashta |
 | **Arbeitspaket** | 3.1 Bilderfassungssystem, PSP 1.1–1.8 |
 | **Meilenstein** | A-M1, Termin 30.09.2026 |
 | **Status** | Entwurf – Abstimmung mit Grid Tanushi (Hardware) und Edona Peraj (Plattform) offen |
+| **Änderung 0.2** | Kamera auf **Camera Module 3 Wide** festgelegt; Einbauhöhe aus Bench-Report übernommen (Z 815 / Substratebene Z 442 → 373 mm); Entzerrung als Pflichtschritt ergänzt |
 
 ---
 
@@ -49,13 +50,54 @@ Für die reine Bilderfassung ist der Pi 4 vollständig ausreichend. Das Camera M
 | Komponente | Auswahl | Anmerkung |
 |---|---|---|
 | Edge-Rechner | Raspberry Pi 4 | OS: Raspberry Pi OS Bookworm oder neuer, 64 bit |
-| Kamera | Raspberry Pi Camera Module 3 **Standard** (nicht Wide) | Sensor IMX708, 11,9 MP, 4608 × 2592 px |
-| Bildfeld | 66° horizontal / 41° vertikal / 75° diagonal (lt. Datenblatt) | Standard-FOV gewählt, da geringere Randverzerrung als Wide |
+| Kamera | Raspberry Pi Camera Module 3 **Wide** | Sensor IMX708, 11,9 MP, 4608 × 2592 px |
+| Bildfeld | 102° horizontal / 67° vertikal / 120° diagonal (lt. Datenblatt) | Begründung siehe 3.3 |
 | Blende / Brennweite | f/1.8, f = 4,74 mm | fix, nicht veränderbar |
 | Anschluss | CSI-2 FFC, 15-polig | Kabellänge nach Einbaulage, siehe 9.1 |
 | Speicher | externe USB-SSD oder ≥ 128 GB Karte | Abschätzung siehe 7.3 |
 
 Die NoIR-Variante wird nicht verwendet: Das System arbeitet mit definiertem sichtbarem Licht, und IR-Anteile würden die Farbauswertung (Greenness-Index, Gelbanteil) verfälschen.
+
+**Wareneingangsprüfung.** Jede gelieferte Kamera wird vor dem Einbau geprüft:
+
+```
+rpicam-hello --list-cameras
+```
+
+Ein echtes Camera Module 3 Wide meldet `imx708_wide`. Jede andere Ausgabe bedeutet
+ein falsches Bauteil. Der Bench-Report vom 13.09.2026 wurde mit einem versehentlich
+gelieferten OV5647 (Camera Module v1) durchgeführt — dieser hat Fixfokus und ein
+abweichendes Farbverhalten, was die Messungen dort unbrauchbar für Farbwerte machte.
+Ein Befehl verhindert die Wiederholung.
+
+### 3.3 Begründung der Wide-Variante
+
+| | Standard (66° h) | **Wide (102° h)** |
+|---|---|---|
+| Bildfeldbreite bei 373 mm | 484 mm | **921 mm** |
+| Auflösung auf der Substratebene | 9,5 px/mm | **5,0 px/mm** |
+| Bildfeldbreite bei 140 mm Bestandshöhe | 302 mm | **575 mm** |
+| Bildfeldbreite bei 250 mm Bestandshöhe | 160 mm | **304 mm** |
+
+Die Entscheidung fällt zugunsten von Wide, obwohl Standard die bessere Auflösung
+und die geringere Verzeichnung bietet. Ausschlaggebend ist die **begrenzte Bauhöhe**:
+Bei einer Einbauhöhe von 373 mm über der Substratebene schrumpft das Bildfeld mit
+wachsender Pflanze, weil der Bestand auf die Kamera zuwächst. Mit der Standard-Optik
+wäre eine ausgewachsene Basilikumpflanze ab etwa 200 mm Bestandshöhe nicht mehr
+vollständig im Bild — und eine Pflanze, die aus dem Bild wächst, beendet die
+Messreihe.
+
+Die Kosten dieser Entscheidung werden bewusst in Kauf genommen und sind zu
+dokumentieren:
+
+1. **Halbierte Auflösung** auf der Substratebene: 5,0 statt 9,5 px/mm. Ein 30 mm
+   breites Blatt wird noch mit rund 150 px abgebildet, was für Flächenmessung
+   ausreichend ist.
+2. **Deutliche Verzeichnung.** Bei 102° horizontalem Bildwinkel ist die tonnenförmige
+   Verzeichnung nicht mehr vernachlässigbar. Eine Entzerrung wird dadurch von einer
+   Option zu einer **Pflicht**, siehe 4.7.
+3. **Gehäusewände im Bild.** Das Bildfeld ist mit 921 mm deutlich breiter als der
+   Innenraum. Der ROI-Zuschnitt nach 4.3 ist damit zwingend, nicht optional.
 
 ---
 
@@ -67,17 +109,17 @@ Die Kamera wird **mittig an der Decke der Wachstumszone** montiert, mit Blickric
 
 Die Montage muss **starr und dauerhaft** sein. Eine nachträgliche Veränderung der Kameraposition während eines Wachstumszyklus macht alle vorher aufgenommenen Bilder unvergleichbar und ist ohne Neustart der Messreihe unzulässig. Ein Verschieben der Kamera ist ein dokumentationspflichtiges Ereignis (siehe 8.2).
 
-Die Einbauhöhe **H** (Kamerasensor über Oberkante Pflanzwanne) wird nach dem mechanischen Aufbau einmalig gemessen und auf ±2 mm dokumentiert. Planungswert: **H ≈ 550 mm**.
+Die Einbauhöhe ist im Bench-Report vom 13.09.2026 bestätigt: **Kameraebene Z 815, Substratebene Z 442**, daraus **H = 373 mm**. Der Wert wird nach dem mechanischen Aufbau nachgemessen und auf ±2 mm dokumentiert.
 
 ### 4.2 Erfasstes Bildfeld
 
-Bei H = 550 mm ergibt sich rechnerisch:
+Bei H = 373 mm und 102° × 67° Bildwinkel ergibt sich rechnerisch:
 
-- Breite ≈ 2 · 550 · tan(33°) ≈ **714 mm**
-- Höhe ≈ 2 · 550 · tan(20,5°) ≈ **411 mm**
-- Auflösung ≈ 4608 px / 714 mm ≈ **6,4 px/mm**
+- Breite ≈ 2 · 373 · tan(51°) ≈ **921 mm**
+- Höhe ≈ 2 · 373 · tan(33,5°) ≈ **494 mm**
+- Auflösung ≈ 4608 px / 921 mm ≈ **5,0 px/mm**
 
-Das Bildfeld ist damit größer als die Pflanzfläche; Gehäusewände sind im Bild sichtbar. Das ist gewollt: Der auszuwertende Bereich wird softwareseitig als ROI zugeschnitten (siehe 4.3), und Reserve am Rand verhindert, dass eine seitlich wachsende Pflanze aus dem Bild läuft.
+Das Bildfeld ist damit erheblich größer als der Gehäuseinnenraum; Wände sind im Bild sichtbar. Das ist der Preis der Wide-Optik und zugleich ihr Zweck: Die Reserve am Rand stellt sicher, dass die Pflanze über den gesamten Wachstumszyklus im Bild bleibt. Der auszuwertende Bereich wird softwareseitig als ROI zugeschnitten (siehe 4.3).
 
 ### 4.3 Region of Interest (ROI)
 
@@ -100,7 +142,7 @@ ArUco statt einfachem Maßstabsbalken, weil vier Marker gleichzeitig vier Aufgab
 
 **Dies ist der kritischste Punkt der gesamten Bilderfassung.**
 
-Die Marker liegen auf Wannenhöhe, die Blätter wachsen aber auf die Kamera zu. Bei H = 550 mm und einer Bestandshöhe von 250 mm halbiert sich der Objektabstand nahezu – die Pflanze erscheint im Bild deutlich größer, ohne tatsächlich entsprechend gewachsen zu sein. Unkorrigiert entsteht dadurch ein scheinbarer Wachstumsverlauf, der zu einem erheblichen Teil reine Perspektive ist.
+Die Marker liegen auf Wannenhöhe, die Blätter wachsen aber auf die Kamera zu. Bei H = 373 mm und einer Bestandshöhe von 250 mm sinkt der Objektabstand auf 123 mm – auf ein Drittel. Die Pflanze erscheint im Bild dadurch etwa dreifach vergrößert, ohne tatsächlich entsprechend gewachsen zu sein. Der Effekt ist bei der geringen Einbauhöhe **deutlich stärker als ursprünglich angenommen**. Unkorrigiert entsteht dadurch ein scheinbarer Wachstumsverlauf, der zu einem erheblichen Teil reine Perspektive ist.
 
 Korrektur über das Lochkameramodell:
 
@@ -122,7 +164,26 @@ mit
 
 Wichtig für die Dokumentation: Da der Maßstab in **jedem** Bild aus den Markern neu bestimmt wird, ist er eine Messgröße und keine Annahme. Ein Nachfokussieren (siehe 5.2) verändert die Abbildung geringfügig, wird durch diese Vorgehensweise aber automatisch mitkorrigiert.
 
-### 4.6 Hintergrund
+### 4.6 Entzerrung (Pflichtschritt)
+
+Wegen des großen Bildwinkels muss vor jeder Auswertung eine **Entzerrung** erfolgen.
+Ohne sie wird eine Fläche am Bildrand systematisch anders gemessen als in der
+Bildmitte, und eine seitlich wachsende Pflanze erzeugt einen scheinbaren
+Wachstumsverlauf, der reine Optik ist.
+
+Vorgehen, einmalig bei der Inbetriebnahme:
+
+1. Schachbrettmuster (9 × 6 Felder, bekannte Feldgröße) in 15–20 Lagen im Bildfeld
+   fotografieren, verteilt über Mitte und Ränder.
+2. `cv2.findChessboardCorners` und `cv2.calibrateCamera` liefern Kameramatrix und
+   Verzeichnungskoeffizienten.
+3. Beides in `kamera_kalibrierung.json` ablegen.
+4. Jedes Bild vor der Segmentierung mit `cv2.undistort` entzerren.
+
+Die Kalibrierdaten gelten nur für **diese** Kamera in **dieser** Einstellung. Wird
+die Kamera getauscht oder nachfokussiert, ist neu zu kalibrieren.
+
+### 4.7 Hintergrund
 
 Die Pflanzwanne erhält eine **matte, nicht spiegelnde Einlage in Dunkelgrau oder Mattschwarz**. Der Hintergrund ist der größte Hebel für eine saubere Segmentierung – deutlich größer als jede Verbesserung des Algorithmus.
 
@@ -151,11 +212,11 @@ In PSP 1.5 wird zusätzlich eine **mattblaue** Variante getestet. Blau liegt im 
 
 Die konkreten Zahlenwerte für `LensPosition`, `ExposureTime`, `AnalogueGain` und `ColourGains` werden bei der Inbetriebnahme einmalig ermittelt und in der Datei `capture_profile.json` abgelegt.
 
-Ausgangswert für den Fokus: `LensPosition ≈ 1,8 dpt` (entspricht 1/0,55 m).
+Ausgangswert für den Fokus: `LensPosition ≈ 2,7 dpt` (entspricht 1/0,373 m).
 
 ### 5.3 Nachfokussieren
 
-Die Schärfentiefe beträgt bei H = 550 mm rechnerisch nur rund 150 mm. Wächst der Bestand um mehr als 100 mm gegenüber der letzten Fokuseinstellung, muss nachfokussiert werden. Jeder solche Eingriff ist ein **Profiländerungsereignis**: Die Version in `capture_profile.json` wird erhöht, das Ereignis wird protokolliert, und die Versionsnummer steht in den Metadaten jedes Bildes.
+Die Schärfentiefe beträgt bei H = 373 mm rechnerisch nur rund 65 mm. Wächst der Bestand um mehr als 100 mm gegenüber der letzten Fokuseinstellung, muss nachfokussiert werden. Jeder solche Eingriff ist ein **Profiländerungsereignis**: Die Version in `capture_profile.json` wird erhöht, das Ereignis wird protokolliert, und die Versionsnummer steht in den Metadaten jedes Bildes.
 
 ---
 
