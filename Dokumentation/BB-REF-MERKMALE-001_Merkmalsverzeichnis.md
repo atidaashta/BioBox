@@ -122,13 +122,14 @@ Der Vollständigkeit halber dokumentiert — diese Größen wurden geprüft und 
 | `03_farbverlauf.png` | Grünindex oben, Gelb- und Braunanteil unten |
 | `04_gesundheit.png` | Gesundheitsverlauf mit farbig hinterlegten Kategoriebändern |
 | `05_teilscores.png` | Aufschlüsselung der letzten Aufnahme in die fünf Teilscores |
-| `06_bildqualitaet.png` | Maßstab und Bildhelligkeit über der Zeit, beide müssen konstant bleiben |
 
 Die Zeitachse aller Diagramme zeigt Datum und Uhrzeit aus dem Bildnamen, nicht
 die Nummer der Aufnahme. Bei Zeiträumen über 72 Stunden wird nur das Datum
 beschriftet.
 
-Zu `06`: Die eingezeichneten roten Linien markieren ±1 % um den Mittelwert des Maßstabs. Verlässt die Kurve dieses Band, hat sich der Aufbau bewegt — das ist das Abnahmekriterium aus BB-SPEC-IMG-001, Abschnitt 8.3.
+Die Prüfung der Aufbaustabilität nach BB-SPEC-IMG-001, Abschnitt 8.3 erfolgt
+direkt über die Spalte `mm_pro_pixel` in `ergebnis.csv`: Sie darf über die
+Messreihe um weniger als 1 % streuen.
 
 
 ---

@@ -23,6 +23,12 @@ ORDNER = os.path.join("auswertung", "grafiken")
 GRUEN, GELB, BRAUN, BLAU, GRAU, ROT = (
     "#2e7d32", "#f9a825", "#6d4c41", "#1565c0", "#9e9e9e", "#c62828")
 
+# Spalten, die immer Text bleiben. Ohne diese Liste wuerde z. B. der
+# Bildname "20260913_110715" von float() als Zahl gelesen - Python erlaubt
+# Unterstriche als Ziffern-Trennzeichen.
+TEXTSPALTEN = {"bild", "zeitquelle", "massstab_quelle", "auffaelligkeit",
+               "gesundheit_kategorie", "gesundheitswarnung"}
+
 ZEITFORMATE = [
     (r"(\d{8})[T_-](\d{6})", "%Y%m%d%H%M%S"),
     (r"(\d{8})[T_-](\d{4})(?!\d)", "%Y%m%d%H%M"),
@@ -49,7 +55,9 @@ def lesen():
     for z in csv.DictReader(open(CSV)):
         neu = {}
         for k, v in z.items():
-            if v == "":
+            if k in TEXTSPALTEN:
+                neu[k] = v
+            elif v == "":
                 neu[k] = None
             elif v in ("True", "False"):
                 neu[k] = v == "True"
@@ -176,23 +184,6 @@ def main():
         fig.savefig(os.path.join(ORDNER, "05_teilscores.png"), dpi=130)
         plt.close(fig)
         print("  ", os.path.join(ORDNER, "05_teilscores.png"))
-
-    # 6 Bildqualitaet - Massstab und Helligkeit muessen konstant bleiben
-    fig, (a, b) = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
-    x, y = paare(zeilen, "mm_pro_pixel")
-    a.plot(x, y, "-", color=BLAU)
-    if y:
-        mitte = sum(y) / len(y)
-        for grenze in (0.99, 1.01):
-            a.axhline(mitte * grenze, color=ROT, linestyle="--", linewidth=0.8)
-    a.set_ylabel("mm pro Pixel")
-    a.set_title("Massstab (+-1 %) und Bildhelligkeit")
-    a.grid(alpha=0.3)
-    b.plot(*paare(zeilen, "bildhelligkeit"), "-", color=GRAU)
-    b.set_ylabel("mittlere Bildhelligkeit")
-    b.grid(alpha=0.3)
-    datumsachse(b, zeilen)
-    speichern(fig, "06_bildqualitaet.png")
 
 
 if __name__ == "__main__":

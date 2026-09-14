@@ -1,13 +1,25 @@
 """
 BioBox - Bildanalyse (A-M2 Computer-Vision-Pipeline)
 
-Aufruf:  python analyse.py bilder      Ordner, auch mit Unterordnern
-         python analyse.py bild.jpg    einzelnes Bild
+Aufruf:  python analyse.py bilder                 Ordner, auch mit Unterordnern
+         python analyse.py bild.jpg               einzelnes Bild
+         python analyse.py --kalibrieren ordner   Entzerrung einmalig bestimmen
 
 Ausgabe im Ordner "auswertung":
     ergebnis.csv    eine Zeile je Bild, Messwerte und Gesundheitsbewertung
     masken/         Segmentierungsmaske je Bild
     kontrolle/      Bild mit eingezeichneter Kontur je Bild
+    grafiken/       Diagramme, sofern GRAFIKEN_ERSTELLEN = True
+
+# Entzerrung. Pflicht bei der Wide-Optik (BB-SPEC-IMG-001, 4.6), weil eine
+# Flaeche am Bildrand sonst anders gemessen wird als in der Bildmitte.
+# Datei anlegen mit:  python analyse.py --kalibrieren schachbrett/
+KALIBRIERUNG = "kamera_kalibrierung.json"
+SCHACHBRETT = (9, 6)      # Innenecken, nicht Felder
+FELD_MM = 25.0
+
+Sollen die Bilder automatisch vom Raspberry Pi geholt werden, PI_HOST unten
+eintragen. Vorhandene Bilder werden dabei nicht erneut geladen.
 
 Der Dateiname muss Datum und Uhrzeit enthalten, z. B.
     biobox01_20260930T081500Z.jpg
@@ -16,6 +28,8 @@ Ohne erkennbaren Zeitstempel wird das Dateidatum verwendet.
 
 import csv
 import glob
+import json
+import subprocess
 import os
 import re
 import sys
@@ -28,10 +42,34 @@ import gesundheit
 
 # --- Einstellungen ---------------------------------------------------
 MARKER_MM = 40.0          # gemessene Kantenlaenge des gedruckten Markers
+# Ersatzmassstab fuer Bilder ohne Marker, z. B. mit dem Lineal bestimmt.
+# None = ohne Marker gibt es keine Flaeche in cm2, nur Pixel.
+MM_PRO_PIXEL_MANUELL = 0.1519
 SCHAERFE_MIN = 5.0        # Laplace-Varianz, im Testbetrieb anpassen
 SPRUNG_MAX_PCT = 30.0     # groessere Flaechenaenderung je Bild ist verdaechtig
 MIN_BLOB_PX = 50          # kleinere Flecken sind Rauschen
 AUSGABE = "auswertung"
+
+# Bilder automatisch vom Raspberry Pi holen.
+# PI_HOST leer lassen, wenn die Bilder schon lokal liegen.
+PI_HOST = "gridiii@100.82.28.104"     # leer lassen = nicht abholen
+PI_ORDNER = "~/biobox/captures"
+
+# Nur die neuesten N Bilder behalten. Aeltere werden lokal geloescht und
+# nicht erneut vom Pi geholt. 0 = alle behalten.
+MAX_BILDER = 100
+
+# Diagramme direkt im Anschluss erzeugen. False = nur analysieren,
+# grafiken.py laesst sich weiterhin einzeln aufrufen.
+GRAFIKEN_ERSTELLEN = True
+
+# Entzerrung. Pflicht bei der Wide-Optik (BB-SPEC-IMG-001, 4.6), weil eine
+# Flaeche am Bildrand sonst anders gemessen wird als in der Bildmitte.
+# Datei anlegen mit:  python analyse.py --kalibrieren schachbrett/
+KALIBRIERUNG = "kamera_kalibrierung.json"
+SCHACHBRETT = (9, 6)      # Innenecken, nicht Felder
+FELD_MM = 25.0
+
 ENDUNGEN = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")
 
 # Erkannte Zeitformate im Dateinamen, genauestes zuerst
@@ -43,6 +81,140 @@ ZEITFORMATE = [
     (r"(\d{4}-\d{2}-\d{2})(?!\d)", "%Y-%m-%d"),
     (r"(\d{8})(?!\d)", "%Y%m%d"),
 ]
+
+
+# --- Alte Bilder aussortieren ----------------------------------------
+def sortiert_nach_zeit(namen):
+    """Sortiert Dateinamen nach dem Zeitstempel im Namen, aeltestes zuerst."""
+    def schluessel(n):
+        zeit = zeit_aus_name(os.path.splitext(n)[0])
+        return (zeit is not None, zeit or datetime.min, n)
+    return sorted(namen, key=schluessel)
+
+
+def alte_bilder_loeschen(ordner):
+    """Behaelt nur die neuesten MAX_BILDER Aufnahmen im Bilderordner."""
+    if not MAX_BILDER or not os.path.isdir(ordner):
+        return
+    namen = [n for n in os.listdir(ordner) if n.lower().endswith(ENDUNGEN)]
+    if len(namen) <= MAX_BILDER:
+        return
+    alt = sortiert_nach_zeit(namen)[:-MAX_BILDER]
+    for n in alt:
+        os.remove(os.path.join(ordner, n))
+    print(f"{len(alt)} aelteres Bild(er) geloescht, "
+          f"die neuesten {MAX_BILDER} bleiben\n")
+
+
+# --- Entzerrung ------------------------------------------------------
+def kalibrierung_laden():
+    """Liest die Kalibrierdatei, falls vorhanden."""
+    if not os.path.exists(KALIBRIERUNG):
+        return None
+    d = json.load(open(KALIBRIERUNG))
+    return np.array(d["kamera_matrix"]), np.array(d["verzeichnung"])
+
+
+def entzerren(bild, kalibrierung):
+    if kalibrierung is None:
+        return bild
+    matrix, verzeichnung = kalibrierung
+    return cv2.undistort(bild, matrix, verzeichnung)
+
+
+def kalibrieren(ordner):
+    """Bestimmt die Verzeichnung aus Schachbrettaufnahmen."""
+    pfade = sorted(os.path.join(ordner, n) for n in os.listdir(ordner)
+                   if n.lower().endswith(ENDUNGEN))
+    if len(pfade) < 5:
+        print(f"mindestens 5 Schachbrettbilder noetig, {len(pfade)} gefunden")
+        return
+
+    muster = np.zeros((SCHACHBRETT[0] * SCHACHBRETT[1], 3), np.float32)
+    muster[:, :2] = np.mgrid[0:SCHACHBRETT[0], 0:SCHACHBRETT[1]].T.reshape(-1, 2)
+    muster *= FELD_MM
+
+    welt, bildpunkte, groesse = [], [], None
+    for pfad in pfade:
+        grau = cv2.imread(pfad, cv2.IMREAD_GRAYSCALE)
+        if grau is None:
+            continue
+        groesse = grau.shape[::-1]
+        gefunden, ecken = cv2.findChessboardCorners(grau, SCHACHBRETT, None)
+        print(f"   {os.path.basename(pfad):34s} "
+              f"{'Muster erkannt' if gefunden else 'nichts gefunden'}")
+        if gefunden:
+            ecken = cv2.cornerSubPix(
+                grau, ecken, (11, 11), (-1, -1),
+                (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
+            welt.append(muster)
+            bildpunkte.append(ecken)
+
+    if len(welt) < 5:
+        print(f"\nnur {len(welt)} brauchbare Aufnahmen - Kalibrierung abgebrochen")
+        return
+
+    fehler, matrix, verzeichnung, _, _ = cv2.calibrateCamera(
+        welt, bildpunkte, groesse, None, None)
+
+    json.dump({"kamera_matrix": matrix.tolist(),
+               "verzeichnung": verzeichnung.tolist(),
+               "bilder": len(welt),
+               "reprojektionsfehler_px": round(float(fehler), 4)},
+              open(KALIBRIERUNG, "w"), indent=2)
+
+    print(f"\n{len(welt)} Aufnahmen verwendet")
+    print(f"Reprojektionsfehler: {fehler:.3f} px (unter 1.0 ist gut)")
+    print(f"gespeichert in {KALIBRIERUNG}")
+
+
+# --- Bilder vom Pi holen ---------------------------------------------
+def bilder_holen(ordner):
+    """Laedt neue Bilder vom Pi. Vorhandene werden nicht erneut geladen."""
+    if not PI_HOST:
+        return
+
+    print(f"Verbinde mit {PI_HOST} ...")
+    try:
+        antwort = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+             PI_HOST, f"ls {PI_ORDNER}"],
+            capture_output=True, text=True, timeout=30)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as fehler:
+        print(f"   nicht erreichbar ({fehler}) - arbeite mit lokalen Bildern\n")
+        return
+
+    if antwort.returncode != 0:
+        print(f"   Fehler: {antwort.stderr.strip()}")
+        print("   arbeite mit lokalen Bildern\n")
+        return
+
+    fern = [n for n in antwort.stdout.split() if n.lower().endswith(ENDUNGEN)]
+    fern = sortiert_nach_zeit(fern)
+    gesamt = len(fern)
+    if MAX_BILDER:
+        fern = fern[-MAX_BILDER:]          # nur die neuesten holen
+
+    os.makedirs(ordner, exist_ok=True)
+    vorhanden = set(os.listdir(ordner))
+    neu = [n for n in fern if n not in vorhanden]
+
+    if not neu:
+        print(f"   {gesamt} Bilder auf dem Pi, alle benoetigten bereits lokal\n")
+        return
+
+    print(f"   {len(neu)} neue Bild(er) werden geladen")
+    geladen = 0
+    for i, name in enumerate(neu, 1):
+        ergebnis = subprocess.run(
+            ["scp", "-q", f"{PI_HOST}:{PI_ORDNER}/{name}", ordner])
+        if ergebnis.returncode == 0:
+            geladen += 1
+        print(f"\r   {i}/{len(neu)}", end="", flush=True)
+    print(f"\r   {geladen} von {len(neu)} geladen")
+    if MAX_BILDER and gesamt > MAX_BILDER:
+        print(f"   (von {gesamt} Bildern auf dem Pi nur die neuesten {MAX_BILDER})")
+    print()
 
 
 # --- Zeitstempel -----------------------------------------------------
@@ -186,7 +358,7 @@ def pruefen(zeilen):
     """Setzt die Spalten 'auffaelligkeit' und 'brauchbar'."""
     for z in zeilen:
         gruende = []
-        if z["mm_pro_pixel"] is None:
+        if z["massstab_quelle"] == "":
             gruende.append("kein_marker")
         if not z["pflanzen_pixel"]:
             gruende.append("keine_pflanze")
@@ -208,7 +380,7 @@ SPALTEN = (["bild", "stunden_seit_start", "zeitquelle",
             "wachstumsrate_cm2_pro_tag",
             "mittel_r", "mittel_g", "mittel_b", "mittel_h", "mittel_s",
             "gruenindex", "gelbanteil_pct", "braunanteil_pct",
-            "mm_pro_pixel", "schaerfe", "bildhelligkeit", "ueberbelichtet_pct",
+            "mm_pro_pixel", "massstab_quelle", "schaerfe", "bildhelligkeit", "ueberbelichtet_pct",
             "groesste_komponente_pct", "auffaelligkeit", "brauchbar"]
            + gesundheit.SPALTEN)
 
@@ -218,7 +390,18 @@ def main():
     if len(sys.argv) < 2:
         print(__doc__)
         return
+    if sys.argv[1] == "--kalibrieren":
+        if len(sys.argv) < 3:
+            print("Aufruf: python analyse.py --kalibrieren schachbrett/")
+        else:
+            kalibrieren(sys.argv[2])
+        return
+
     ziel = sys.argv[1]
+
+    if os.path.isdir(ziel) or not os.path.exists(ziel):
+        bilder_holen(ziel)
+        alte_bilder_loeschen(ziel)
 
     if os.path.isfile(ziel):
         pfade = [ziel]
@@ -262,19 +445,30 @@ def main():
         print("keine Bilder gefunden in:", ziel)
         return
 
+    kalibrierung = kalibrierung_laden()
+    print("Entzerrung aktiv" if kalibrierung else
+          f"Entzerrung inaktiv ({KALIBRIERUNG} fehlt)")
+
     zeilen, zeiten = [], []
     for i, (zeit, name, quelle, pfad) in enumerate(bilder, 1):
         bild = cv2.imread(pfad)
+        if bild is not None:
+            bild = entzerren(bild, kalibrierung)
         if bild is None:
             print(f"[{i}/{len(bilder)}] {name:38s} nicht lesbar")
             continue
 
         mm_px, marker_box = marker_finden(bild)
+        quelle_massstab = "marker" if mm_px else ""
+        if mm_px is None and MM_PRO_PIXEL_MANUELL:
+            mm_px = MM_PRO_PIXEL_MANUELL
+            quelle_massstab = "manuell"
         maske = segmentieren(bild)
         cv2.imwrite(f"{ordner_maske}/{name}_maske.png", maske)
         kontrollbild(bild, maske, marker_box, f"{ordner_kontrolle}/{name}_kontrolle.png")
 
-        z = {"bild": name, "zeitquelle": quelle, **merkmale(bild, maske, mm_px)}
+        z = {"bild": name, "zeitquelle": quelle, "massstab_quelle": quelle_massstab,
+             **merkmale(bild, maske, mm_px)}
         zeilen.append(z)
         zeiten.append(zeit)
         flaeche = z["blattflaeche_cm2"]
@@ -316,6 +510,15 @@ def main():
             print(f"\nReferenz aus {referenz['bilder']} Bildern")
             print(f"Gesundheit aktuell: {letzte['gesundheit']}/100 "
                   f"({letzte['gesundheit_kategorie']})")
+
+    if GRAFIKEN_ERSTELLEN:
+        print()
+        try:
+            import grafiken
+            grafiken.main()
+        except ImportError:
+            print("matplotlib fehlt - 'pip install matplotlib', "
+                  "dann 'python grafiken.py'")
 
 
 if __name__ == "__main__":
