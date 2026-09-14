@@ -9,6 +9,7 @@ Die Zeitachse zeigt Datum und Uhrzeit aus dem Bildnamen.
 """
 
 import csv
+import glob
 import os
 import re
 from datetime import datetime, timedelta
@@ -111,6 +112,14 @@ def main():
         return
 
     os.makedirs(ORDNER, exist_ok=True)
+
+    # Alte Diagramme loeschen, damit nie eine veraltete Grafik stehen bleibt.
+    alt = glob.glob(os.path.join(ORDNER, "*.png"))
+    for f in alt:
+        os.remove(f)
+    if alt:
+        print(f"{len(alt)} altes Diagramm(e) geloescht")
+
     verworfen = len(alle) - len(zeilen)
     print(f"{len(zeilen)} Bilder in den Diagrammen"
           f"{f', {verworfen} auffaellige ausgelassen' if verworfen else ''}\n")
