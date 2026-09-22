@@ -12,3 +12,8 @@ __pycache__/
 # Betriebssystem
 Thumbs.db
 .DS_Store
+
+# Persoenliche Stundenaufzeichnung, nicht im gemeinsamen Repository.
+# Ohne Schraegstrich am Ende: der passt nur auf Ordner, nicht auf Dateien.
+Stunden.docx
+~$*.docx

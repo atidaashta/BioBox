@@ -48,6 +48,43 @@ MM_PRO_PIXEL_MANUELL = 0.1519
 SCHAERFE_MIN = 5.0        # Laplace-Varianz, im Testbetrieb anpassen
 SPRUNG_MAX_PCT = 30.0     # groessere Flaechenaenderung je Bild ist verdaechtig
 MIN_BLOB_PX = 50          # kleinere Flecken sind Rauschen
+
+# --- Kalibrierung (Demo-Modus: alles hier anpassen, nichts im Code darunter) ---
+# Marker-Erkennung
+MARKER_HELLIGKEIT = 180       # Grauwert, ab dem ein Pixel als Marker-Weiss gilt
+MARKER_MIN_FLAECHE = 200      # kleinere helle Flecken ignorieren (px)
+MARKER_MAX_ANTEIL = 0.4       # groesser als 40 % der Bildbreite -> kein Marker
+MARKER_FORM_TOLERANZ = 0.15   # erlaubte Abweichung vom Quadrat
+MARKER_MIN_FUELLGRAD = 0.85   # Anteil der Umrissbox, der hell sein muss
+
+# Segmentierung
+MORPH_KERN_PX = 5             # Glaettung der Maske; bei hoeherer Aufloesung vergroessern
+ENTRAUSCHEN_PX = 7            # Medianfilter gegen Nachtrauschen (ungerade), 0 = aus
+
+# Pflanzenfarbe: nur Pixel in diesem Bereich koennen Pflanze sein.
+# Gelb (ab H 15) ist ABSICHTLICH eingeschlossen - sonst verschwindet
+# vergilbtes Gewebe aus der Maske und die Gesundheitsbewertung sieht
+# keine Vergilbung mehr. Fuer "nur reines Gruen": PFLANZE_H_MIN = 35.
+PFLANZE_H_MIN = 15            # Gelb beginnt bei ca. 15
+PFLANZE_H_MAX = 90            # Blaugruen endet bei ca. 90, Topf liegt bei 105
+PFLANZE_S_MIN = 40            # darunter Grau/Weiss: Topf, Kabel, Rauschen
+PFLANZE_V_MIN = 30            # darunter zu dunkel fuer eine Farbaussage
+
+# Farbbereiche in HSV (OpenCV: H 0-179, S und V 0-255)
+GELB_HSV = ((15, 60, 20), (33, 255, 255))
+BRAUN_HSV = ((5, 40, 15), (20, 255, 160))
+
+# Qualitaetspruefung
+UEBERBELICHTET_MAX_PCT = 1.0  # mehr geklippte Pixel -> auffaellig
+ZERSPLITTERT_MIN_PCT = 70     # groesste Teilflaeche darunter -> auffaellig
+
+# Bilder ueberspringen: werden nicht ausgewertet und nicht in die CSV geschrieben
+MIN_PFLANZE_PCT = 0.05        # weniger Pflanzenanteil am Bild -> keine Pflanze erkannt
+MAX_RAUSCHEN = 25.0           # mehr Rauschen -> Erkennung unzuverlaessig (unter 80 % Treffer)
+
+# Kontrollbild: dunkle Bilder werden zum Anschauen aufgehellt, helle nicht
+KONTROLLE_ZIELHELLIGKEIT = 110
+KONTROLLE_MAX_AUFHELLUNG = 3.0
 AUSGABE = "auswertung"
 
 # Bilder automatisch vom Raspberry Pi holen.
@@ -233,29 +270,55 @@ def zeit_aus_name(name):
 def marker_finden(bild):
     """Sucht den hellen quadratischen Marker, liefert mm pro Pixel."""
     grau = cv2.cvtColor(bild, cv2.COLOR_BGR2GRAY)
-    _, hell = cv2.threshold(grau, 180, 255, cv2.THRESH_BINARY)
+    _, hell = cv2.threshold(grau, MARKER_HELLIGKEIT, 255, cv2.THRESH_BINARY)
     konturen, _ = cv2.findContours(hell, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     for k in konturen:
         flaeche = cv2.contourArea(k)
-        if flaeche < 200:
+        if flaeche < MARKER_MIN_FLAECHE:
             continue
         x, y, b, h = cv2.boundingRect(k)
-        if b > bild.shape[1] * 0.4 or h > bild.shape[0] * 0.4:
+        if b > bild.shape[1] * MARKER_MAX_ANTEIL or h > bild.shape[0] * MARKER_MAX_ANTEIL:
             continue                                   # zu gross -> Fehlerkennung
-        if 0.85 < b / h < 1.15 and flaeche / (b * h) > 0.85:
+        if (abs(b / h - 1) < MARKER_FORM_TOLERANZ
+                and flaeche / (b * h) > MARKER_MIN_FUELLGRAD):
             return MARKER_MM / ((b + h) / 2), (x, y, b, h)
     return None, None
 
 
+def rauschen_schaetzen(bild):
+    """Bildrauschen nach Immerkaer (1996). Reagiert kaum auf Kanten und
+    Blattstrukturen, misst also tatsaechlich Sensorrauschen."""
+    grau = cv2.cvtColor(bild, cv2.COLOR_BGR2GRAY).astype(np.float64)
+    kern = np.array([[1, -2, 1], [-2, 4, -2], [1, -2, 1]], np.float64)
+    h, w = grau.shape
+    summe = np.abs(cv2.filter2D(grau, -1, kern)[1:-1, 1:-1]).sum()
+    return float(np.sqrt(np.pi / 2) * summe / (6 * (w - 2) * (h - 2)))
+
+
 def segmentieren(bild):
-    """Trennt gruene Pflanzenpixel vom Hintergrund (Excess Green + Otsu)."""
+    """Pflanzenpixel muessen ZWEI Bedingungen erfuellen:
+    1. gruener als der Rest des Bildes (Excess Green + Otsu, relativ)
+    2. tatsaechlich pflanzenfarben (HSV-Bereich, absolut)
+
+    Otsu allein teilt JEDES Bild in zwei Gruppen - auch reines Rauschen
+    bei Nacht. Die Farbbedingung verhindert, dass dann Rauschen als
+    Pflanze gezaehlt wird.
+    """
+    if ENTRAUSCHEN_PX:
+        bild = cv2.medianBlur(bild, ENTRAUSCHEN_PX)
+
     b, g, r = cv2.split(bild.astype(np.float32))
     exg = cv2.normalize(2 * g - r - b, None, 0, 255, cv2.NORM_MINMAX)
-    _, maske = cv2.threshold(exg.astype(np.uint8), 0, 255,
-                             cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    _, relativ = cv2.threshold(exg.astype(np.uint8), 0, 255,
+                               cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    hsv = cv2.cvtColor(bild, cv2.COLOR_BGR2HSV)
+    absolut = cv2.inRange(hsv, (PFLANZE_H_MIN, PFLANZE_S_MIN, PFLANZE_V_MIN),
+                          (PFLANZE_H_MAX, 255, 255))
+    maske = cv2.bitwise_and(relativ, absolut)
+
+    kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (MORPH_KERN_PX, MORPH_KERN_PX))
     maske = cv2.morphologyEx(maske, cv2.MORPH_OPEN, kern)
     maske = cv2.morphologyEx(maske, cv2.MORPH_CLOSE, kern)
 
@@ -292,6 +355,8 @@ def merkmale(bild, maske, mm_px):
         w["mittel_r"] = round(float(r[m].mean()), 1)
         w["mittel_g"] = round(float(g[m].mean()), 1)
         w["mittel_b"] = round(float(b[m].mean()), 1)
+        w["farbe_hex"] = "#{:02x}{:02x}{:02x}".format(
+            round(w["mittel_r"]), round(w["mittel_g"]), round(w["mittel_b"]))
 
         hsv = cv2.cvtColor(bild, cv2.COLOR_BGR2HSV)
         h_, s_, _ = cv2.split(hsv.astype(np.float32))
@@ -299,13 +364,13 @@ def merkmale(bild, maske, mm_px):
         w["mittel_s"] = round(float(s_[m].mean()), 1)
         w["gruenindex"] = round(float((g / (b + g + r + 1e-6))[m].mean()), 4)
 
-        gelb = cv2.bitwise_and(cv2.inRange(hsv, (15, 60, 20), (33, 255, 255)), maske)
-        braun = cv2.bitwise_and(cv2.inRange(hsv, (5, 40, 15), (20, 255, 160)), maske)
+        gelb = cv2.bitwise_and(cv2.inRange(hsv, *GELB_HSV), maske)
+        braun = cv2.bitwise_and(cv2.inRange(hsv, *BRAUN_HSV), maske)
         w["gelbanteil_pct"] = round(100 * cv2.countNonZero(gelb) / pixel, 2)
         w["braunanteil_pct"] = round(100 * cv2.countNonZero(braun) / pixel, 2)
     else:
         for k in ["blattflaeche_cm2", "durchmesser_mm", "kompaktheit",
-                  "groesste_komponente_pct", "mittel_r", "mittel_g", "mittel_b",
+                  "groesste_komponente_pct", "mittel_r", "mittel_g", "mittel_b", "farbe_hex",
                   "mittel_h", "mittel_s", "gruenindex",
                   "gelbanteil_pct", "braunanteil_pct"]:
             w[k] = None
@@ -324,7 +389,11 @@ def merkmale(bild, maske, mm_px):
 
 def kontrollbild(bild, maske, marker_box, pfad):
     """Bild mit eingezeichneter Kontur zur Sichtpruefung."""
-    anzeige = cv2.convertScaleAbs(bild, alpha=3.0)      # nur zum Anschauen aufhellen
+    # Nur dunkle Bilder aufhellen. Feste 3-fache Aufhellung machte helle
+    # Tageslichtbilder zu 70 % reinweiss und damit unbrauchbar.
+    mittel = max(float(bild.mean()), 1.0)
+    faktor = min(KONTROLLE_MAX_AUFHELLUNG, max(1.0, KONTROLLE_ZIELHELLIGKEIT / mittel))
+    anzeige = cv2.convertScaleAbs(bild, alpha=faktor)
     konturen, _ = cv2.findContours(maske, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(anzeige, konturen, -1, (0, 0, 255), 2)
     if marker_box:
@@ -364,9 +433,9 @@ def pruefen(zeilen):
             gruende.append("keine_pflanze")
         if z["schaerfe"] is not None and z["schaerfe"] < SCHAERFE_MIN:
             gruende.append("unscharf")
-        if z["ueberbelichtet_pct"] > 1.0:
+        if z["ueberbelichtet_pct"] > UEBERBELICHTET_MAX_PCT:
             gruende.append("ueberbelichtet")
-        if z["groesste_komponente_pct"] is not None and z["groesste_komponente_pct"] < 70:
+        if z["groesste_komponente_pct"] is not None and z["groesste_komponente_pct"] < ZERSPLITTERT_MIN_PCT:
             gruende.append("zersplittert")
         if z["_sprung_pct"] is not None and abs(z["_sprung_pct"]) > SPRUNG_MAX_PCT:
             gruende.append("flaechensprung")
@@ -378,9 +447,9 @@ def pruefen(zeilen):
 SPALTEN = (["bild", "stunden_seit_start", "zeitquelle",
             "pflanzen_pixel", "blattflaeche_cm2", "durchmesser_mm", "kompaktheit",
             "wachstumsrate_cm2_pro_tag",
-            "mittel_r", "mittel_g", "mittel_b", "mittel_h", "mittel_s",
+            "mittel_r", "mittel_g", "mittel_b", "farbe_hex", "mittel_h", "mittel_s",
             "gruenindex", "gelbanteil_pct", "braunanteil_pct",
-            "mm_pro_pixel", "massstab_quelle", "schaerfe", "bildhelligkeit", "ueberbelichtet_pct",
+            "mm_pro_pixel", "massstab_quelle", "schaerfe", "rauschen", "bildhelligkeit", "ueberbelichtet_pct",
             "groesste_komponente_pct", "auffaelligkeit", "brauchbar"]
            + gesundheit.SPALTEN)
 
@@ -449,34 +518,50 @@ def main():
     print("Entzerrung aktiv" if kalibrierung else
           f"Entzerrung inaktiv ({KALIBRIERUNG} fehlt)")
 
-    zeilen, zeiten = [], []
+    zeilen, zeiten, uebersprungen = [], [], []
     for i, (zeit, name, quelle, pfad) in enumerate(bilder, 1):
+        kopf = f"[{i}/{len(bilder)}] {name:38s}"
         bild = cv2.imread(pfad)
-        if bild is not None:
-            bild = entzerren(bild, kalibrierung)
         if bild is None:
-            print(f"[{i}/{len(bilder)}] {name:38s} nicht lesbar")
+            print(f"{kopf} nicht lesbar")
+            uebersprungen.append((name, "nicht lesbar"))
             continue
 
+        # Rauschen am Originalbild messen, vor Entzerrung und Filterung
+        rauschen = rauschen_schaetzen(bild)
+        if rauschen > MAX_RAUSCHEN:
+            print(f"{kopf} uebersprungen: zu verrauscht ({rauschen:.1f})")
+            uebersprungen.append((name, f"zu verrauscht ({rauschen:.1f})"))
+            continue
+
+        bild = entzerren(bild, kalibrierung)
+        maske = segmentieren(bild)
+        anteil = 100 * cv2.countNonZero(maske) / maske.size
+        if anteil < MIN_PFLANZE_PCT:
+            print(f"{kopf} uebersprungen: keine Pflanze erkannt ({anteil:.2f} %)")
+            uebersprungen.append((name, f"keine Pflanze erkannt ({anteil:.2f} %)"))
+            continue
+
+        # Erst jetzt steht fest, dass das Bild verwendet wird
         mm_px, marker_box = marker_finden(bild)
         quelle_massstab = "marker" if mm_px else ""
         if mm_px is None and MM_PRO_PIXEL_MANUELL:
             mm_px = MM_PRO_PIXEL_MANUELL
             quelle_massstab = "manuell"
-        maske = segmentieren(bild)
+
         cv2.imwrite(f"{ordner_maske}/{name}_maske.png", maske)
         kontrollbild(bild, maske, marker_box, f"{ordner_kontrolle}/{name}_kontrolle.png")
 
         z = {"bild": name, "zeitquelle": quelle, "massstab_quelle": quelle_massstab,
-             **merkmale(bild, maske, mm_px)}
+             **merkmale(bild, maske, mm_px), "rauschen": round(rauschen, 1)}
         zeilen.append(z)
         zeiten.append(zeit)
         flaeche = z["blattflaeche_cm2"]
-        info = f"{flaeche} cm2" if flaeche else f"{z['pflanzen_pixel']} px (kein Marker)"
-        print(f"[{i}/{len(bilder)}] {name:38s} {info}")
+        info = f"{flaeche} cm2" if flaeche else f"{z['pflanzen_pixel']} px (kein Massstab)"
+        print(f"{kopf} {info}")
 
     if not zeilen:
-        print("kein Bild konnte gelesen werden")
+        print(f"\nalle {len(bilder)} Bilder uebersprungen - nichts auszuwerten")
         return
 
     zeitreihe(zeilen, zeiten)
@@ -489,6 +574,8 @@ def main():
         w.writerows(zeilen)
 
     print(f"\n{len(zeilen)} Bilder ausgewertet -> {AUSGABE}/ergebnis.csv")
+    if uebersprungen:
+        print(f"{len(uebersprungen)} Bild(er) uebersprungen und nicht verwendet")
 
     ohne_name = sum(1 for z in zeilen if z["zeitquelle"] != "name")
     if ohne_name:

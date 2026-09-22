@@ -42,6 +42,7 @@ Gesundheitsbewertung nebeneinander.
 | Spalte | Einheit | Bedeutung | Wofür |
 |---|---|---|---|
 | `mittel_r` / `mittel_g` / `mittel_b` | 0–255 | mittlere Kanalwerte über den Pflanzenpixeln | Rohdaten; erlauben später neue Indizes ohne erneute Bildverarbeitung |
+| `farbe_hex` | Text | Mittlere Pflanzenfarbe als Hexwert, z. B. `#67865c` | lesbare Farbangabe; direkt als Farbfeld im Dashboard darstellbar |
 | `mittel_h` | 0–179 | mittlerer HSV-Farbton | Verschiebung des Grüntons |
 | `mittel_s` | 0–255 | mittlere HSV-Sättigung | Farbkraft, sinkt bei Stress |
 | `gruenindex` | 0–1 | G / (R+G+B) | wichtigster Einzelindikator, Chlorophyll |
@@ -54,6 +55,7 @@ Gesundheitsbewertung nebeneinander.
 |---|---|---|---|
 | `mm_pro_pixel` | mm/px | aus dem Marker berechneter Maßstab | **Nachweis der Aufbaustabilität** (BB-SPEC-IMG-001, 8.3); leer = kein Marker gefunden |
 | `schaerfe` | — | Laplace-Varianz, nur über den Pflanzenpixeln | Unschärfe erkennen |
+| `rauschen` | — | Sensorrauschen nach Immerkaer (1996), am Originalbild gemessen | Kalibrierung der Grenze `MAX_RAUSCHEN` |
 | `bildhelligkeit` | 0–255 | Mittelwert des Gesamtbildes | erkennt Belichtungs- und Fremdlichtänderungen |
 | `ueberbelichtet_pct` | % | Anteil geklippter Pixel im Grünkanal | Sättigung zerstört die Farbmessung |
 | `groesste_komponente_pct` | % | Anteil der größten Teilfläche an der Gesamtmaske | fällt der Wert, ist meist die Segmentierung gescheitert |
@@ -93,6 +95,20 @@ als drei brauchbare Bilder für eine Referenz vorliegen, sowie bei jedem Bild mi
 `brauchbar = False`.
 
 ---
+
+### Übersprungene Bilder
+
+Zwei Fälle werden **gar nicht ausgewertet** und erscheinen weder in der CSV noch
+bei Masken und Kontrollbildern. Die Bilddatei selbst bleibt unverändert erhalten.
+
+| Grund | Bedingung | Warum |
+|---|---|---|
+| keine Pflanze erkannt | Pflanzenanteil unter `MIN_PFLANZE_PCT` (0,05 %) | Dunkelheit: kein verwertbares Farbsignal |
+| zu verrauscht | `rauschen` über `MAX_RAUSCHEN` (25) | Die Erkennung liefert noch eine plausible Fläche, trifft die tatsächliche Pflanze aber zu weniger als 80 % |
+
+Der zweite Fall ist der gefährlichere: Bei starkem Rauschen meldet die Pipeline
+weiterhin eine Pflanze plausibler Größe, die aber nur noch zur Hälfte mit der
+tatsächlichen übereinstimmt. Eine falsche Zahl, die richtig aussieht.
 
 ## 3. Bewusst nicht erfasste Größen
 

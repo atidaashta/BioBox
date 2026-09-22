@@ -27,7 +27,7 @@ GRUEN, GELB, BRAUN, BLAU, GRAU, ROT = (
 # Spalten, die immer Text bleiben. Ohne diese Liste wuerde z. B. der
 # Bildname "20260913_110715" von float() als Zahl gelesen - Python erlaubt
 # Unterstriche als Ziffern-Trennzeichen.
-TEXTSPALTEN = {"bild", "zeitquelle", "massstab_quelle", "auffaelligkeit",
+TEXTSPALTEN = {"bild", "zeitquelle", "massstab_quelle", "auffaelligkeit", "farbe_hex",
                "gesundheit_kategorie", "gesundheitswarnung"}
 
 ZEITFORMATE = [
