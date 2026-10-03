@@ -6,9 +6,13 @@ Wird von analyse.py aufgerufen. Bewertet jede Aufnahme mit 0 bis 100 Punkten.
 Grundgedanke: Alle Bilder zeigen dieselbe Pflanze unter fest eingestellter
 Kamera und Beleuchtung. Es gibt deshalb keinen sinnvollen absoluten Sollfarbwert.
 Bewertet wird die Abweichung vom EIGENEN Referenzzustand aus den ersten Bildern.
+Bei externen Einzelbildern wird diese Bewertung deaktiviert: unterschiedliche
+Pflanzen und Beleuchtungen haben keinen gemeinsamen Referenzzustand.
 """
 
 import statistics
+
+SCORING_VERSION = "1.0.0"  # Gewichte und Kennlinien aus BB-SPEC-HEALTH-001
 
 BASIS_BILDER = 10        # erste N brauchbare Bilder bilden die Referenz
 GLAETTUNG = 5            # gleitender Median ueber N Bilder
@@ -41,7 +45,7 @@ WARN_GRUEN_REL = 0.93
 WARN_SAETTIGUNG_REL = 0.88
 WARN_STILLSTAND_H = 48
 
-SPALTEN = ["gesundheit", "gesundheit_roh", "gesundheit_kategorie",
+SPALTEN = ["scoring_version", "gesundheit", "gesundheit_roh", "gesundheit_kategorie",
            "gesundheit_trend_24h", "gesundheitswarnung",
            "score_gruen", "score_gelb", "score_braun",
            "score_saettigung", "score_farbton"]
@@ -59,7 +63,8 @@ def _score(wert, gut, schlecht):
 def _referenz(zeilen):
     """Median der Farbwerte ueber die ersten brauchbaren Bilder."""
     basis = [z for z in zeilen
-             if z["brauchbar"] and z["gruenindex"] is not None][:BASIS_BILDER]
+             if z["brauchbar"] and z["gruenindex"] is not None
+             and z.get("stunden_seit_start") is not None][:BASIS_BILDER]
     if len(basis) < 3:
         return None
     return {
@@ -76,11 +81,26 @@ def _leer(z):
     for s in SPALTEN:
         z[s] = None
     z["gesundheitswarnung"] = ""
+    z["scoring_version"] = SCORING_VERSION
 
 
-def bewerten(zeilen):
-    """Ergaenzt alle Zeilen um Score, Kategorie und Warnungen."""
+def bewerten(zeilen, zeitreihe_aktiv=True, referenz_freigegeben=False):
+    """Relative Bewertung nur bei einer zusammengehoerigen Pflanzenzeitreihe."""
+    if not zeitreihe_aktiv:
+        for z in zeilen:
+            _leer(z)
+            z["gesundheit_kategorie"] = "nicht_bewertet_datensatz"
+        return None
+
+    for z in zeilen:
+        _leer(z)
+    if not referenz_freigegeben:
+        for z in zeilen:
+            z["gesundheit_kategorie"] = "referenz_nicht_freigegeben"
+        return None
     ref = _referenz(zeilen)
+    if ref is not None and (ref["gruenindex"] <= 0 or ref["mittel_s"] <= 0):
+        ref = None
     if ref is None:
         for z in zeilen:
             _leer(z)
@@ -89,7 +109,7 @@ def bewerten(zeilen):
 
     # 1. Teilscores und Rohwert je Bild
     for z in zeilen:
-        if not z["brauchbar"] or z["gruenindex"] is None:
+        if not z["brauchbar"] or z["gruenindex"] is None or z.get("stunden_seit_start") is None:
             _leer(z)
             continue
 
@@ -98,6 +118,7 @@ def bewerten(zeilen):
         ueber_gelb = z["gelbanteil_pct"] - ref["gelbanteil"]
         ueber_braun = z["braunanteil_pct"] - ref["braunanteil"]
         hue_abw = abs(z["mittel_h"] - ref["mittel_h"])
+        hue_abw = min(hue_abw, 180-hue_abw)
 
         z["score_gruen"] = _score(rel_gruen, *KENNLINIEN["gruen"])
         z["score_saettigung"] = _score(rel_saett, *KENNLINIEN["saettigung"])
@@ -120,31 +141,42 @@ def bewerten(zeilen):
 
     # 2. Glaetten - ein einzelnes schlechtes Bild darf keinen Alarm ausloesen
     roh = [z["gesundheit_roh"] for z in zeilen]
+    letzter_score = None
     for i, z in enumerate(zeilen):
+        if z["gesundheit_roh"] is None:
+            # HEALTH-001, 9.1 / DB-Hinweis: Anzeige fortschreiben, aber keine
+            # Rohscores fuer ein unbrauchbares Bild erfinden.
+            z["gesundheit"] = letzter_score
+            z["gesundheit_kategorie"] = next(
+                (n for g, n in KATEGORIEN if letzter_score >= g), "kritisch"
+            ) if letzter_score is not None else "keine_daten"
+            continue
         fenster = [v for v in roh[max(0, i - GLAETTUNG + 1):i + 1] if v is not None]
         z["gesundheit"] = round(statistics.median(fenster), 1) if fenster else None
         z["gesundheit_kategorie"] = next(
             (n for g, n in KATEGORIEN if z["gesundheit"] >= g), "kritisch"
         ) if fenster else "keine_daten"
+        letzter_score = z["gesundheit"]
 
     # 3. Trend ueber 24 h - die Richtung sagt mehr als der Absolutwert
     for i, z in enumerate(zeilen):
         z["gesundheit_trend_24h"] = None
-        if z["gesundheit"] is None:
+        if z["gesundheit_roh"] is None or z.get("stunden_seit_start") is None:
             continue
         frueher = [v for v in zeilen[:i]
-                   if v["stunden_seit_start"] <= z["stunden_seit_start"] - 24
-                   and v["gesundheit"] is not None]
+                   if v.get("stunden_seit_start") is not None and v["gesundheit_roh"] is not None
+                   and v["stunden_seit_start"] <= z["stunden_seit_start"] - 24]
         if frueher:
             z["gesundheit_trend_24h"] = round(
                 z["gesundheit"] - frueher[-1]["gesundheit"], 1)
 
     # 4. Wachstumsstillstand - nicht farbbasiert, aber sonst unentdeckt
     for i, z in enumerate(zeilen):
-        if z["blattflaeche_cm2"] is None:
+        if not z["brauchbar"] or z["blattflaeche_cm2"] is None or z.get("stunden_seit_start") is None:
             continue
         frueher = [v for v in zeilen[:i]
-                   if v["stunden_seit_start"] <= z["stunden_seit_start"] - WARN_STILLSTAND_H
+                   if v["brauchbar"] and v.get("stunden_seit_start") is not None
+                   and v["stunden_seit_start"] <= z["stunden_seit_start"] - WARN_STILLSTAND_H
                    and v["blattflaeche_cm2"] is not None]
         if frueher and z["blattflaeche_cm2"] <= frueher[-1]["blattflaeche_cm2"] * 1.01:
             z["gesundheitswarnung"] = ";".join(

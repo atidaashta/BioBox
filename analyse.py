@@ -1,39 +1,35 @@
 """
 BioBox - Bildanalyse (A-M2 Computer-Vision-Pipeline)
 
-Aufruf:  python analyse.py bilder                 Ordner, auch mit Unterordnern
+Aufruf:  python analyse.py bilder_demo            Ordner, auch mit Unterordnern
          python analyse.py bild.jpg               einzelnes Bild
-         python analyse.py --kalibrieren ordner   Entzerrung einmalig bestimmen
+         python analyse.py --kalibrieren ordner   fuer die spaetere Kamera
+
+Aktuell: lokale Datensatzbilder. Kein Abruf vom Raspberry Pi.
+Originalbilder werden nicht geloescht. Jedes Bild wird einzeln ausgewertet.
+Grid-Kalibrierung und Grid-Massstab werden im Datensatzmodus nicht verwendet.
+Ohne verifizierten Massstab bleiben cm2 und mm leer; Pixelwerte bleiben erhalten.
+Keine Wachstumsrate oder relative Gesundheit zwischen verschiedenen Pflanzen.
 
 Ausgabe im Ordner "auswertung":
-    ergebnis.csv    eine Zeile je Bild, Messwerte und Gesundheitsbewertung
+    ergebnis.csv    eine Zeile je ausgewertetem Bild
     masken/         Segmentierungsmaske je Bild
-    kontrolle/      Bild mit eingezeichneter Kontur je Bild
-    grafiken/       Diagramme, sofern GRAFIKEN_ERSTELLEN = True
+    kontrolle/      Original, Kontur, Maske und Freistellung nebeneinander
+    grafiken/       alle 5 Dateien aus BB-REF-MERKMALE-001; fehlende Werte
+                    werden erklaert, nicht als Null oder Messung erfunden
 
-# Entzerrung. Pflicht bei der Wide-Optik (BB-SPEC-IMG-001, 4.6), weil eine
-# Flaeche am Bildrand sonst anders gemessen wird als in der Bildmitte.
-# Datei anlegen mit:  python analyse.py --kalibrieren schachbrett/
-KALIBRIERUNG = "kamera_kalibrierung.json"
-SCHACHBRETT = (9, 6)      # Innenecken, nicht Felder
-FELD_MM = 25.0
-
-Sollen die Bilder automatisch vom Raspberry Pi geholt werden, PI_HOST unten
-eintragen. Vorhandene Bilder werden dabei nicht erneut geladen.
-
-Der Dateiname muss Datum und Uhrzeit enthalten, z. B.
-    biobox01_20260930T081500Z.jpg
-Ohne erkennbaren Zeitstempel wird das Dateidatum verwendet.
+Grundlagen: BB-SPEC-IMG-001, BB-SPEC-HEALTH-001, BB-REF-MERKMALE-001.
+Externe Einzelbilder erfuellen nicht die Aufnahmebedingungen einer BioBox-Zeitreihe.
+Die vollstaendige Kamera-ROI, Homographie und Hoehenkorrektur folgen mit der Kamera.
 """
 
 import csv
 import glob
 import json
-import subprocess
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 import cv2
 import numpy as np
@@ -41,34 +37,37 @@ import numpy as np
 import gesundheit
 
 # --- Einstellungen ---------------------------------------------------
+# True: externe Testbilder, keine gemeinsame Zeitreihe oder Gesundheitsreferenz.
+# False spaeter nur fuer EINE Pflanze mit fester Kamera und echten Aufnahmezeiten.
+DATENSATZ_MODUS = True
+BILDQUELLE = "externer_testdatensatz"
+# Nur fuer eine spaetere, zusammengehoerige Messreihe aktivieren, nachdem
+# die ersten Referenz-Kontrollbilder manuell gesichtet wurden (HEALTH-001, 4).
+REFERENZ_FREIGEGEBEN = False
+
 MARKER_MM = 40.0          # gemessene Kantenlaenge des gedruckten Markers
 # Ersatzmassstab fuer Bilder ohne Marker, z. B. mit dem Lineal bestimmt.
 # None = ohne Marker gibt es keine Flaeche in cm2, nur Pixel.
-MM_PRO_PIXEL_MANUELL = 0.1519
+MM_PRO_PIXEL_MANUELL = None
 SCHAERFE_MIN = 5.0        # Laplace-Varianz, im Testbetrieb anpassen
 SPRUNG_MAX_PCT = 30.0     # groessere Flaechenaenderung je Bild ist verdaechtig
-MIN_BLOB_PX = 50          # kleinere Flecken sind Rauschen
+MIN_BLOB_PX = 30          # kleinere Flecken sind Rauschen
 
-# --- Kalibrierung (Demo-Modus: alles hier anpassen, nichts im Code darunter) ---
-# Marker-Erkennung
-MARKER_HELLIGKEIT = 180       # Grauwert, ab dem ein Pixel als Marker-Weiss gilt
-MARKER_MIN_FLAECHE = 200      # kleinere helle Flecken ignorieren (px)
-MARKER_MAX_ANTEIL = 0.4       # groesser als 40 % der Bildbreite -> kein Marker
-MARKER_FORM_TOLERANZ = 0.15   # erlaubte Abweichung vom Quadrat
-MARKER_MIN_FUELLGRAD = 0.85   # Anteil der Umrissbox, der hell sein muss
+# --- Segmentierung ---------------------------------------------------
+# Bei einem Datensatzordner mit *_top_* nur diese Draufsichten auswerten.
+# Keine Annahme, dass Dateien einer Pflanze eine zeitliche Messreihe sind.
+NUR_DRAUFSICHT = True
+SEGMENTIERUNG_MAX_KANTE = 1280    # GrabCut-Arbeitsbild; Maske bleibt in Originalgroesse
+GRABCUT_ITERATIONEN = 4
+MORPH_KERN_PX = 3               # kleine Kerne erhalten Blattrand und duenne Stiele
+ENTRAUSCHEN_PX = 3              # nur fuer Segmentierung, nie fuer Farbmerkmale
+SEED_ABSTAND_PX = 18            # nahe Blattteile fuer die Suchregion verbinden
+ROI_NORMIERT = None             # optional (links, oben, rechts, unten), jeweils 0..1
 
-# Segmentierung
-MORPH_KERN_PX = 5             # Glaettung der Maske; bei hoeherer Aufloesung vergroessern
-ENTRAUSCHEN_PX = 7            # Medianfilter gegen Nachtrauschen (ungerade), 0 = aus
-
-# Pflanzenfarbe: nur Pixel in diesem Bereich koennen Pflanze sein.
-# Gelb (ab H 15) ist ABSICHTLICH eingeschlossen - sonst verschwindet
-# vergilbtes Gewebe aus der Maske und die Gesundheitsbewertung sieht
-# keine Vergilbung mehr. Fuer "nur reines Gruen": PFLANZE_H_MIN = 35.
-PFLANZE_H_MIN = 15            # Gelb beginnt bei ca. 15
-PFLANZE_H_MAX = 90            # Blaugruen endet bei ca. 90, Topf liegt bei 105
-PFLANZE_S_MIN = 40            # darunter Grau/Weiss: Topf, Kabel, Rauschen
-PFLANZE_V_MIN = 30            # darunter zu dunkel fuer eine Farbaussage
+# Startpunkte nur aus erkennbarem Gruen; moegliche Blattfarben fuer GrabCut
+# schliessen Gelb und Braun ein. Die endgueltige Maske ist kein HSV-Schwellwert.
+SEED_HSV = ((25, 35, 18), (95, 255, 255))
+SUCHFARBE_HSV = ((5, 25, 12), (100, 255, 255))
 
 # Farbbereiche in HSV (OpenCV: H 0-179, S und V 0-255)
 GELB_HSV = ((15, 60, 20), (33, 255, 255))
@@ -82,19 +81,8 @@ ZERSPLITTERT_MIN_PCT = 70     # groesste Teilflaeche darunter -> auffaellig
 MIN_PFLANZE_PCT = 0.05        # weniger Pflanzenanteil am Bild -> keine Pflanze erkannt
 MAX_RAUSCHEN = 25.0           # mehr Rauschen -> Erkennung unzuverlaessig (unter 80 % Treffer)
 
-# Kontrollbild: dunkle Bilder werden zum Anschauen aufgehellt, helle nicht
-KONTROLLE_ZIELHELLIGKEIT = 110
-KONTROLLE_MAX_AUFHELLUNG = 3.0
+# Kontrollbilder sind reine Vorschauen; Farbwerte stammen immer vom Original.
 AUSGABE = "auswertung"
-
-# Bilder automatisch vom Raspberry Pi holen.
-# PI_HOST leer lassen, wenn die Bilder schon lokal liegen.
-PI_HOST = "gridiii@100.82.28.104"     # leer lassen = nicht abholen
-PI_ORDNER = "~/biobox/captures"
-
-# Nur die neuesten N Bilder behalten. Aeltere werden lokal geloescht und
-# nicht erneut vom Pi geholt. 0 = alle behalten.
-MAX_BILDER = 100
 
 # Diagramme direkt im Anschluss erzeugen. False = nur analysieren,
 # grafiken.py laesst sich weiterhin einzeln aufrufen.
@@ -118,29 +106,6 @@ ZEITFORMATE = [
     (r"(\d{4}-\d{2}-\d{2})(?!\d)", "%Y-%m-%d"),
     (r"(\d{8})(?!\d)", "%Y%m%d"),
 ]
-
-
-# --- Alte Bilder aussortieren ----------------------------------------
-def sortiert_nach_zeit(namen):
-    """Sortiert Dateinamen nach dem Zeitstempel im Namen, aeltestes zuerst."""
-    def schluessel(n):
-        zeit = zeit_aus_name(os.path.splitext(n)[0])
-        return (zeit is not None, zeit or datetime.min, n)
-    return sorted(namen, key=schluessel)
-
-
-def alte_bilder_loeschen(ordner):
-    """Behaelt nur die neuesten MAX_BILDER Aufnahmen im Bilderordner."""
-    if not MAX_BILDER or not os.path.isdir(ordner):
-        return
-    namen = [n for n in os.listdir(ordner) if n.lower().endswith(ENDUNGEN)]
-    if len(namen) <= MAX_BILDER:
-        return
-    alt = sortiert_nach_zeit(namen)[:-MAX_BILDER]
-    for n in alt:
-        os.remove(os.path.join(ordner, n))
-    print(f"{len(alt)} aelteres Bild(er) geloescht, "
-          f"die neuesten {MAX_BILDER} bleiben\n")
 
 
 # --- Entzerrung ------------------------------------------------------
@@ -205,62 +170,13 @@ def kalibrieren(ordner):
     print(f"gespeichert in {KALIBRIERUNG}")
 
 
-# --- Bilder vom Pi holen ---------------------------------------------
-def bilder_holen(ordner):
-    """Laedt neue Bilder vom Pi. Vorhandene werden nicht erneut geladen."""
-    if not PI_HOST:
-        return
-
-    print(f"Verbinde mit {PI_HOST} ...")
-    try:
-        antwort = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-             PI_HOST, f"ls {PI_ORDNER}"],
-            capture_output=True, text=True, timeout=30)
-    except (subprocess.TimeoutExpired, FileNotFoundError) as fehler:
-        print(f"   nicht erreichbar ({fehler}) - arbeite mit lokalen Bildern\n")
-        return
-
-    if antwort.returncode != 0:
-        print(f"   Fehler: {antwort.stderr.strip()}")
-        print("   arbeite mit lokalen Bildern\n")
-        return
-
-    fern = [n for n in antwort.stdout.split() if n.lower().endswith(ENDUNGEN)]
-    fern = sortiert_nach_zeit(fern)
-    gesamt = len(fern)
-    if MAX_BILDER:
-        fern = fern[-MAX_BILDER:]          # nur die neuesten holen
-
-    os.makedirs(ordner, exist_ok=True)
-    vorhanden = set(os.listdir(ordner))
-    neu = [n for n in fern if n not in vorhanden]
-
-    if not neu:
-        print(f"   {gesamt} Bilder auf dem Pi, alle benoetigten bereits lokal\n")
-        return
-
-    print(f"   {len(neu)} neue Bild(er) werden geladen")
-    geladen = 0
-    for i, name in enumerate(neu, 1):
-        ergebnis = subprocess.run(
-            ["scp", "-q", f"{PI_HOST}:{PI_ORDNER}/{name}", ordner])
-        if ergebnis.returncode == 0:
-            geladen += 1
-        print(f"\r   {i}/{len(neu)}", end="", flush=True)
-    print(f"\r   {geladen} von {len(neu)} geladen")
-    if MAX_BILDER and gesamt > MAX_BILDER:
-        print(f"   (von {gesamt} Bildern auf dem Pi nur die neuesten {MAX_BILDER})")
-    print()
-
-
 # --- Zeitstempel -----------------------------------------------------
 def zeit_aus_name(name):
     for muster, format_ in ZEITFORMATE:
         treffer = re.search(muster, name)
         if treffer:
             try:
-                return datetime.strptime("".join(treffer.groups()), format_)
+                return datetime.strptime("".join(treffer.groups()), format_).replace(tzinfo=timezone.utc)
             except ValueError:
                 continue
     return None
@@ -268,22 +184,28 @@ def zeit_aus_name(name):
 
 # --- Bildverarbeitung ------------------------------------------------
 def marker_finden(bild):
-    """Sucht den hellen quadratischen Marker, liefert mm pro Pixel."""
-    grau = cv2.cvtColor(bild, cv2.COLOR_BGR2GRAY)
-    _, hell = cv2.threshold(grau, MARKER_HELLIGKEIT, 255, cv2.THRESH_BINARY)
-    konturen, _ = cv2.findContours(hell, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    """Nur echte ArUco-Marker aus BB-SPEC-IMG-001, keine weissen Quadrate.
 
-    for k in konturen:
-        flaeche = cv2.contourArea(k)
-        if flaeche < MARKER_MIN_FLAECHE:
-            continue
-        x, y, b, h = cv2.boundingRect(k)
-        if b > bild.shape[1] * MARKER_MAX_ANTEIL or h > bild.shape[0] * MARKER_MAX_ANTEIL:
-            continue                                   # zu gross -> Fehlerkennung
-        if (abs(b / h - 1) < MARKER_FORM_TOLERANZ
-                and flaeche / (b * h) > MARKER_MIN_FUELLGRAD):
-            return MARKER_MM / ((b + h) / 2), (x, y, b, h)
-    return None, None
+    Liefert einen Massstab in der MARKEREBENE. Keine Bestandshoehenkorrektur!
+    Vier IDs 0..3 sind erforderlich; im Datensatzmodus wird dies nicht benutzt.
+    """
+    if not hasattr(cv2, "aruco"):
+        return None, None
+    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+    detector = cv2.aruco.ArucoDetector(dictionary)
+    corners, ids, _ = detector.detectMarkers(bild)
+    if ids is None:
+        return None, None
+    marker = {int(i): c.reshape(4, 2) for i, c in zip(ids.flatten(), corners)
+              if int(i) in (0, 1, 2, 3)}
+    if len(marker) != 4:
+        return None, None
+    kanten = [np.linalg.norm(c - np.roll(c, -1, axis=0), axis=1).mean()
+              for c in marker.values()]
+    if min(kanten) <= 0:
+        return None, None
+    x, y, w, h = cv2.boundingRect(np.vstack(list(marker.values())).astype(np.float32))
+    return MARKER_MM / float(np.median(kanten)), (x, y, w, h)
 
 
 def rauschen_schaetzen(bild):
@@ -297,37 +219,90 @@ def rauschen_schaetzen(bild):
 
 
 def segmentieren(bild):
-    """Pflanzenpixel muessen ZWEI Bedingungen erfuellen:
-    1. gruener als der Rest des Bildes (Excess Green + Otsu, relativ)
-    2. tatsaechlich pflanzenfarben (HSV-Bereich, absolut)
+    """Farb-Seeds lokalisieren die Pflanze; GrabCut verfeinert ihre Kontur.
 
-    Otsu allein teilt JEDES Bild in zwei Gruppen - auch reines Rauschen
-    bei Nacht. Die Farbbedingung verhindert, dass dann Rauschen als
-    Pflanze gezaehlt wird.
+    Gruene Pixel sind Startpunkte, nicht die endgueltige Maske. Gelbe, braune
+    oder beschattete Blattteile innerhalb der Suchregion duerfen hinzukommen.
+    Kleine Luecken zwischen Blaettern werden NICHT pauschal gefuellt.
+    Ein gruener Gegenstand weit neben der Pflanze wird als Hintergrund behandelt.
+    Grenzen: Eine voellig braune Pflanze ohne gruene Seeds bleibt unerkennbar.
     """
+    h0, w0 = bild.shape[:2]
+    faktor = min(1.0, SEGMENTIERUNG_MAX_KANTE / max(h0, w0))
+    arbeit = cv2.resize(bild, (max(3, round(w0*faktor)), max(3, round(h0*faktor))))
     if ENTRAUSCHEN_PX:
-        bild = cv2.medianBlur(bild, ENTRAUSCHEN_PX)
+        arbeit = cv2.medianBlur(arbeit, ENTRAUSCHEN_PX)
+    hsv = cv2.cvtColor(arbeit, cv2.COLOR_BGR2HSV)
+    b, g, r = cv2.split(arbeit.astype(np.float32))
+    exg = (2*g-r-b) / (r+g+b+1e-6)
+    seeds = cv2.inRange(hsv, *SEED_HSV)
+    seeds[exg < 0.08] = 0
 
-    b, g, r = cv2.split(bild.astype(np.float32))
-    exg = cv2.normalize(2 * g - r - b, None, 0, 255, cv2.NORM_MINMAX)
-    _, relativ = cv2.threshold(exg.astype(np.uint8), 0, 255,
-                               cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    hsv = cv2.cvtColor(bild, cv2.COLOR_BGR2HSV)
-    absolut = cv2.inRange(hsv, (PFLANZE_H_MIN, PFLANZE_S_MIN, PFLANZE_V_MIN),
-                          (PFLANZE_H_MAX, 255, 255))
-    maske = cv2.bitwise_and(relativ, absolut)
+    if ROI_NORMIERT is not None:
+        links, oben, rechts, unten = ROI_NORMIERT
+        roi = np.zeros_like(seeds)
+        h, w = seeds.shape
+        roi[round(oben*h):round(unten*h), round(links*w):round(rechts*w)] = 255
+        seeds = cv2.bitwise_and(seeds, roi)
+    else:
+        roi = np.full_like(seeds, 255)
 
     kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (MORPH_KERN_PX, MORPH_KERN_PX))
-    maske = cv2.morphologyEx(maske, cv2.MORPH_OPEN, kern)
-    maske = cv2.morphologyEx(maske, cv2.MORPH_CLOSE, kern)
+    seeds = cv2.morphologyEx(seeds, cv2.MORPH_OPEN, kern)
+    # Groesste raeumliche Blattgruppe, nicht einfach nur das groesste Blatt.
+    abstand = max(3, round(SEED_ABSTAND_PX*faktor))
+    gruppe = cv2.dilate(seeds, cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (2*abstand+1, 2*abstand+1)))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(gruppe, 8)
+    if n <= 1:
+        return np.zeros((h0, w0), np.uint8)
+    haupt = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    seeds[labels != haupt] = 0
+    if cv2.countNonZero(seeds) < max(10, round(MIN_BLOB_PX*faktor*faktor)):
+        return np.zeros((h0, w0), np.uint8)
 
+    # Konvexe SUCHREGION, keine konvexe Pflanzenmaske: GrabCut entfernt
+    # Hintergrund und echte Zwischenraeume weiterhin innerhalb dieser Region.
+    punkte = cv2.findNonZero(seeds)
+    huelle = np.zeros_like(seeds)
+    cv2.fillConvexPoly(huelle, cv2.convexHull(punkte), 255)
+    suchregion = cv2.dilate(huelle, cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (2*abstand+1, 2*abstand+1)))
+    suchregion = cv2.bitwise_and(suchregion, roi)
+    sicher = cv2.erode(seeds, kern)
+    if cv2.countNonZero(sicher) < 10:
+        sicher = seeds
+
+    maske_gc = np.full(seeds.shape, cv2.GC_BGD, np.uint8)
+    maske_gc[suchregion > 0] = cv2.GC_PR_BGD
+    pflanzenfarbe = cv2.inRange(hsv, *SUCHFARBE_HSV)
+    maske_gc[(pflanzenfarbe > 0) & (suchregion > 0)] = cv2.GC_PR_FGD
+    maske_gc[sicher > 0] = cv2.GC_FGD
+    # Bei nahezu vollstaendigem Pflanzenbild fehlt ein Hintergrundmodell.
+    if not np.any(maske_gc == cv2.GC_BGD):
+        maske_gc[0, :] = cv2.GC_BGD
+        maske_gc[-1, :] = cv2.GC_BGD
+        maske_gc[:, 0] = cv2.GC_BGD
+        maske_gc[:, -1] = cv2.GC_BGD
+    cv2.setRNGSeed(0)  # reproduzierbare Segmentierung
+    try:
+        cv2.grabCut(arbeit, maske_gc, None, np.zeros((1, 65), np.float64),
+                    np.zeros((1, 65), np.float64), GRABCUT_ITERATIONEN,
+                    cv2.GC_INIT_WITH_MASK)
+        maske = np.where((maske_gc == cv2.GC_FGD) |
+                         (maske_gc == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+    except cv2.error as fehler:
+        # Keine unmarkierte Ersatzmessung, wenn GrabCut nicht auswerten kann.
+        print(f"   Segmentierung fehlgeschlagen: {str(fehler).splitlines()[0]}")
+        return np.zeros((h0, w0), np.uint8)
+    maske = cv2.morphologyEx(maske, cv2.MORPH_CLOSE, kern)
     n, labels, stats, _ = cv2.connectedComponentsWithStats(maske, 8)
     sauber = np.zeros_like(maske)
     for i in range(1, n):
-        if stats[i, cv2.CC_STAT_AREA] >= MIN_BLOB_PX:
+        if (stats[i, cv2.CC_STAT_AREA] >= max(5, round(MIN_BLOB_PX*faktor*faktor))
+                and np.any((labels == i) & (seeds > 0))):
             sauber[labels == i] = 255
-    return sauber
+    return cv2.resize(sauber, (w0, h0), interpolation=cv2.INTER_NEAREST)
 
 
 def merkmale(bild, maske, mm_px):
@@ -388,46 +363,67 @@ def merkmale(bild, maske, mm_px):
 
 
 def kontrollbild(bild, maske, marker_box, pfad):
-    """Bild mit eingezeichneter Kontur zur Sichtpruefung."""
-    # Nur dunkle Bilder aufhellen. Feste 3-fache Aufhellung machte helle
-    # Tageslichtbilder zu 70 % reinweiss und damit unbrauchbar.
-    mittel = max(float(bild.mean()), 1.0)
-    faktor = min(KONTROLLE_MAX_AUFHELLUNG, max(1.0, KONTROLLE_ZIELHELLIGKEIT / mittel))
-    anzeige = cv2.convertScaleAbs(bild, alpha=faktor)
-    konturen, _ = cv2.findContours(maske, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(anzeige, konturen, -1, (0, 0, 255), 2)
+    """Vier Ansichten: Original, Kontur, binaere Maske, freigestellte Pflanze.
+
+    Keine kuenstliche Aufhellung: Die Originalfarbe muss sichtbar bleiben.
+    Nur diese Vorschau wird verkleinert, nicht Maske oder Messbild.
+    """
+    overlay = bild.copy()
+    m = maske > 0
+    overlay[m] = (0.80*bild[m] + 0.20*np.array([180, 220, 20])).astype(np.uint8)
+    konturen, _ = cv2.findContours(maske, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(overlay, konturen, -1, (255, 0, 255), max(1, round(bild.shape[1]/900)))
     if marker_box:
-        x, y, b, h = marker_box
-        cv2.rectangle(anzeige, (x, y), (x + b, y + h), (255, 0, 0), 2)
-    cv2.imwrite(pfad, anzeige)
+        x, y, w, h = marker_box
+        cv2.rectangle(overlay, (x, y), (x+w, y+h), (255, 180, 0), 2)
+    frei = np.full_like(bild, 35)
+    frei[m] = bild[m]
+    ansichten = [bild, overlay, cv2.cvtColor(maske, cv2.COLOR_GRAY2BGR), frei]
+    breite = min(720, bild.shape[1])
+    hoehe = max(1, round(bild.shape[0]*breite/bild.shape[1]))
+    kopf = 36
+    panel = np.full((2*(hoehe+kopf), 2*breite, 3), 245, np.uint8)
+    for i, (ansicht, text) in enumerate(zip(ansichten,
+            ["Original (unveraendert)", "Kontur und erkannte Pflanzenflaeche",
+             "Maske: weiss = Pflanze", "Freistellung zur Sichtpruefung"])):
+        x, y = (i % 2)*breite, (i // 2)*(hoehe+kopf)
+        panel[y+kopf:y+kopf+hoehe, x:x+breite] = cv2.resize(ansicht, (breite, hoehe))
+        cv2.putText(panel, text, (x+10, y+24), cv2.FONT_HERSHEY_SIMPLEX,
+                    min(0.55, breite/1000), (35, 35, 35), 1, cv2.LINE_AA)
+    cv2.imwrite(pfad, panel)
 
 
 # --- Zeitreihe und Pruefung ------------------------------------------
 def zeitreihe(zeilen, zeiten):
     """Stunden seit Start und Wachstumsrate. Grundlage fuer den Digital Twin."""
-    start, vorher = zeiten[0], None
+    echte_zeiten = [t for z, t in zip(zeilen, zeiten) if z["captured_at"]]
+    start = min(echte_zeiten) if echte_zeiten else None
+    vorher = None
     for z, t in zip(zeilen, zeiten):
-        z["stunden_seit_start"] = round((t - start).total_seconds() / 3600, 2)
+        z["stunden_seit_start"] = None
         z["wachstumsrate_cm2_pro_tag"] = None
         z["_sprung_pct"] = None
-
+        if not z["captured_at"] or start is None:
+            continue
+        z["stunden_seit_start"] = round((t-start).total_seconds()/3600, 4)
         flaeche = z["blattflaeche_cm2"]
-        if flaeche is not None and vorher:
-            stunden = (t - vorher[0]).total_seconds() / 3600
-            delta = flaeche - vorher[1]
+        if not z["brauchbar"] or flaeche is None:
+            continue
+        if vorher:
+            stunden = (t-vorher[0]).total_seconds()/3600
+            delta = flaeche-vorher[1]
             if stunden > 0:
-                z["wachstumsrate_cm2_pro_tag"] = round(delta / stunden * 24, 3)
+                z["wachstumsrate_cm2_pro_tag"] = round(delta/stunden*24, 3)
             if vorher[1] > 0:
-                z["_sprung_pct"] = 100 * delta / vorher[1]
-        if flaeche is not None:
-            vorher = (t, flaeche)
+                z["_sprung_pct"] = 100*delta/vorher[1]
+        vorher = (t, flaeche)
 
 
 def pruefen(zeilen):
     """Setzt die Spalten 'auffaelligkeit' und 'brauchbar'."""
     for z in zeilen:
         gruende = []
-        if z["massstab_quelle"] == "":
+        if z["massstab_quelle"] == "" and not DATENSATZ_MODUS:
             gruende.append("kein_marker")
         if not z["pflanzen_pixel"]:
             gruende.append("keine_pflanze")
@@ -444,7 +440,7 @@ def pruefen(zeilen):
 
 
 # --- Spaltenreihenfolge der CSV --------------------------------------
-SPALTEN = (["bild", "stunden_seit_start", "zeitquelle",
+SPALTEN = (["bild", "ausgabe_stamm", "captured_at", "bildquelle", "analyse_modus", "stunden_seit_start", "zeitquelle",
             "pflanzen_pixel", "blattflaeche_cm2", "durchmesser_mm", "kompaktheit",
             "wachstumsrate_cm2_pro_tag",
             "mittel_r", "mittel_g", "mittel_b", "farbe_hex", "mittel_h", "mittel_s",
@@ -468,10 +464,6 @@ def main():
 
     ziel = sys.argv[1]
 
-    if os.path.isdir(ziel) or not os.path.exists(ziel):
-        bilder_holen(ziel)
-        alte_bilder_loeschen(ziel)
-
     if os.path.isfile(ziel):
         pfade = [ziel]
     elif os.path.isdir(ziel):
@@ -484,15 +476,28 @@ def main():
         print("nicht gefunden:", ziel)
         return
 
+    if DATENSATZ_MODUS and NUR_DRAUFSICHT and os.path.isdir(ziel):
+        top = [p for p in pfade if re.search(r"_top_", os.path.basename(p), re.I)]
+        if top:
+            print(f"Draufsicht-Filter: {len(top)} Bilder, {len(pfade)-len(top)} andere Ansichten ausgelassen")
+            pfade = top
+
     bilder = []
     for pfad in pfade:
-        name = os.path.splitext(os.path.basename(pfad))[0]
-        zeit = zeit_aus_name(name)
-        quelle = "name" if zeit else "dateidatum"
-        if zeit is None:
-            zeit = datetime.fromtimestamp(os.path.getmtime(pfad))
+        # Relativer Pfad unterscheidet gleichnamige Bilder in Unterordnern.
+        name = (os.path.relpath(pfad, ziel) if os.path.isdir(ziel)
+                else os.path.basename(pfad)).replace(os.sep, "/")
+        zeit = None if DATENSATZ_MODUS else zeit_aus_name(os.path.basename(name))
+        quelle = "keine_aufnahmezeit" if DATENSATZ_MODUS else "name"
+        if not DATENSATZ_MODUS and zeit is None:
+            quelle = "dateidatum"
+            zeit = datetime.fromtimestamp(os.path.getmtime(pfad), timezone.utc)
         bilder.append((zeit, name, quelle, pfad))
-    bilder.sort()
+    def namensschluessel(name):
+        return tuple((0, int(t)) if t.isdigit() else (1, t.lower())
+                     for t in re.split(r"(\d+)", name))
+    bilder.sort(key=lambda b: namensschluessel(b[1]) if DATENSATZ_MODUS
+                else (b[0], namensschluessel(b[1])))
 
     # Erst aufraeumen, dann pruefen: auch bei null Bildern darf nichts
     # aus einem frueheren Lauf stehen bleiben.
@@ -502,7 +507,9 @@ def main():
     os.makedirs(ordner_maske, exist_ok=True)
     os.makedirs(ordner_kontrolle, exist_ok=True)
 
-    alt = glob.glob(f"{ordner_maske}/*.png") + glob.glob(f"{ordner_kontrolle}/*.png")
+    alt = (glob.glob(f"{ordner_maske}/*.png")
+           + glob.glob(f"{ordner_kontrolle}/*.png")
+           + glob.glob(os.path.join(AUSGABE, "grafiken", "*.png")))
     if os.path.exists(csv_pfad):
         alt.append(csv_pfad)
     for f in alt:
@@ -514,9 +521,12 @@ def main():
         print("keine Bilder gefunden in:", ziel)
         return
 
-    kalibrierung = kalibrierung_laden()
-    print("Entzerrung aktiv" if kalibrierung else
-          f"Entzerrung inaktiv ({KALIBRIERUNG} fehlt)")
+    kalibrierung = None if DATENSATZ_MODUS else kalibrierung_laden()
+    if DATENSATZ_MODUS:
+        print("Datensatzmodus: lokale Einzelbilder, ohne Kamera-Kalibrierung")
+    else:
+        print("Entzerrung aktiv" if kalibrierung else
+              f"Entzerrung inaktiv ({KALIBRIERUNG} fehlt)")
 
     zeilen, zeiten, uebersprungen = [], [], []
     for i, (zeit, name, quelle, pfad) in enumerate(bilder, 1):
@@ -525,6 +535,11 @@ def main():
         if bild is None:
             print(f"{kopf} nicht lesbar")
             uebersprungen.append((name, "nicht lesbar"))
+            continue
+
+        if min(bild.shape[:2]) < 3:
+            print(f"{kopf} uebersprungen: Bild zu klein")
+            uebersprungen.append((name, "Bild zu klein"))
             continue
 
         # Rauschen am Originalbild messen, vor Entzerrung und Filterung
@@ -543,16 +558,23 @@ def main():
             continue
 
         # Erst jetzt steht fest, dass das Bild verwendet wird
-        mm_px, marker_box = marker_finden(bild)
+        # Ein weisses Quadrat im Datensatz ist kein verifizierter 40-mm-Marker.
+        mm_px, marker_box = (None, None) if DATENSATZ_MODUS else marker_finden(bild)
         quelle_massstab = "marker" if mm_px else ""
         if mm_px is None and MM_PRO_PIXEL_MANUELL:
             mm_px = MM_PRO_PIXEL_MANUELL
             quelle_massstab = "manuell"
 
-        cv2.imwrite(f"{ordner_maske}/{name}_maske.png", maske)
-        kontrollbild(bild, maske, marker_box, f"{ordner_kontrolle}/{name}_kontrolle.png")
+        ausgabename = f"{i:05d}_{os.path.splitext(os.path.basename(pfad))[0]}"
+        cv2.imwrite(f"{ordner_maske}/{ausgabename}_maske.png", maske)
+        kontrollbild(bild, maske, marker_box,
+                     f"{ordner_kontrolle}/{ausgabename}_kontrolle.png")
 
-        z = {"bild": name, "zeitquelle": quelle, "massstab_quelle": quelle_massstab,
+        z = {"bild": name, "ausgabe_stamm": ausgabename,
+             "captured_at": zeit.isoformat().replace("+00:00", "Z") if zeit and quelle == "name" else "",
+             "zeitquelle": quelle, "massstab_quelle": quelle_massstab,
+             "bildquelle": BILDQUELLE if DATENSATZ_MODUS else "lokale_kameraaufnahme",
+             "analyse_modus": "datensatz" if DATENSATZ_MODUS else "zeitreihe",
              **merkmale(bild, maske, mm_px), "rauschen": round(rauschen, 1)}
         zeilen.append(z)
         zeiten.append(zeit)
@@ -564,11 +586,23 @@ def main():
         print(f"\nalle {len(bilder)} Bilder uebersprungen - nichts auszuwerten")
         return
 
-    zeitreihe(zeilen, zeiten)
+    # Qualitaet vor zeitlichen Vergleichen pruefen: unbrauchbare Bilder
+    # duerfen keine Vergleichsflaeche fuer spaetere Aufnahmen liefern.
+    for z in zeilen:
+        z["_sprung_pct"] = None
     pruefen(zeilen)
-    referenz = gesundheit.bewerten(zeilen)
+    if DATENSATZ_MODUS:
+        for z in zeilen:
+            z["stunden_seit_start"] = None
+            z["wachstumsrate_cm2_pro_tag"] = None
+            z["_sprung_pct"] = None
+    else:
+        zeitreihe(zeilen, zeiten)
+    pruefen(zeilen)
+    referenz = gesundheit.bewerten(zeilen, zeitreihe_aktiv=not DATENSATZ_MODUS,
+                                    referenz_freigegeben=REFERENZ_FREIGEGEBEN)
 
-    with open(csv_pfad, "w", newline="") as f:
+    with open(csv_pfad, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=SPALTEN, extrasaction="ignore")
         w.writeheader()
         w.writerows(zeilen)
@@ -577,7 +611,7 @@ def main():
     if uebersprungen:
         print(f"{len(uebersprungen)} Bild(er) uebersprungen und nicht verwendet")
 
-    ohne_name = sum(1 for z in zeilen if z["zeitquelle"] != "name")
+    ohne_name = sum(1 for z in zeilen if z["zeitquelle"] == "dateidatum")
     if ohne_name:
         print(f"HINWEIS: {ohne_name} Bild(er) ohne Zeitstempel im Namen "
               f"-> Dateidatum verwendet, siehe Spalte 'zeitquelle'")
@@ -589,6 +623,9 @@ def main():
             print(f"   {z['bild']:38s} {z['auffaelligkeit']}")
         if len(schlecht) > 8:
             print(f"   ... und {len(schlecht) - 8} weitere")
+
+    if DATENSATZ_MODUS:
+        print("Datensatz: Pixel- und Farbwerte; keine gemeinsame Wachstums- oder Gesundheitszeitreihe")
 
     if referenz:
         bewertet = [z for z in zeilen if z["gesundheit"] is not None]
@@ -602,7 +639,7 @@ def main():
         print()
         try:
             import grafiken
-            grafiken.main()
+            grafiken.main(csv_pfad=csv_pfad, ordner=os.path.join(AUSGABE, "grafiken"))
         except ImportError:
             print("matplotlib fehlt - 'pip install matplotlib', "
                   "dann 'python grafiken.py'")

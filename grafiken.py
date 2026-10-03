@@ -1,64 +1,42 @@
 """
-BioBox - Diagramme
+BioBox - die fuenf Diagramme aus BB-REF-MERKMALE-001.
 
-Aufruf:  python grafiken.py        (nach analyse.py)
+Aufruf: python grafiken.py
+Liest auswertung/ergebnis.csv, schreibt auswertung/grafiken/.
 
-Liest auswertung/ergebnis.csv und schreibt PNG-Dateien nach
-auswertung/grafiken/. Auffaellige Bilder werden ausgelassen.
-Die Zeitachse zeigt Datum und Uhrzeit aus dem Bildnamen.
+Unbrauchbare Bilder werden immer ausgeschlossen. Alle fuenf Dateien werden
+angelegt, auch wenn einzelne Messgroessen fehlen. Fehlende Werte werden NICHT
+als Null gezeichnet. Externe Einzelbilder sind keine Wachstumszeitreihe.
 """
-
 import csv
-import glob
 import os
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import matplotlib
-matplotlib.use("Agg")                    # speichert nur Dateien, kein Fenster
+matplotlib.use("Agg")
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 
 CSV = os.path.join("auswertung", "ergebnis.csv")
 ORDNER = os.path.join("auswertung", "grafiken")
-GRUEN, GELB, BRAUN, BLAU, GRAU, ROT = (
-    "#2e7d32", "#f9a825", "#6d4c41", "#1565c0", "#9e9e9e", "#c62828")
-
-# Spalten, die immer Text bleiben. Ohne diese Liste wuerde z. B. der
-# Bildname "20260913_110715" von float() als Zahl gelesen - Python erlaubt
-# Unterstriche als Ziffern-Trennzeichen.
-TEXTSPALTEN = {"bild", "zeitquelle", "massstab_quelle", "auffaelligkeit", "farbe_hex",
-               "gesundheit_kategorie", "gesundheitswarnung"}
-
-ZEITFORMATE = [
-    (r"(\d{8})[T_-](\d{6})", "%Y%m%d%H%M%S"),
-    (r"(\d{8})[T_-](\d{4})(?!\d)", "%Y%m%d%H%M"),
-    (r"(\d{4}-\d{2}-\d{2})[T_ ](\d{2})[-.](\d{2})[-.](\d{2})", "%Y-%m-%d%H%M%S"),
-    (r"(\d{4}-\d{2}-\d{2})(?!\d)", "%Y-%m-%d"),
-    (r"(\d{8})(?!\d)", "%Y%m%d"),
-]
+DATEIEN = ["01_wachstum.png", "02_wachstumsrate.png", "03_farbverlauf.png",
+           "04_gesundheit.png", "05_teilscores.png"]
+GRUEN, GELB, BRAUN, BLAU, ROT = "#2e7d32", "#e6a000", "#78513b", "#27628b", "#bd4545"
+TEXTSPALTEN = {"bild", "ausgabe_stamm", "bildquelle", "analyse_modus", "zeitquelle",
+               "massstab_quelle", "auffaelligkeit", "farbe_hex", "gesundheit_kategorie",
+               "gesundheitswarnung", "scoring_version", "captured_at"}
 
 
-def zeit_aus_name(name):
-    for muster, format_ in ZEITFORMATE:
-        treffer = re.search(muster, name)
-        if treffer:
-            try:
-                return datetime.strptime("".join(treffer.groups()), format_)
-            except ValueError:
-                continue
-    return None
-
-
-def lesen():
-    """Liest die CSV und ergaenzt je Zeile den echten Zeitpunkt."""
+def lesen(csv_pfad=CSV):
+    with open(csv_pfad, encoding="utf-8-sig", newline="") as f:
+        daten = list(csv.DictReader(f))
     zeilen = []
-    for z in csv.DictReader(open(CSV)):
-        neu = {}
+    for nummer, z in enumerate(daten, 1):
+        neu = {"bildnummer": nummer}
         for k, v in z.items():
             if k in TEXTSPALTEN:
-                neu[k] = v
-            elif v == "":
+                neu[k] = v or ""
+            elif not v:
                 neu[k] = None
             elif v in ("True", "False"):
                 neu[k] = v == "True"
@@ -67,132 +45,171 @@ def lesen():
                     neu[k] = float(v)
                 except ValueError:
                     neu[k] = v
+        neu["zeit"] = None
+        if neu.get("analyse_modus") != "datensatz" and neu.get("captured_at"):
+            try:
+                neu["zeit"] = datetime.fromisoformat(neu["captured_at"].replace("Z", "+00:00"))
+            except ValueError:
+                pass
         zeilen.append(neu)
-
-    # Absolute Zeitachse: aus dem ersten lesbaren Namen wird der Startzeitpunkt
-    # abgeleitet, alle uebrigen Zeiten folgen aus stunden_seit_start. Dadurch
-    # bekommen auch Bilder ohne Zeitstempel im Namen die richtige Position.
-    start = next((zeit_aus_name(z["bild"]) - timedelta(hours=z["stunden_seit_start"])
-                  for z in zeilen if zeit_aus_name(z["bild"])), None)
-    for z in zeilen:
-        z["zeit"] = (start + timedelta(hours=z["stunden_seit_start"])) if start else None
     return zeilen
 
 
-def paare(zeilen, feld):
-    """Zeitpunkte und Werte, bei denen beides vorhanden ist."""
-    x = [z["zeit"] for z in zeilen if z["zeit"] and z.get(feld) is not None]
-    y = [z[feld] for z in zeilen if z["zeit"] and z.get(feld) is not None]
-    return x, y
+def paare(zeilen, feld, datensatz):
+    auswahl = [z for z in zeilen if z.get(feld) is not None
+               and (datensatz or z.get("zeit") is not None)]
+    return ([z["bildnummer"] if datensatz else z["zeit"] for z in auswahl],
+            [z[feld] for z in auswahl])
 
 
-def datumsachse(ax, zeilen):
-    spanne = (zeilen[-1]["zeit"] - zeilen[0]["zeit"]).total_seconds() / 3600
-    ax.xaxis.set_major_formatter(mdates.DateFormatter(
-        "%d.%m." if spanne > 72 else "%d.%m. %H:%M"))
+def achse(ax, zeilen, datensatz):
+    ax.grid(alpha=0.18)
+    ax.spines[["top", "right"]].set_visible(False)
+    if datensatz:
+        ax.set_xlabel("Bildnummer in ergebnis.csv (keine Zeitachse)")
+        ax.xaxis.get_major_locator().set_params(integer=True)
+    else:
+        ax.set_xlabel("Aufnahmezeit (UTC)")
+        zeiten = [z["zeit"] for z in zeilen if z["zeit"]]
+        spanne = (max(zeiten)-min(zeiten)).total_seconds()/3600 if zeiten else 0
+        ax.xaxis.set_major_formatter(mdates.DateFormatter(
+            "%d.%m." if spanne > 72 else "%d.%m. %H:%M"))
 
 
-def speichern(fig, name):
-    fig.autofmt_xdate()
-    fig.tight_layout()
-    fig.savefig(os.path.join(ORDNER, name), dpi=130)
+def hinweis(ax, text):
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.text(0.5, 0.5, text, transform=ax.transAxes, ha="center", va="center",
+            fontsize=12, color="#52616b", linespacing=1.6,
+            bbox={"boxstyle": "round,pad=1", "facecolor": "#f3f6f7", "edgecolor": "none"})
+    ax.spines[:].set_visible(False)
+
+
+def speichern(fig, name, ordner, fuss):
+    fig.text(0.02, 0.015, fuss, fontsize=8, color="#66727b")
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    fig.savefig(os.path.join(ordner, name), dpi=150, facecolor="white")
     plt.close(fig)
-    print("  ", os.path.join(ORDNER, name))
+    print("  ", os.path.join(ordner, name))
 
 
-def main():
-    if not os.path.exists(CSV):
-        print(f"{CSV} fehlt - zuerst analyse.py ausfuehren")
+def main(csv_pfad=CSV, ordner=ORDNER):
+    if not os.path.exists(csv_pfad):
+        print(f"{csv_pfad} fehlt - zuerst analyse.py ausfuehren")
         return
+    alle = lesen(csv_pfad)
+    datensatz = bool(alle and alle[0].get("analyse_modus") == "datensatz")
+    zeilen = [z for z in alle if z.get("brauchbar") is True
+              and (datensatz or z.get("zeit") is not None)]
+    os.makedirs(ordner, exist_ok=True)
+    # Auch die zwei frueheren Datensatzgrafiken entfernen.
+    for name in DATEIEN + ["01_pflanzenpixel.png", "02_farbwerte.png"]:
+        pfad = os.path.join(ordner, name)
+        if os.path.exists(pfad):
+            os.remove(pfad)
+    fuss = (f"BioBox | {len(zeilen)} brauchbare Bilder | "
+            f"{len(alle)-len(zeilen)} Bilder ausgeschlossen | "
+            + ("Externer Testdatensatz" if datensatz else "Pflanzenzeitreihe"))
+    leer = "Keine brauchbaren Bilder.\nQualitaetsflags in ergebnis.csv und Kontrollbilder pruefen."
 
-    alle = lesen()
-    zeilen = [z for z in alle if z["brauchbar"] and z["zeit"]]
-    if not zeilen:
-        print("keine brauchbaren Bilder mit Zeitangabe")
-        return
+    # 1: Echte Flaeche ueber der Zeit oder klar gekennzeichnete Pixel-Rohwerte.
+    fig, ax = plt.subplots(figsize=(10, 5))
+    if datensatz:
+        x, y = paare(zeilen, "pflanzen_pixel", True)
+        ax.set_title("01 | Pflanzenflaeche je Einzelbild - Datensatztest")
+        ax.set_ylabel("Segmentierte Pflanzenpixel [px]")
+        if x:
+            ax.bar(x, y, color=GRUEN)
+            achse(ax, zeilen, True)
+            ax.text(0.02, 0.98, "Pixelwerte: kein cm2-Massstab, kein Wachstumsverlauf",
+                    transform=ax.transAxes, va="top", fontsize=9)
+        else:
+            hinweis(ax, leer)
+    else:
+        ax.set_title("01 | Wachstumsverlauf")
+        ax.set_ylabel("Projizierte Blattflaeche [cm2]")
+        x, y = paare(zeilen, "blattflaeche_cm2", False)
+        if x:
+            ax.plot(x, y, "o-", color=GRUEN, markersize=4)
+            achse(ax, zeilen, False)
+        else:
+            hinweis(ax, "Keine kalibrierten Flaechen mit Aufnahmezeit.\nMassstab und Zeitquelle pruefen.")
+    speichern(fig, DATEIEN[0], ordner, fuss)
 
-    os.makedirs(ORDNER, exist_ok=True)
-
-    # Alte Diagramme loeschen, damit nie eine veraltete Grafik stehen bleibt.
-    alt = glob.glob(os.path.join(ORDNER, "*.png"))
-    for f in alt:
-        os.remove(f)
-    if alt:
-        print(f"{len(alt)} altes Diagramm(e) geloescht")
-
-    verworfen = len(alle) - len(zeilen)
-    print(f"{len(zeilen)} Bilder in den Diagrammen"
-          f"{f', {verworfen} auffaellige ausgelassen' if verworfen else ''}\n")
-
-    # 1 Wachstum
-    fig, ax = plt.subplots(figsize=(9, 4.5))
-    ax.plot(*paare(zeilen, "blattflaeche_cm2"), "o-", color=GRUEN, markersize=4)
-    ax.set_ylabel("projizierte Blattflaeche [cm2]")
-    ax.set_title("Wachstumsverlauf")
-    ax.grid(alpha=0.3)
-    datumsachse(ax, zeilen)
-    speichern(fig, "01_wachstum.png")
-
-    # 2 Wachstumsrate
-    fig, ax = plt.subplots(figsize=(9, 4.5))
-    x, y = paare(zeilen, "wachstumsrate_cm2_pro_tag")
-    ax.bar(x, y, color=[GRUEN if v >= 0 else ROT for v in y])
-    ax.axhline(0, color="black", linewidth=0.8)
-    ax.set_ylabel("Wachstumsrate [cm2/Tag]")
-    ax.set_title("Wachstumsrate - negative Werte deuten auf Messfehler")
-    ax.grid(alpha=0.3, axis="y")
-    datumsachse(ax, zeilen)
-    speichern(fig, "02_wachstumsrate.png")
-
-    # 3 Farbe
-    fig, (oben, unten) = plt.subplots(2, 1, figsize=(9, 7), sharex=True)
-    oben.plot(*paare(zeilen, "gruenindex"), "-", color=GRUEN)
-    oben.set_ylabel("Gruenindex")
-    oben.set_title("Farbentwicklung")
-    oben.grid(alpha=0.3)
-    for feld, farbe, name in [("gelbanteil_pct", GELB, "Gelbanteil"),
-                              ("braunanteil_pct", BRAUN, "Braunanteil")]:
-        unten.plot(*paare(zeilen, feld), "-", color=farbe, label=name)
-    unten.set_ylabel("Anteil an Blattflaeche [%]")
-    unten.legend(loc="upper left")
-    unten.grid(alpha=0.3)
-    datumsachse(unten, zeilen)
-    speichern(fig, "03_farbverlauf.png")
-
-    # 4 Gesundheit
-    x, y = paare(zeilen, "gesundheit")
+    # 2: Nie die Groessendifferenz verschiedener Pflanzen als Wachstum ausgeben.
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.set_title("02 | Wachstumsrate")
+    x, y = paare(zeilen, "wachstumsrate_cm2_pro_tag", False) if not datensatz else ([], [])
     if x:
-        fig, ax = plt.subplots(figsize=(9, 4.5))
-        for u, o, farbe in [(85, 100, "#c8e6c9"), (70, 85, "#dcedc8"),
-                            (50, 70, "#fff9c4"), (30, 50, "#ffe0b2"),
-                            (0, 30, "#ffcdd2")]:
-            ax.axhspan(u, o, color=farbe, zorder=0)
-        ax.plot(x, y, "o-", color="black", markersize=4, zorder=3)
-        ax.set_ylim(0, 100)
-        ax.set_ylabel("Gesundheit [0-100]")
-        ax.set_title("Gesundheitsverlauf")
-        ax.grid(alpha=0.2)
-        datumsachse(ax, zeilen)
-        speichern(fig, "04_gesundheit.png")
+        ax.bar(x, y, width=0.015, color=[GRUEN if v >= 0 else ROT for v in y])
+        ax.axhline(0, color="#555", linewidth=0.8)
+        ax.set_ylabel("Wachstumsrate [cm2/Tag]")
+        achse(ax, zeilen, False)
+    else:
+        hinweis(ax, "Keine Wachstumsrate berechenbar.\nNoetig: dieselbe Pflanze zu mehreren Aufnahmezeiten\nund ein verifizierter Massstab in mm/px.")
+    speichern(fig, DATEIEN[1], ordner, fuss)
 
-    # 5 Teilscores der letzten Aufnahme
-    letzte = [z for z in zeilen if z.get("score_gruen") is not None]
-    if letzte:
-        z = letzte[-1]
-        felder = ["score_gruen", "score_gelb", "score_braun",
-                  "score_saettigung", "score_farbton"]
-        fig, ax = plt.subplots(figsize=(7, 4))
-        balken = ax.barh(["Gruen", "Gelb", "Braun", "Saettigung", "Farbton"],
-                         [z[f] for f in felder], color=BLAU)
-        ax.bar_label(balken, fmt="%.0f", padding=3)
-        ax.set_xlim(0, 108)
+    # 3: Farbwerte sind auch im Einzelbildmodus messbar.
+    fig, (oben, unten) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+    oben.set_title("03 | " + ("Farbwerte je Einzelbild" if datensatz else "Farbverlauf"))
+    x, y = paare(zeilen, "gruenindex", datensatz)
+    if x:
+        if datensatz:
+            oben.scatter(x, y, s=22, color=GRUEN)
+        else:
+            oben.plot(x, y, "o-", markersize=3, color=GRUEN)
+        oben.set_ylabel("Gruenindex G / (R+G+B)")
+        for feld, farbe, label in [("gelbanteil_pct", GELB, "Gelbanteil"),
+                                   ("braunanteil_pct", BRAUN, "Braunanteil")]:
+            x, y = paare(zeilen, feld, datensatz)
+            unten.plot(x, y, "o" if datensatz else "o-", markersize=4,
+                       color=farbe, label=label)
+        unten.set_ylabel("Anteil in Pflanzenmaske [%]")
+        unten.legend()
+        achse(oben, zeilen, datensatz)
+        achse(unten, zeilen, datensatz)
+        oben.set_xlabel("")
+    else:
+        hinweis(oben, leer)
+        hinweis(unten, "Keine auswertbaren Farbwerte.")
+    speichern(fig, DATEIEN[2], ordner, fuss)
+
+    # 4: Relative Gesundheit ausschliesslich aus einer eigenen Referenz.
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.set_title("04 | Gesundheitsverlauf")
+    x, y = paare(zeilen, "gesundheit", False) if not datensatz else ([], [])
+    if x:
+        for u, o, farbe in [(85, 100, "#d6eaca"), (70, 85, "#e6edca"),
+                            (50, 70, "#fcf1cb"), (30, 50, "#fce0c4"),
+                            (0, 30, "#f6d2d2")]:
+            ax.axhspan(u, o, color=farbe)
+        ax.plot(x, y, "o-", color="#25333b", markersize=4)
+        ax.set_ylim(0, 100)
+        ax.set_ylabel("Relativer Gesundheitsindex [0-100]")
+        achse(ax, zeilen, False)
+    else:
+        hinweis(ax, "Keine relative Gesundheitsbewertung.\nNoetig: mindestens 3 brauchbare Referenzbilder\nderselben Pflanze bei gleicher Kamera und Beleuchtung.\nDie Referenz muss per Sichtpruefung freigegeben sein.")
+    speichern(fig, DATEIEN[3], ordner, fuss)
+
+    # 5: Letzte gueltige Aufnahme mit vollstaendigen Teilscores.
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.set_title("05 | Teilscores der letzten gueltigen Aufnahme")
+    felder = ["score_gruen", "score_gelb", "score_braun", "score_saettigung", "score_farbton"]
+    bewertet = [z for z in zeilen if all(z.get(k) is not None for k in felder)] if not datensatz else []
+    if bewertet:
+        z = bewertet[-1]
+        balken = ax.barh(["Gruen (30 %)", "Gelb (25 %)", "Braun (20 %)",
+                         "Saettigung (15 %)", "Farbton (10 %)"],
+                        [z[k] for k in felder], color=BLAU)
+        ax.bar_label(balken, fmt="%.1f", padding=3)
+        ax.set_xlim(0, 110)
         ax.set_xlabel("Teilscore [0-100]")
-        ax.set_title(f"Letzte Aufnahme - Gesamt {z['gesundheit']}/100")
-        ax.grid(alpha=0.3, axis="x")
-        fig.tight_layout()
-        fig.savefig(os.path.join(ORDNER, "05_teilscores.png"), dpi=130)
-        plt.close(fig)
-        print("  ", os.path.join(ORDNER, "05_teilscores.png"))
+        ax.set_title(f"05 | {z['bild']} - Gesamt {z['gesundheit']}/100", fontsize=11)
+        ax.grid(alpha=0.18, axis="x")
+        ax.spines[["top", "right"]].set_visible(False)
+    else:
+        hinweis(ax, "Keine Teilscores vorhanden.\nGruen, Gelb, Braun, Saettigung und Farbton\nwerden gegen die eigene freigegebene Referenz bewertet.\nVerschiedene Pflanzen sind keine gemeinsame Referenz.")
+    speichern(fig, DATEIEN[4], ordner, fuss)
 
 
 if __name__ == "__main__":
