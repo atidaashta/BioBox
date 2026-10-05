@@ -14,7 +14,7 @@ Keine Wachstumsrate oder relative Gesundheit zwischen verschiedenen Pflanzen.
 Ausgabe im Ordner "auswertung":
     ergebnis.csv    eine Zeile je ausgewertetem Bild
     masken/         Segmentierungsmaske je Bild
-    kontrolle/      Original, Kontur, Maske und Freistellung nebeneinander
+    kontrolle/      Nur Kontur und erkannte Pflanzenflaeche je Bild
     grafiken/       alle 5 Dateien aus BB-REF-MERKMALE-001; fehlende Werte
                     werden erklaert, nicht als Null oder Messung erfunden
 
@@ -363,9 +363,8 @@ def merkmale(bild, maske, mm_px):
 
 
 def kontrollbild(bild, maske, marker_box, pfad):
-    """Vier Ansichten: Original, Kontur, binaere Maske, freigestellte Pflanze.
+    """Nur die bisherige obere rechte Ansicht: Kontur und Pflanzen-Overlay.
 
-    Keine kuenstliche Aufhellung: Die Originalfarbe muss sichtbar bleiben.
     Nur diese Vorschau wird verkleinert, nicht Maske oder Messbild.
     """
     overlay = bild.copy()
@@ -376,20 +375,14 @@ def kontrollbild(bild, maske, marker_box, pfad):
     if marker_box:
         x, y, w, h = marker_box
         cv2.rectangle(overlay, (x, y), (x+w, y+h), (255, 180, 0), 2)
-    frei = np.full_like(bild, 35)
-    frei[m] = bild[m]
-    ansichten = [bild, overlay, cv2.cvtColor(maske, cv2.COLOR_GRAY2BGR), frei]
     breite = min(720, bild.shape[1])
     hoehe = max(1, round(bild.shape[0]*breite/bild.shape[1]))
     kopf = 36
-    panel = np.full((2*(hoehe+kopf), 2*breite, 3), 245, np.uint8)
-    for i, (ansicht, text) in enumerate(zip(ansichten,
-            ["Original (unveraendert)", "Kontur und erkannte Pflanzenflaeche",
-             "Maske: weiss = Pflanze", "Freistellung zur Sichtpruefung"])):
-        x, y = (i % 2)*breite, (i // 2)*(hoehe+kopf)
-        panel[y+kopf:y+kopf+hoehe, x:x+breite] = cv2.resize(ansicht, (breite, hoehe))
-        cv2.putText(panel, text, (x+10, y+24), cv2.FONT_HERSHEY_SIMPLEX,
-                    min(0.55, breite/1000), (35, 35, 35), 1, cv2.LINE_AA)
+    panel = np.full((hoehe+kopf, breite, 3), 245, np.uint8)
+    panel[kopf:] = cv2.resize(overlay, (breite, hoehe))
+    cv2.putText(panel, "Kontur und erkannte Pflanzenflaeche", (10, 24),
+                cv2.FONT_HERSHEY_SIMPLEX, min(0.55, breite/1000),
+                (35, 35, 35), 1, cv2.LINE_AA)
     cv2.imwrite(pfad, panel)
 
 
