@@ -1,12 +1,26 @@
 """
 BioBox - Bildanalyse (A-M2 Computer-Vision-Pipeline)
 
-Aufruf:  python analyse.py bilder_demo            Ordner, auch mit Unterordnern
+Aufruf:  python analyse.py                        neues Foto, letzte 100 Pi-Bilder auswerten
+         python analyse.py --nur-bild             Pi-Bilder holen, ohne Analyse
+         python analyse.py --pi                   wie der Aufruf ohne Argument
+         python analyse.py bilder_demo            lokale Datensatzbilder auswerten
          python analyse.py bild.jpg               einzelnes Bild
          python analyse.py --kalibrieren ordner   fuer die spaetere Kamera
 
-Aktuell: lokale Datensatzbilder. Kein Abruf vom Raspberry Pi.
-Originalbilder werden nicht geloescht. Jedes Bild wird einzeln ausgewertet.
+Pi-Aufruf auf dem Windows-Laptop, waehrend Tailscale verbunden ist.
+Speicherort: Downloads/diploma/bilder/biobox_<Aufnahmezeit>-<Sitzung>.jpg
+Alle fertigen normalen Aufnahmen aus dem Pi-Ordner 'recent' beruecksichtigen.
+Lokal bleiben hoechstens die letzten 100 importierten Kamera-JPEGs erhalten.
+Es werden nur fehlende Bilder der neuesten 100 heruntergeladen.
+JSON, Logs und Pruefsummen bleiben auf dem Pi.
+SSH kann fuer Aufnahme und Download jeweils nach dem Pi-Passwort fragen.
+Bei einem Fehler wird die Analyse nicht gestartet.
+Die Pi-Zeitreihe verwendet nur biobox_*.jpg aus diesem Ordner. Sie setzt
+EINE Pflanze mit fester Kamera voraus. Datensatzbilder bleiben getrennt.
+Nach erfolgreichem Abruf werden aeltere lokale biobox_*.jpg entfernt.
+Andere lokale Bilder und Originale auf dem Pi werden nicht geloescht.
+Jedes der behaltenen Kamera-Bilder wird einzeln ausgewertet.
 Grid-Kalibrierung und Grid-Massstab werden im Datensatzmodus nicht verwendet.
 Ohne verifizierten Massstab bleiben cm2 und mm leer; Pixelwerte bleiben erhalten.
 Keine Wachstumsrate oder relative Gesundheit zwischen verschiedenen Pflanzen.
@@ -28,8 +42,14 @@ import glob
 import json
 import os
 import re
+import shlex
+import shutil
+import subprocess
 import sys
+import tarfile
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -41,6 +61,13 @@ import gesundheit
 # False spaeter nur fuer EINE Pflanze mit fester Kamera und echten Aufnahmezeiten.
 DATENSATZ_MODUS = True
 BILDQUELLE = "externer_testdatensatz"
+# Diese Einstellungen gelten fuer lokale Bilder mit explizitem Pfadargument.
+# Ohne Pfadargument wird stattdessen die Pi-Zeitreihe verwendet.
+PI_ADRESSE = "biobox@100.65.232.105"
+PI_AUFNAHME = "/home/biobox/.local/bin/biobox-photo-test --single"
+PI_FOTO_ORDNER = "/home/biobox/Pictures/BioBox/recent"
+BILDER_ORDNER = Path.home() / "Downloads" / "diploma" / "bilder"
+MAX_KAMERA_BILDER = 100
 # Nur fuer eine spaetere, zusammengehoerige Messreihe aktivieren, nachdem
 # die ersten Referenz-Kontrollbilder manuell gesichtet wurden (HEALTH-001, 4).
 REFERENZ_FREIGEGEBEN = False
@@ -106,6 +133,125 @@ ZEITFORMATE = [
     (r"(\d{4}-\d{2}-\d{2})(?!\d)", "%Y-%m-%d"),
     (r"(\d{8})(?!\d)", "%Y%m%d"),
 ]
+
+
+# --- Letzte 100 Kamera-JPEGs vom Pi holen ----------------------------
+def jpeg_lesbar(pfad):
+    """Nur vollstaendige, lesbare JPEGs als bereits heruntergeladen behandeln."""
+    try:
+        with Path(pfad).open("rb") as datei:
+            if datei.read(2) != b"\xff\xd8":
+                return False
+        bild = cv2.imread(str(pfad))
+        return bild is not None and min(bild.shape[:2]) >= 3
+    except OSError:
+        return False
+
+
+def pi_bilder_holen():
+    """Neu aufnehmen, vorhandene Aufnahmen abgleichen, lokal die letzten 100 behalten.
+
+    Die UTC-Aufnahmezeit im Sitzungsnamen bestimmt die Reihenfolge, nicht das
+    Download-Datum. Bereits importierte Bilder bleiben auch erhalten, wenn die
+    Pi-Archivierung sie aus 'recent' entfernt hat. Andere Dateien werden nie
+    in die Bereinigung einbezogen. Die Bereinigung folgt erst nach einem
+    vollstaendig erfolgreichen Download aller fehlenden, ausgewaehlten JPEGs.
+    """
+    if shutil.which("ssh") is None:
+        raise RuntimeError("ssh fehlt. Bitte den Windows-OpenSSH-Client aktivieren.")
+    if not isinstance(MAX_KAMERA_BILDER, int) or MAX_KAMERA_BILDER < 1:
+        raise RuntimeError("MAX_KAMERA_BILDER muss mindestens 1 sein.")
+    verbindung = ["-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15",
+                  "-o", "ServerAliveCountMax=2"]
+    # Der Helfer veroeffentlicht nur fertige Sitzungen. .pending-* kann im
+    # find-Ergebnis erscheinen, wird aber vom strengen Sitzungsmuster verworfen.
+    auflisten = (f"find {shlex.quote(PI_FOTO_ORDNER)} -mindepth 2 -maxdepth 2 "
+                 "-type f -name normal.jpg -printf 'BIOBOX_FOTO:%h\\n'")
+    print(f"Neue Aufnahme und Bildliste von {PI_ADRESSE}; Pi-Passwort ggf. eingeben.", flush=True)
+    aufnahme = subprocess.run(
+        ["ssh", *verbindung, PI_ADRESSE, PI_AUFNAHME + " && " + auflisten],
+        check=True, stdout=subprocess.PIPE, text=True, timeout=180)
+
+    muster = re.escape(PI_FOTO_ORDNER) + r"/(\d{8}T\d{6}Z-[A-Za-z0-9]+)"
+    remote, neue_sitzungen = set(), []
+    for zeile in aufnahme.stdout.splitlines():
+        zeile = zeile.strip()
+        if zeile.startswith("Photos and camera metadata:"):
+            treffer = re.fullmatch(muster, zeile.split(":", 1)[1].strip())
+            if treffer and ist_pi_bild(f"biobox_{treffer[1]}.jpg"):
+                neue_sitzungen.append(treffer[1])
+        elif zeile.startswith("BIOBOX_FOTO:"):
+            treffer = re.fullmatch(muster, zeile[len("BIOBOX_FOTO:"):])
+            if treffer and ist_pi_bild(f"biobox_{treffer[1]}.jpg"):
+                remote.add(treffer[1])
+    if len(neue_sitzungen) != 1 or neue_sitzungen[0] not in remote:
+        raise RuntimeError("Der Pi hat keinen eindeutigen neuen Fotoordner gemeldet.")
+
+    BILDER_ORDNER.mkdir(parents=True, exist_ok=True)
+    lokal = {p.name[len("biobox_"):-4]: p for p in BILDER_ORDNER.iterdir()
+             if p.is_file() and not p.is_symlink() and ist_pi_bild(p)}
+    vorhanden = {s for s, p in lokal.items() if jpeg_lesbar(p)}
+    auswahl = sorted(remote | vorhanden)[-MAX_KAMERA_BILDER:]
+    fehlend = [s for s in auswahl if s not in vorhanden]
+    print(f"Pi: {len(remote)} fertige Aufnahmen; lokal behalten: {len(auswahl)}; "
+          f"herunterladen: {len(fehlend)}")
+
+    if fehlend:
+        # Alle fehlenden JPEGs in EINER weiteren SSH-Verbindung uebertragen,
+        # damit nicht fuer jedes einzelne Bild das Passwort abgefragt wird.
+        dateinamen = {f"{s}/normal.jpg": f"biobox_{s}.jpg" for s in fehlend}
+        befehl = (f"tar -cf - -C {shlex.quote(PI_FOTO_ORDNER)} -- "
+                  + " ".join(shlex.quote(n) for n in dateinamen))
+        with tempfile.TemporaryDirectory(dir=BILDER_ORDNER, prefix=".biobox-download-") as tmp:
+            tmp = Path(tmp)
+            paket = tmp / "download.tar"
+            print("Kamera-JPEGs herunterladen; Pi-Passwort ggf. erneut eingeben.", flush=True)
+            with paket.open("wb") as stream:
+                subprocess.run(["ssh", *verbindung, PI_ADRESSE, befehl],
+                               check=True, stdout=stream, timeout=600)
+            erhalten = set()
+            with tarfile.open(paket, "r:") as archiv:
+                for eintrag in archiv:
+                    if (eintrag.name not in dateinamen or not eintrag.isfile()
+                            or eintrag.name in erhalten):
+                        raise RuntimeError("Unerwarteter Inhalt beim Bilddownload.")
+                    ziel = tmp / dateinamen[eintrag.name]
+                    with archiv.extractfile(eintrag) as quelle, ziel.open("wb") as datei:
+                        shutil.copyfileobj(quelle, datei)
+                    if not jpeg_lesbar(ziel):
+                        raise RuntimeError(f"JPEG nicht lesbar: {eintrag.name}")
+                    erhalten.add(eintrag.name)
+            if erhalten != set(dateinamen):
+                raise RuntimeError("Der Bilddownload ist unvollstaendig. Keine alten Bilder entfernt.")
+            for name in dateinamen.values():
+                ziel = BILDER_ORDNER / name
+                if ziel.is_symlink():
+                    raise RuntimeError(f"Zieldatei ist eine Verknuepfung: {ziel}")
+            for name in dateinamen.values():
+                (tmp / name).replace(BILDER_ORDNER / name)
+
+    behalten = {f"biobox_{s}.jpg" for s in auswahl}
+    entfernt = 0
+    for pfad in lokal.values():
+        if pfad.name not in behalten:
+            pfad.unlink()
+            entfernt += 1
+    print(f"{len(fehlend)} JPEGs geladen, {entfernt} aeltere lokale Kamera-Bilder entfernt.")
+    print(f"{len(auswahl)} Kamera-Bilder in: {BILDER_ORDNER}")
+    return [BILDER_ORDNER / f"biobox_{s}.jpg" for s in auswahl]
+
+
+def ist_pi_bild(pfad):
+    """Nur Bilder unserer Pi-Importe, keine danebenliegenden Datensatzbilder."""
+    treffer = re.fullmatch(r"biobox_(\d{8}T\d{6}Z)-[A-Za-z0-9]+\.jpg",
+                           os.path.basename(pfad))
+    if treffer is None:
+        return False
+    try:
+        datetime.strptime(treffer[1], "%Y%m%dT%H%M%SZ")
+        return True
+    except ValueError:
+        return False
 
 
 # --- Entzerrung ------------------------------------------------------
@@ -445,19 +591,37 @@ SPALTEN = (["bild", "ausgabe_stamm", "captured_at", "bildquelle", "analyse_modus
 
 # --- Hauptprogramm ---------------------------------------------------
 def main():
-    if len(sys.argv) < 2:
+    global DATENSATZ_MODUS, AUSGABE, KALIBRIERUNG
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
         print(__doc__)
         return
-    if sys.argv[1] == "--kalibrieren":
+    if len(sys.argv) > 1 and sys.argv[1] == "--kalibrieren":
         if len(sys.argv) < 3:
             print("Aufruf: python analyse.py --kalibrieren schachbrett/")
         else:
             kalibrieren(sys.argv[2])
         return
 
-    ziel = sys.argv[1]
+    pi_modus = len(sys.argv) == 1 or sys.argv[1] in ("--pi", "--nur-bild")
+    if pi_modus:
+        try:
+            pi_pfade = pi_bilder_holen()
+        except (OSError, RuntimeError, subprocess.SubprocessError, tarfile.TarError) as fehler:
+            print(f"Fotoabruf fehlgeschlagen: {fehler}")
+            print("Analyse nicht gestartet. Tailscale, SSH-Zugang und Kamera pruefen.")
+            return 1
+        if len(sys.argv) > 1 and sys.argv[1] == "--nur-bild":
+            return
+        DATENSATZ_MODUS = False
+        ziel = str(BILDER_ORDNER)
+        AUSGABE = str(BILDER_ORDNER.parent / "auswertung")
+        KALIBRIERUNG = str(Path(__file__).resolve().parent / KALIBRIERUNG)
+    else:
+        ziel = sys.argv[1]
 
-    if os.path.isfile(ziel):
+    if pi_modus:
+        pfade = [str(p) for p in pi_pfade]
+    elif os.path.isfile(ziel):
         pfade = [ziel]
     elif os.path.isdir(ziel):
         pfade = []
@@ -639,4 +803,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
