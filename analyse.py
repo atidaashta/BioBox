@@ -1,45 +1,50 @@
-"""
-BioBox - Bildanalyse (A-M2 Computer-Vision-Pipeline)
+"""BioBox: Kamera, Blattmaske, Messwerte, relativer Zustandsindex und 5 Grafiken.
 
-Aufruf:  python analyse.py                        neues Foto, letzte 100 Pi-Bilder auswerten
-         python analyse.py --nur-bild             Pi-Bilder holen, ohne Analyse
-         python analyse.py --pi                   wie der Aufruf ohne Argument
-         python analyse.py bilder_demo            lokale Datensatzbilder auswerten
-         python analyse.py bild.jpg               einzelnes Bild
-         python analyse.py --kalibrieren ordner   fuer die spaetere Kamera
+Installation: python -m pip install opencv-contrib-python numpy matplotlib
+Normal:       python analyse.py
+Nur lokal:    python analyse.py --lokal bilder
+Nur Download: python analyse.py --nur-bild
+Massstab:     python analyse.py --massstab-bild bilder/FOTO.jpg --referenz-mm 50
+              Dann die zwei Linealmarken im Bild anklicken, Enter druecken.
+              50 ist nur ein Beispiel: echte gemessene Laenge einsetzen!
+Direkt neu:   python analyse.py --massstab --referenz-mm 50
+              Vorher Lineal auf Blatthoehe ins Bild legen. Aufnehmen + markieren.
+Einzelbilder verschiedener Pflanzen: python analyse.py --lokal bilder --einzelbilder
+Neue Pflanze / geaenderter Aufbau: eigener Bildordner und --neue-referenz.
 
-Pi-Aufruf auf dem Windows-Laptop, waehrend Tailscale verbunden ist.
-Speicherort: Downloads/diploma/bilder/biobox_<Aufnahmezeit>-<Sitzung>.jpg
-Alle fertigen normalen Aufnahmen aus dem Pi-Ordner 'recent' beruecksichtigen.
-Lokal bleiben hoechstens die letzten 100 importierten Kamera-JPEGs erhalten.
-Es werden nur fehlende Bilder der neuesten 100 heruntergeladen.
-JSON, Logs und Pruefsummen bleiben auf dem Pi.
-SSH kann fuer Aufnahme und Download jeweils nach dem Pi-Passwort fragen.
-Bei einem Fehler wird die Analyse nicht gestartet.
-Die Pi-Zeitreihe verwendet nur biobox_*.jpg aus diesem Ordner. Sie setzt
-EINE Pflanze mit fester Kamera voraus. Datensatzbilder bleiben getrennt.
-Nach erfolgreichem Abruf werden aeltere lokale biobox_*.jpg entfernt.
-Andere lokale Bilder und Originale auf dem Pi werden nicht geloescht.
-Jedes der behaltenen Kamera-Bilder wird einzeln ausgewertet.
-Grid-Kalibrierung und Grid-Massstab werden im Datensatzmodus nicht verwendet.
-Ohne verifizierten Massstab bleiben cm2 und mm leer; Pixelwerte bleiben erhalten.
-Keine Wachstumsrate oder relative Gesundheit zwischen verschiedenen Pflanzen.
+Eine ausfuehrbare Datei; gesundheit.py und grafiken.py werden nicht importiert.
+Nur Kamera-JPEGs werden vom Pi geladen, lokal bleiben die neuesten 100.
+Die Ausgabe enthaelt IMMER einen Datensatz je Eingabebild, auch bei Fehlern.
+ergebnis.json enthaelt Zahlen/null, ergebnis.csv ist eine Excel-Kontrollansicht
+(UTF-8, Semikolon, Dezimalkomma). Diagramme lesen direkt dieselben Datensaetze.
 
-Ausgabe im Ordner "auswertung":
-    ergebnis.csv    eine Zeile je ausgewertetem Bild
-    masken/         Segmentierungsmaske je Bild
-    kontrolle/      Nur Kontur und erkannte Pflanzenflaeche je Bild
-    grafiken/       alle 5 Dateien aus BB-REF-MERKMALE-001; fehlende Werte
-                    werden erklaert, nicht als Null oder Messung erfunden
+WICHTIG ZUR AUSSAGE:
+Der Index misst sichtbare AENDERUNGEN gegen diese Pflanze, keine Diagnose.
+100 bedeutet "wie die Referenz", nicht "biologisch gesund". Die automatische
+Referenz ist vorlaeufig, bis die Kontrollbilder manuell gesichtet wurden.
+Die Kennlinien sind technische Startwerte, nicht biologisch validiert.
+Ohne Massstab in der Blattebene bleiben cm2/mm null; Pixelwerte sind messbar.
+Linealwerte sind projizierte Groessen in der eingerichteten Referenzebene,
+nicht die 3D-Blattoberflaeche. Bei veraenderter Kamera- oder Blatthoehe neu eichen.
+Ohne echte Aufnahmezeit bleiben Wachstumsraten und 24h-Trend null.
+Die Segmentierung wurde an einer echten panaschierten Pflanze geprueft.
+Sie ist klassische Bildverarbeitung, kein universelles Blatt-Erkennungsmodell.
+Bei neuem Hintergrund oder anderen Blattfarben Kontrollbild pruefen.
 
+API: Die Messfeldnamen orientieren sich an BB-DB-HEALTH-001. Die endgueltige
+HTTP-Struktur/IDs sind noch mit Edona abzustimmen. Es wird nichts versendet.
+API_MESSFELDER ist die einzige Stelle fuer die Zuordnung Deutsch -> Englisch.
+Kein stiller Ersatz von fehlenden Werten durch Null oder einen alten Score.
 Grundlagen: BB-SPEC-IMG-001, BB-SPEC-HEALTH-001, BB-REF-MERKMALE-001.
-Externe Einzelbilder erfuellen nicht die Aufnahmebedingungen einer BioBox-Zeitreihe.
-Die vollstaendige Kamera-ROI, Homographie und Hoehenkorrektur folgen mit der Kamera.
+OpenCV: docs.opencv.org/4.x/d8/d83/tutorial_py_grabcut.html
+        docs.opencv.org/4.x/d8/dc8/tutorial_histogram_comparison.html
 """
 
+import argparse
 import csv
-import glob
+import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -53,89 +58,84 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 
-import gesundheit
-
-# --- Einstellungen ---------------------------------------------------
-# True: externe Testbilder, keine gemeinsame Zeitreihe oder Gesundheitsreferenz.
-# False spaeter nur fuer EINE Pflanze mit fester Kamera und echten Aufnahmezeiten.
-DATENSATZ_MODUS = True
-BILDQUELLE = "externer_testdatensatz"
-# Diese Einstellungen gelten fuer lokale Bilder mit explizitem Pfadargument.
-# Ohne Pfadargument wird stattdessen die Pi-Zeitreihe verwendet.
+# ---------------- Einstellungen -------------------------------------
 PI_ADRESSE = "biobox@100.65.232.105"
 PI_AUFNAHME = "/home/biobox/.local/bin/biobox-photo-test --single"
 PI_FOTO_ORDNER = "/home/biobox/Pictures/BioBox/recent"
-BILDER_ORDNER = Path.home() / "Downloads" / "diploma" / "bilder"
+BILDER_ORDNER = Path.home() / "Downloads" / "Diploma" / "bilder"
 MAX_KAMERA_BILDER = 100
-# Nur fuer eine spaetere, zusammengehoerige Messreihe aktivieren, nachdem
-# die ersten Referenz-Kontrollbilder manuell gesichtet wurden (HEALTH-001, 4).
-REFERENZ_FREIGEGEBEN = False
-
-MARKER_MM = 40.0          # gemessene Kantenlaenge des gedruckten Markers
-# Ersatzmassstab fuer Bilder ohne Marker, z. B. mit dem Lineal bestimmt.
-# None = ohne Marker gibt es keine Flaeche in cm2, nur Pixel.
-MM_PRO_PIXEL_MANUELL = None
-SCHAERFE_MIN = 5.0        # Laplace-Varianz, im Testbetrieb anpassen
-SPRUNG_MAX_PCT = 30.0     # groessere Flaechenaenderung je Bild ist verdaechtig
-MIN_BLOB_PX = 30          # kleinere Flecken sind Rauschen
-
-# --- Segmentierung ---------------------------------------------------
-# Bei einem Datensatzordner mit *_top_* nur diese Draufsichten auswerten.
-# Keine Annahme, dass Dateien einer Pflanze eine zeitliche Messreihe sind.
-NUR_DRAUFSICHT = True
-SEGMENTIERUNG_MAX_KANTE = 1280    # GrabCut-Arbeitsbild; Maske bleibt in Originalgroesse
-GRABCUT_ITERATIONEN = 4
-MORPH_KERN_PX = 3               # kleine Kerne erhalten Blattrand und duenne Stiele
-ENTRAUSCHEN_PX = 3              # nur fuer Segmentierung, nie fuer Farbmerkmale
-SEED_ABSTAND_PX = 18            # nahe Blattteile fuer die Suchregion verbinden
-ROI_NORMIERT = None             # optional (links, oben, rechts, unten), jeweils 0..1
-
-# Startpunkte nur aus erkennbarem Gruen; moegliche Blattfarben fuer GrabCut
-# schliessen Gelb und Braun ein. Die endgueltige Maske ist kein HSV-Schwellwert.
-SEED_HSV = ((25, 35, 18), (95, 255, 255))
-SUCHFARBE_HSV = ((5, 25, 12), (100, 255, 255))
-
-# Farbbereiche in HSV (OpenCV: H 0-179, S und V 0-255)
-GELB_HSV = ((15, 60, 20), (33, 255, 255))
-BRAUN_HSV = ((5, 40, 15), (20, 255, 160))
-
-# Qualitaetspruefung
-UEBERBELICHTET_MAX_PCT = 1.0  # mehr geklippte Pixel -> auffaellig
-ZERSPLITTERT_MIN_PCT = 70     # groesste Teilflaeche darunter -> auffaellig
-
-# Bilder ueberspringen: werden nicht ausgewertet und nicht in die CSV geschrieben
-MIN_PFLANZE_PCT = 0.05        # weniger Pflanzenanteil am Bild -> keine Pflanze erkannt
-MAX_RAUSCHEN = 25.0           # mehr Rauschen -> Erkennung unzuverlaessig (unter 80 % Treffer)
-
-# Kontrollbilder sind reine Vorschauen; Farbwerte stammen immer vom Original.
-AUSGABE = "auswertung"
-
-# Diagramme direkt im Anschluss erzeugen. False = nur analysieren,
-# grafiken.py laesst sich weiterhin einzeln aufrufen.
-GRAFIKEN_ERSTELLEN = True
-
-# Entzerrung. Pflicht bei der Wide-Optik (BB-SPEC-IMG-001, 4.6), weil eine
-# Flaeche am Bildrand sonst anders gemessen wird als in der Bildmitte.
-# Datei anlegen mit:  python analyse.py --kalibrieren schachbrett/
-KALIBRIERUNG = "kamera_kalibrierung.json"
-SCHACHBRETT = (9, 6)      # Innenecken, nicht Felder
+DEVICE_ID = None  # Erst Edonas echte Datenbank-ID eintragen, keine ID erfinden.
+MESSREIHE = "pflanze-01"
+REFERENZ_FREIGEGEBEN = False  # Kennzeichnet den Score; blockiert ihn nicht.
+MM_PRO_PIXEL_MANUELL = None  # Nur verifizierter Massstab IN DER BLATTEBENE.
+KAMERA_HOEHE_MM = None
+BLATT_HOEHE_MM = None
+MARKER_HOEHE_MM = 0.0
+MARKER_MM = 40.0
+KALIBRIERUNG = Path(__file__).resolve().with_name("kamera_kalibrierung.json")
+SCHACHBRETT = (9, 6)
 FELD_MM = 25.0
-
+ROI_NORMIERT = None  # Optional: (links, oben, rechts, unten), Werte 0..1.
+ARBEITSBREITE = 960
+SCORING_VERSION = "2.1.0"
+ANALYSE_VERSION = "3.1.0"
 ENDUNGEN = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")
+CSV_DEZIMALKOMMA = True
 
-# Erkannte Zeitformate im Dateinamen, genauestes zuerst
-ZEITFORMATE = [
-    (r"(\d{8})[T_-](\d{6})", "%Y%m%d%H%M%S"),
-    (r"(\d{8})[T_-](\d{4})(?!\d)", "%Y%m%d%H%M"),
-    (r"(\d{4}-\d{2}-\d{2})[T_ ](\d{2})[-.](\d{2})[-.](\d{2})", "%Y-%m-%d%H%M%S"),
-    (r"(\d{4}-\d{2}-\d{2})[T_ ](\d{2})[-.](\d{2})(?![-.\d])", "%Y-%m-%d%H%M"),
-    (r"(\d{4}-\d{2}-\d{2})(?!\d)", "%Y-%m-%d"),
-    (r"(\d{8})(?!\d)", "%Y%m%d"),
+# Die alten DB-Teilscores bleiben benannt, werden aber relativ und stetig
+# berechnet. Gruen bewertet jetzt auch die gesamte Farbverteilung, nicht
+# einen angenommenen gesunden Gruenton. Struktur wirkt zusaetzlich (20 %).
+GEWICHTE = {"gruen": .30, "gelb": .20, "braun": .25, "saettigung": .15, "farbton": .10}
+SPALTEN = [
+    "bild", "captured_at", "zeitquelle", "stunden_seit_start", "pflanzen_pixel",
+    "blattflaeche_cm2", "durchmesser_mm", "kompaktheit",
+    "wachstumsrate_cm2_pro_tag", "wachstumsrate_pct_pro_tag",
+    "mittel_r", "mittel_g", "mittel_b", "farbe_hex", "mittel_h", "mittel_s",
+    "gruenindex", "gelbanteil_pct", "braunanteil_pct", "mm_pro_pixel",
+    "massstab_quelle", "schaerfe", "rauschen", "bildhelligkeit",
+    "ueberbelichtet_pct", "groesste_komponente_pct", "auffaelligkeit", "brauchbar",
+    "scoring_version", "gesundheit", "gesundheit_roh", "gesundheit_kategorie",
+    "gesundheit_status", "gesundheit_trend_24h", "gesundheitswarnung",
+    "score_gruen", "score_gelb", "score_braun", "score_saettigung", "score_farbton",
 ]
+RUNDUNG = {"stunden_seit_start": 4, "blattflaeche_cm2": 2, "durchmesser_mm": 1,
+           "kompaktheit": 4, "wachstumsrate_cm2_pro_tag": 3, "wachstumsrate_pct_pro_tag": 3,
+           "mittel_r": 1, "mittel_g": 1, "mittel_b": 1, "mittel_h": 1, "mittel_s": 1,
+           "gruenindex": 4, "gelbanteil_pct": 2, "braunanteil_pct": 2,
+           "mm_pro_pixel": 6, "schaerfe": 1, "rauschen": 2, "bildhelligkeit": 1,
+           "ueberbelichtet_pct": 2, "groesste_komponente_pct": 1}
+RUNDUNG.update({k: 1 for k in SPALTEN if k.startswith("score_") or k in
+                ("gesundheit", "gesundheit_roh", "gesundheit_trend_24h")})
+API_MESSFELDER = {
+    "pflanzen_pixel": "plant_pixels", "blattflaeche_cm2": "leaf_area_cm2",
+    "durchmesser_mm": "diameter_mm", "kompaktheit": "compactness",
+    "wachstumsrate_cm2_pro_tag": "growth_rate_cm2_per_day",
+    "wachstumsrate_pct_pro_tag": "growth_rate_pct_per_day",
+    "mittel_r": "mean_r", "mittel_g": "mean_g", "mittel_b": "mean_b",
+    "mittel_h": "mean_hue", "mittel_s": "mean_saturation",
+    "gruenindex": "greenness_index", "gelbanteil_pct": "yellow_fraction_pct",
+    "braunanteil_pct": "brown_fraction_pct", "mm_pro_pixel": "mm_per_pixel",
+    "massstab_quelle": "scale_source", "schaerfe": "sharpness",
+    "rauschen": "noise", "bildhelligkeit": "brightness",
+    "ueberbelichtet_pct": "overexposed_pct", "auffaelligkeit": "quality_flags",
+    "brauchbar": "usable",
+}
+API_GESUNDHEIT = {
+    "scoring_version": "scoring_version", "gesundheit": "health_score",
+    "gesundheit_roh": "health_score_raw", "gesundheit_kategorie": "health_category",
+    "gesundheit_trend_24h": "health_trend_24h", "gesundheitswarnung": "health_warnings",
+    "score_gruen": "score_green", "score_gelb": "score_yellow",
+    "score_braun": "score_brown", "score_saettigung": "score_saturation",
+    "score_farbton": "score_hue",
+}
+GRAFIK_DATEIEN = ["01_wachstum.png", "02_wachstumsrate.png", "03_farbverlauf.png",
+                  "04_gesundheit.png", "05_teilscores.png"]
 
-
-# --- Letzte 100 Kamera-JPEGs vom Pi holen ----------------------------
 def jpeg_lesbar(pfad):
     """Nur vollstaendige, lesbare JPEGs als bereits heruntergeladen behandeln."""
     try:
@@ -146,7 +146,6 @@ def jpeg_lesbar(pfad):
         return bild is not None and min(bild.shape[:2]) >= 3
     except OSError:
         return False
-
 
 def pi_bilder_holen():
     """Neu aufnehmen, vorhandene Aufnahmen abgleichen, lokal die letzten 100 behalten.
@@ -240,7 +239,6 @@ def pi_bilder_holen():
     print(f"{len(auswahl)} Kamera-Bilder in: {BILDER_ORDNER}")
     return [BILDER_ORDNER / f"biobox_{s}.jpg" for s in auswahl]
 
-
 def ist_pi_bild(pfad):
     """Nur Bilder unserer Pi-Importe, keine danebenliegenden Datensatzbilder."""
     treffer = re.fullmatch(r"biobox_(\d{8}T\d{6}Z)-[A-Za-z0-9]+\.jpg",
@@ -252,23 +250,6 @@ def ist_pi_bild(pfad):
         return True
     except ValueError:
         return False
-
-
-# --- Entzerrung ------------------------------------------------------
-def kalibrierung_laden():
-    """Liest die Kalibrierdatei, falls vorhanden."""
-    if not os.path.exists(KALIBRIERUNG):
-        return None
-    d = json.load(open(KALIBRIERUNG))
-    return np.array(d["kamera_matrix"]), np.array(d["verzeichnung"])
-
-
-def entzerren(bild, kalibrierung):
-    if kalibrierung is None:
-        return bild
-    matrix, verzeichnung = kalibrierung
-    return cv2.undistort(bild, matrix, verzeichnung)
-
 
 def kalibrieren(ordner):
     """Bestimmt die Verzeichnung aus Schachbrettaufnahmen."""
@@ -315,45 +296,6 @@ def kalibrieren(ordner):
     print(f"Reprojektionsfehler: {fehler:.3f} px (unter 1.0 ist gut)")
     print(f"gespeichert in {KALIBRIERUNG}")
 
-
-# --- Zeitstempel -----------------------------------------------------
-def zeit_aus_name(name):
-    for muster, format_ in ZEITFORMATE:
-        treffer = re.search(muster, name)
-        if treffer:
-            try:
-                return datetime.strptime("".join(treffer.groups()), format_).replace(tzinfo=timezone.utc)
-            except ValueError:
-                continue
-    return None
-
-
-# --- Bildverarbeitung ------------------------------------------------
-def marker_finden(bild):
-    """Nur echte ArUco-Marker aus BB-SPEC-IMG-001, keine weissen Quadrate.
-
-    Liefert einen Massstab in der MARKEREBENE. Keine Bestandshoehenkorrektur!
-    Vier IDs 0..3 sind erforderlich; im Datensatzmodus wird dies nicht benutzt.
-    """
-    if not hasattr(cv2, "aruco"):
-        return None, None
-    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-    detector = cv2.aruco.ArucoDetector(dictionary)
-    corners, ids, _ = detector.detectMarkers(bild)
-    if ids is None:
-        return None, None
-    marker = {int(i): c.reshape(4, 2) for i, c in zip(ids.flatten(), corners)
-              if int(i) in (0, 1, 2, 3)}
-    if len(marker) != 4:
-        return None, None
-    kanten = [np.linalg.norm(c - np.roll(c, -1, axis=0), axis=1).mean()
-              for c in marker.values()]
-    if min(kanten) <= 0:
-        return None, None
-    x, y, w, h = cv2.boundingRect(np.vstack(list(marker.values())).astype(np.float32))
-    return MARKER_MM / float(np.median(kanten)), (x, y, w, h)
-
-
 def rauschen_schaetzen(bild):
     """Bildrauschen nach Immerkaer (1996). Reagiert kaum auf Kanten und
     Blattstrukturen, misst also tatsaechlich Sensorrauschen."""
@@ -364,442 +306,1011 @@ def rauschen_schaetzen(bild):
     return float(np.sqrt(np.pi / 2) * summe / (6 * (w - 2) * (h - 2)))
 
 
-def segmentieren(bild):
-    """Farb-Seeds lokalisieren die Pflanze; GrabCut verfeinert ihre Kontur.
+def zeit_aus_name(name):
+    """Nur explizite Aufnahmezeiten. Dateidatum ist KEINE Aufnahmezeit."""
+    muster = [(r"(\d{8}T\d{6}Z)", "%Y%m%dT%H%M%SZ"),
+              (r"(\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2})", "%Y_%m_%d_%H_%M_%S"),
+              (r"(\d{4}-\d{2}-\d{2}[T_ ]\d{2}[-:]\d{2}[-:]\d{2})", None)]
+    for regex, fmt in muster:
+        treffer = re.search(regex, name)
+        if treffer:
+            try:
+                if fmt:
+                    return datetime.strptime(treffer[1], fmt).replace(tzinfo=timezone.utc)
+                text = treffer[1].replace("_", "T").replace(" ", "T")
+                return datetime.fromisoformat(text[:11] + text[11:].replace("-", ":")).replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+    return None
 
-    Gruene Pixel sind Startpunkte, nicht die endgueltige Maske. Gelbe, braune
-    oder beschattete Blattteile innerhalb der Suchregion duerfen hinzukommen.
-    Kleine Luecken zwischen Blaettern werden NICHT pauschal gefuellt.
-    Ein gruener Gegenstand weit neben der Pflanze wird als Hintergrund behandelt.
-    Grenzen: Eine voellig braune Pflanze ohne gruene Seeds bleibt unerkennbar.
-    """
-    h0, w0 = bild.shape[:2]
-    faktor = min(1.0, SEGMENTIERUNG_MAX_KANTE / max(h0, w0))
-    arbeit = cv2.resize(bild, (max(3, round(w0*faktor)), max(3, round(h0*faktor))))
-    if ENTRAUSCHEN_PX:
-        arbeit = cv2.medianBlur(arbeit, ENTRAUSCHEN_PX)
-    hsv = cv2.cvtColor(arbeit, cv2.COLOR_BGR2HSV)
-    b, g, r = cv2.split(arbeit.astype(np.float32))
-    exg = (2*g-r-b) / (r+g+b+1e-6)
-    seeds = cv2.inRange(hsv, *SEED_HSV)
-    seeds[exg < 0.08] = 0
 
-    if ROI_NORMIERT is not None:
-        links, oben, rechts, unten = ROI_NORMIERT
-        roi = np.zeros_like(seeds)
-        h, w = seeds.shape
-        roi[round(oben*h):round(unten*h), round(links*w):round(rechts*w)] = 255
-        seeds = cv2.bitwise_and(seeds, roi)
-    else:
-        roi = np.full_like(seeds, 255)
+def iso(zeit):
+    return zeit.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if zeit else None
 
-    kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (MORPH_KERN_PX, MORPH_KERN_PX))
-    seeds = cv2.morphologyEx(seeds, cv2.MORPH_OPEN, kern)
-    # Groesste raeumliche Blattgruppe, nicht einfach nur das groesste Blatt.
-    abstand = max(3, round(SEED_ABSTAND_PX*faktor))
-    gruppe = cv2.dilate(seeds, cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE, (2*abstand+1, 2*abstand+1)))
-    n, labels, stats, _ = cv2.connectedComponentsWithStats(gruppe, 8)
-    if n <= 1:
-        return np.zeros((h0, w0), np.uint8)
-    haupt = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-    seeds[labels != haupt] = 0
-    if cv2.countNonZero(seeds) < max(10, round(MIN_BLOB_PX*faktor*faktor)):
-        return np.zeros((h0, w0), np.uint8)
 
-    # Konvexe SUCHREGION, keine konvexe Pflanzenmaske: GrabCut entfernt
-    # Hintergrund und echte Zwischenraeume weiterhin innerhalb dieser Region.
-    punkte = cv2.findNonZero(seeds)
-    huelle = np.zeros_like(seeds)
-    cv2.fillConvexPoly(huelle, cv2.convexHull(punkte), 255)
-    suchregion = cv2.dilate(huelle, cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE, (2*abstand+1, 2*abstand+1)))
-    suchregion = cv2.bitwise_and(suchregion, roi)
-    sicher = cv2.erode(seeds, kern)
-    if cv2.countNonZero(sicher) < 10:
-        sicher = seeds
+def flags_hinzufuegen(z, *flags):
+    vorhanden = list(filter(None, (z.get("auffaelligkeit") or "").split(";")))
+    z["auffaelligkeit"] = ";".join(dict.fromkeys(vorhanden + list(flags)))
 
-    maske_gc = np.full(seeds.shape, cv2.GC_BGD, np.uint8)
-    maske_gc[suchregion > 0] = cv2.GC_PR_BGD
-    pflanzenfarbe = cv2.inRange(hsv, *SUCHFARBE_HSV)
-    maske_gc[(pflanzenfarbe > 0) & (suchregion > 0)] = cv2.GC_PR_FGD
-    maske_gc[sicher > 0] = cv2.GC_FGD
-    # Bei nahezu vollstaendigem Pflanzenbild fehlt ein Hintergrundmodell.
-    if not np.any(maske_gc == cv2.GC_BGD):
-        maske_gc[0, :] = cv2.GC_BGD
-        maske_gc[-1, :] = cv2.GC_BGD
-        maske_gc[:, 0] = cv2.GC_BGD
-        maske_gc[:, -1] = cv2.GC_BGD
-    cv2.setRNGSeed(0)  # reproduzierbare Segmentierung
-    try:
-        cv2.grabCut(arbeit, maske_gc, None, np.zeros((1, 65), np.float64),
-                    np.zeros((1, 65), np.float64), GRABCUT_ITERATIONEN,
-                    cv2.GC_INIT_WITH_MASK)
-        maske = np.where((maske_gc == cv2.GC_FGD) |
-                         (maske_gc == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
-    except cv2.error as fehler:
-        # Keine unmarkierte Ersatzmessung, wenn GrabCut nicht auswerten kann.
-        print(f"   Segmentierung fehlgeschlagen: {str(fehler).splitlines()[0]}")
-        return np.zeros((h0, w0), np.uint8)
-    maske = cv2.morphologyEx(maske, cv2.MORPH_CLOSE, kern)
+
+def kleiner(bild):
+    faktor = min(1.0, ARBEITSBREITE / bild.shape[1])
+    return cv2.resize(bild, (round(bild.shape[1]*faktor), round(bild.shape[0]*faktor)),
+                      interpolation=cv2.INTER_AREA) if faktor < 1 else bild.copy()
+
+
+def saubere_komponenten(maske, minimum):
     n, labels, stats, _ = cv2.connectedComponentsWithStats(maske, 8)
-    sauber = np.zeros_like(maske)
+    behalten = np.zeros(n, np.uint8)
+    behalten[1:] = (stats[1:, cv2.CC_STAT_AREA] >= minimum).astype(np.uint8)*255
+    return behalten[labels]
+
+
+def szene_abgleichen(bild, ref, details=None):
+    """Hintergrundmerkmale, nicht Blaetter: Verschieben der Kamera erkennen.
+
+    Liefert die Referenzmaske in aktuellen Koordinaten. Kleine Verschiebungen
+    werden fuer den Farbvergleich ausgeglichen. Starke Aenderungen werden
+    gemeldet; Groessenvergleiche werden dann unterdrueckt.
+    """
+    if ref is None or bild.shape != ref["bild"].shape:
+        return None, None, [] if ref is None else ["aufloesung_geaendert"]
+    ref_bild, ref_maske = ref["bild"], ref["maske"]
+    orb = cv2.ORB_create(nfeatures=1800)
+    hintergrund = 255-cv2.dilate(ref_maske, np.ones((19, 19), np.uint8))
+    k1, d1 = orb.detectAndCompute(cv2.cvtColor(ref_bild, cv2.COLOR_BGR2GRAY), hintergrund)
+    k2, d2 = orb.detectAndCompute(cv2.cvtColor(bild, cv2.COLOR_BGR2GRAY), None)
+    if d1 is None or d2 is None:
+        return ref_maske.copy(), ref_bild.copy(), ["kameralage_nicht_verifiziert"]
+    paare = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(d1, d2, k=2)
+    gut = [a for paar in paare if len(paar) == 2 for a, b in [paar] if a.distance < .72*b.distance]
+    if len(gut) < 12:
+        return ref_maske.copy(), ref_bild.copy(), ["kameralage_nicht_verifiziert"]
+    src = np.float32([k1[m.queryIdx].pt for m in gut])
+    dst = np.float32([k2[m.trainIdx].pt for m in gut])
+    matrix, inlier = cv2.estimateAffinePartial2D(src, dst, method=cv2.RANSAC, ransacReprojThreshold=3)
+    if matrix is None or float(inlier.mean()) < .45:
+        return None, None, ["kameralage_nicht_verifiziert"]
+    scale = float(np.hypot(matrix[0, 0], matrix[1, 0]))
+    winkel = abs(math.degrees(math.atan2(matrix[1, 0], matrix[0, 0])))
+    versatz = float(np.linalg.norm(matrix[:, 2])) / max(bild.shape[:2])
+    if details is not None:
+        details.update(scale=scale, rotation=winkel, translation=versatz)
+    flags = ["ansicht_geaendert"] if abs(scale-1) > .025 or winkel > 3 or versatz > .035 else []
+    h, w = bild.shape[:2]
+    return (cv2.warpAffine(ref_maske, matrix, (w, h), flags=cv2.INTER_NEAREST),
+            cv2.warpAffine(ref_bild, matrix, (w, h)), flags)
+
+
+def rand_hintergrund(maske):
+    """Grosse zusammenhaengende Randflaechen wie die gruenstichige Wand.
+
+    Ein Blatt am Bildrand bleibt erlaubt. Erst eine grosse Flaeche mit langem
+    Kontakt zum Aussenrand und breitem Innenbereich ist Hintergrund. Die
+    Form wird nicht ueber einen Pflanzenfarb-Sollwert klassifiziert.
+    """
+    h, w = maske.shape
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(maske, 8)
+    band = max(2, round(.025*min(h,w)))
+    randlabels = np.r_[labels[:band].ravel(), labels[-band:].ravel(),
+                       labels[:, :band].ravel(), labels[:, -band:].ravel()]
+    kontakte = np.bincount(randlabels, minlength=n)/band
+    distanz = cv2.distanceTransform(maske, cv2.DIST_L2, 5)
+    sperre = np.zeros_like(maske)
+    kandidaten = np.zeros_like(maske)
+    radius = max(9, round(.09*min(h,w)))
+    kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*radius+1, 2*radius+1))
     for i in range(1, n):
-        if (stats[i, cv2.CC_STAT_AREA] >= max(5, round(MIN_BLOB_PX*faktor*faktor))
-                and np.any((labels == i) & (seeds > 0))):
-            sauber[labels == i] = 255
-    return cv2.resize(sauber, (w0, h0), interpolation=cv2.INTER_NEAREST)
+        if (stats[i, cv2.CC_STAT_AREA] > .025*h*w and kontakte[i] > .02*(h+w)
+                and float(distanz[labels == i].max()) > radius):
+            obj = (labels == i).astype(np.uint8)*255
+            kandidaten = cv2.bitwise_or(kandidaten, obj)
+            # Nur die breite Wandmitte als sicheren Hintergrund setzen.
+            # Angrenzende echte Blaetter duerfen derselben Farbkomponente
+            # angehoeren und werden nicht pauschal mit der Wand entfernt.
+            mitte = cv2.morphologyEx(obj, cv2.MORPH_OPEN, kern)
+            sperre = cv2.bitwise_or(sperre, mitte)
+    return sperre, kandidaten
+
+
+def segmentieren(arbeit, prior=None, prior_bild=None):
+    """Blatt-Seeds + eng begrenztes GrabCut, ohne konvexe Fuellung des Topfs.
+
+    Helle/panaschierte Blattbereiche duerfen hinzukommen. Breite cyanfarbene
+    Staebe/Waende, warmes Holz und dunkle Erde werden als Hintergrund gesetzt.
+    Die vorherige Blattmaske erlaubt auch gelb/braun gewordene Blattregionen.
+    Eine Oeffnung entfernt schmale Stiele; getrennte Blaetter sind zulaessig.
+    """
+    arbeit = cv2.medianBlur(arbeit, 3)
+    b, g, r = cv2.split(arbeit.astype(np.float32))
+    hsv = cv2.cvtColor(arbeit, cv2.COLOR_BGR2HSV)
+    s, v = hsv[:, :, 1], hsv[:, :, 2]
+    farbige_blaetter = (g-b > 10) & (g-r > 3) & (s > 30) & (v > 60)
+    blasse_blaetter = (g-b > 5) & (g-r > 12) & (s > 25) & (v > 170)
+    kern = lambda n: cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (n, n))
+    farbkern = ((g-b > 18) & (g-r > 8) & (s > 40) & (v > 60)).astype(np.uint8)*255
+    nahe_blattfarbe = cv2.dilate(farbkern, kern(21)) > 0
+    blasse_blaetter &= nahe_blattfarbe
+    seed = (farbige_blaetter | blasse_blaetter).astype(np.uint8)*255
+    roi = np.ones(seed.shape, np.uint8)*255
+    if ROI_NORMIERT is not None:
+        x1, y1, x2, y2 = ROI_NORMIERT
+        h, w = seed.shape
+        roi[:] = 0
+        roi[round(y1*h):round(y2*h), round(x1*w):round(x2*w)] = 255
+        seed[roi == 0] = 0
+    if prior is not None:
+        # Neu gelb/braun gewordene Blattkerne bleiben erkennbar, auch wenn
+        # kaum aktuelle gruene Seeds uebrig sind. Kein Kopieren der alten Maske.
+        warm = ((prior > 0) & (s > 85) & (v > 35) & (r > g*1.04) & (g > b*1.12))
+        warm = cv2.erode(warm.astype(np.uint8)*255, kern(5))
+        seed = cv2.bitwise_or(seed, warm)
+        seed[roi == 0] = 0
+        if prior_bild is not None and prior_bild.shape == arbeit.shape:
+            # Blasse Blattkerne duerfen nicht wegen der aehnlich gefaerbten
+            # Wand verschwinden. Nur registrierte, farblich noch passende
+            # Blattkerne stuetzen; die alte Silhouette wird nicht kopiert.
+            lab = cv2.cvtColor(arbeit.astype(np.float32)/255, cv2.COLOR_BGR2LAB)
+            alt_lab = cv2.cvtColor(prior_bild.astype(np.float32)/255, cv2.COLOR_BGR2LAB)
+            stabil = ((cv2.erode(prior, kern(9)) > 0) & (v > 80) &
+                      (np.linalg.norm(lab-alt_lab, axis=2) < 14))
+            seed[stabil & (roi > 0)] = 255
+    seed = saubere_komponenten(cv2.morphologyEx(seed, cv2.MORPH_OPEN, kern(5)), 70)
+    # Die Wand darf kein sicherer Vordergrund-Seed werden. Sonst kann GrabCut
+    # sie prinzipbedingt nicht mehr korrigieren, egal wie viele Iterationen.
+    sperre, randbereich = rand_hintergrund(seed)
+    sperre = cv2.morphologyEx(sperre, cv2.MORPH_CLOSE, kern(11))
+    sicher_blatt = ((g-b > 22) & (g-r > 12) & (s > 60)) | blasse_blaetter
+    if cv2.countNonZero(sperre):
+        lab_ab = cv2.cvtColor(arbeit.astype(np.float32)/255, cv2.COLOR_BGR2LAB)[:, :, 1:]
+        farben = lab_ab[sperre > 0][::max(1, cv2.countNonZero(sperre)//4000)].astype(np.float32)
+        cv2.setRNGSeed(7)
+        _, _, zentren = cv2.kmeans(farben, min(3, len(farben)), None,
+                                  (cv2.TERM_CRITERIA_MAX_ITER+cv2.TERM_CRITERIA_EPS, 15, .2),
+                                  1, cv2.KMEANS_PP_CENTERS)
+        abstand = np.min(np.stack([np.linalg.norm(lab_ab-z, axis=2) for z in zentren]), axis=0)
+        sicher_blatt &= abstand > 9
+    seed[(randbereich > 0) & ~sicher_blatt] = 0
+    seed[sperre > 0] = 0
+    if prior is not None:
+        prior = prior.copy()
+        prior[sperre > 0] = 0
+    if cv2.countNonZero(seed):
+        gruppe = cv2.dilate(seed, kern(85))
+        n, labels, stats, _ = cv2.connectedComponentsWithStats(gruppe, 8)
+        haupt = 1+int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        seed[labels != haupt] = 0
+    if cv2.countNonZero(seed) < 50 and prior is None:
+        return np.zeros(seed.shape, np.uint8)
+    region = cv2.dilate(seed, kern(35))
+    alte_blaetter = np.zeros_like(seed)
+    if prior is not None:
+        alte_blaetter = cv2.erode(prior, kern(5))
+        region = cv2.bitwise_or(region, cv2.dilate(prior, kern(9)))
+    region[roi == 0] = 0
+    sicher_bg = ((b-g > 5) | ((r-g >= -1) & (s < 95)) |
+                 ((g-b < 8) & (v < 170)) | (v < 52))
+    # Eine vorher sichtbare Blattflaeche kann braun/dunkel werden. Sie wird
+    # dadurch nicht automatisch aus der aktuellen Messung weggeschnitten.
+    veraendert = (alte_blaetter > 0) & (s > 35) & (v > 15) & (b-g < 12)
+    sicher_bg[veraendert] = False
+    gc = np.full(seed.shape, cv2.GC_BGD, np.uint8)
+    gc[region > 0] = cv2.GC_PR_BGD
+    gc[(region > 0) & (((g-b > 1) & (g-r > -8)) | veraendert)] = cv2.GC_PR_FGD
+    gc[sicher_bg] = cv2.GC_BGD
+    gc[cv2.erode(seed, kern(3)) > 0] = cv2.GC_FGD
+    gc[sperre > 0] = cv2.GC_BGD
+    gc[roi == 0] = cv2.GC_BGD
+    if not np.any(gc == cv2.GC_FGD):
+        # Ohne verlaessliche aktuelle Seeds keine alte Maske als Messung kopieren.
+        return np.zeros(seed.shape, np.uint8)
+    if not np.any(gc == cv2.GC_BGD):
+        gc[0, :] = gc[-1, :] = cv2.GC_BGD
+        gc[:, 0] = gc[:, -1] = cv2.GC_BGD
+    cv2.setRNGSeed(7)
+    cv2.grabCut(arbeit, gc, None, np.zeros((1, 65)), np.zeros((1, 65)), 5, cv2.GC_INIT_WITH_MASK)
+    maske = np.isin(gc, [cv2.GC_FGD, cv2.GC_PR_FGD]).astype(np.uint8)*255
+    maske = cv2.morphologyEx(maske, cv2.MORPH_OPEN, kern(9))
+    maske = saubere_komponenten(maske, 70)
+    maske[sperre > 0] = 0
+    # Nur kleine Loecher schliessen; Erde und Zwischenraeume bleiben frei.
+    return cv2.morphologyEx(maske, cv2.MORPH_CLOSE, kern(3))
+
+
+def farbmerkmale(bild, maske):
+    m = maske > 0
+    if not np.any(m):
+        return None
+    rgb = bild[:, :, ::-1].astype(np.float32)
+    hsv = cv2.cvtColor(bild, cv2.COLOR_BGR2HSV).astype(np.float32)
+    lab = cv2.cvtColor(bild.astype(np.float32)/255, cv2.COLOR_BGR2LAB)
+    r, g, b = [rgb[:, :, i][m] for i in range(3)]
+    h, s, v = [hsv[:, :, i][m] for i in range(3)]
+    chromatisch = s > 18
+    winkel = 2*np.pi*h[chromatisch]/180
+    mittel_h = (math.atan2(float(np.mean(np.sin(winkel))), float(np.mean(np.cos(winkel)))) % (2*np.pi))*180/(2*np.pi) if len(winkel) else None
+    braun = (h < 28) & (s > 60) & (v < 165) & (r > g*1.02)
+    gelb = (h >= 15) & (h < 38) & (s > 50) & ~braun
+    # Weicher Warm-/Braunindikator nur fuer den Verlauf: vermeidet, dass
+    # ein Pixel beim Ueberschreiten einer Helligkeitsgrenze ploetzlich
+    # "nicht mehr braun" und damit als erholt bewertet wird.
+    warm_last = 100*float((np.clip((32-h)/15, 0, 1)*np.clip((s-35)/100, 0, 1)*
+                          np.clip((235-v)/100, 0, 1)*(r > g*1.01)).mean())
+    # Weiche Histogramm-Bins verhindern sprunghafte Scores, wenn nur eine
+    # kleine Farbaenderung eine harte Bin-Grenze ueberschreitet.
+    hf, sf = h*24/180, s*12/256
+    hb, sb = np.floor(hf).astype(int), np.floor(sf).astype(int)
+    wh, ws = hf-hb, sf-sb
+    hist = np.zeros((24, 12), np.float32)
+    for dh, hw in [(0, 1-wh), (1, wh)]:
+        for ds, sw in [(0, 1-ws), (1, ws)]:
+            ind = ((hb+dh) % 24)*12+np.clip(sb+ds, 0, 11)
+            hist += np.bincount(ind, weights=hw*sw, minlength=288).reshape(24, 12).astype(np.float32)
+    # H ist kreisfoermig: Rot bei 179 und Rot bei 0 sind Nachbarn.
+    hist = .5*hist+.25*np.roll(hist, 1, axis=0)+.25*np.roll(hist, -1, axis=0)
+    hist = cv2.GaussianBlur(hist, (3, 1), .65)
+    hist = hist / max(float(hist.sum()), 1e-8)
+    return {"mittel_r": float(r.mean()), "mittel_g": float(g.mean()), "mittel_b": float(b.mean()),
+            "mittel_h": mittel_h, "mittel_s": float(s.mean()),
+            "gruenindex": float((g/(r+g+b+1e-6)).mean()),
+            "gelbanteil_pct": 100*float(gelb.mean()), "braunanteil_pct": 100*float(braun.mean()),
+            "_hist": hist, "_lab": np.median(lab[m], axis=0), "_warm_last": warm_last}
+
+
+def skalierung_aus_punkten(punkte, laenge_mm, breite, hoehe):
+    """Bekannte echte Laenge / gemessener Pixelabstand; keine Schaetzung."""
+    p = np.asarray(punkte, dtype=float).reshape(2, 2)
+    if not np.isfinite(p).all() or not math.isfinite(laenge_mm) or laenge_mm <= 0:
+        raise ValueError("Punkte und Referenzlaenge muessen gueltige positive Messwerte sein.")
+    if np.any(p < 0) or np.any(p[:, 0] >= breite) or np.any(p[:, 1] >= hoehe):
+        raise ValueError("Messpunkte liegen ausserhalb des Bildes.")
+    pixel = float(np.linalg.norm(p[1]-p[0]))
+    if pixel < 5:
+        raise ValueError("Messpunkte muessen mindestens 5 Pixel auseinanderliegen.")
+    return float(laenge_mm/pixel)
+
+
+def massstab_einrichten(bildpfad, laenge_mm, ausgabe, punkte=None):
+    """Zwei Endpunkte einer gemessenen Strecke IN DER BLATTEBENE markieren.
+
+    Die Punkte beziehen sich auf das ggf. entzerrte Originalbild. Messlineal
+    beim Aufnehmen auf Blatthoehe halten. Ohne bekannte Laenge keine Eichung.
+    --punkte erlaubt dieselbe Eingabe ohne GUI in Original-Pixelkoordinaten.
+    """
+    bildpfad = Path(bildpfad).resolve()
+    bild = cv2.imdecode(np.fromfile(bildpfad, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if bild is None:
+        raise ValueError("Massstabbild nicht lesbar.")
+    lens_hash = None
+    if KALIBRIERUNG.exists():
+        text = KALIBRIERUNG.read_bytes()
+        d = json.loads(text)
+        bild = cv2.undistort(bild, np.asarray(d["kamera_matrix"]), np.asarray(d["verzeichnung"]))
+        lens_hash = hashlib.sha256(text).hexdigest()
+    h, w = bild.shape[:2]
+    if punkte is None:
+        faktor = min(1., 1300/w, 800/h)
+        vorschau = cv2.resize(bild, (round(w*faktor), round(h*faktor)))
+        klicks = []
+        titel = "Zwei Linealmarken auf Blatthoehe anklicken | Enter: speichern | R: neu | Esc: abbrechen"
+        def klick(event, x, y, flags, param):
+            if event == cv2.EVENT_LBUTTONDOWN and len(klicks) < 2:
+                klicks.append((x/faktor, y/faktor))
+        try:
+            cv2.namedWindow(titel, cv2.WINDOW_AUTOSIZE)
+            cv2.setMouseCallback(titel, klick)
+            while True:
+                panel = vorschau.copy()
+                for x, y in klicks:
+                    cv2.drawMarker(panel, (round(x*faktor), round(y*faktor)), (0, 0, 255), cv2.MARKER_CROSS, 18, 2)
+                if len(klicks) == 2:
+                    p1, p2 = [tuple(round(v*faktor) for v in p) for p in klicks]
+                    cv2.line(panel, p1, p2, (0, 0, 255), 2)
+                cv2.imshow(titel, panel)
+                taste = cv2.waitKey(30) & 255
+                if taste == 27 or cv2.getWindowProperty(titel, cv2.WND_PROP_VISIBLE) < 1:
+                    raise ValueError("Massstab-Eingabe abgebrochen; keine Eichung gespeichert.")
+                if taste in (ord('r'), ord('R')):
+                    klicks.clear()
+                if taste in (10, 13) and len(klicks) == 2:
+                    punkte = klicks
+                    break
+        except cv2.error as fehler:
+            raise ValueError("Grafikfenster nicht verfuegbar. OpenCV mit GUI oder --punkte x1 y1 x2 y2 verwenden.") from fehler
+        finally:
+            try:
+                cv2.destroyAllWindows()
+            except cv2.error:
+                pass
+    wert = skalierung_aus_punkten(punkte, laenge_mm, w, h)
+    arbeit = kleiner(bild)
+    maske = segmentieren(arbeit)
+    ref = {"bild": arbeit, "maske": maske, "meta": {
+        "kind": "ruler_scale", "version": 1, "mm_pro_pixel": wert,
+        "referenz_mm": float(laenge_mm), "punkte": np.asarray(punkte).reshape(2,2).tolist(),
+        "bild": bildpfad.name, "bildbreite": w, "bildhoehe": h,
+        "sha256": hashlib.sha256(bildpfad.read_bytes()).hexdigest(),
+        "lens_hash": lens_hash, "ebene": "Blattebene"}}
+    ausgabe.mkdir(parents=True, exist_ok=True)
+    referenz_speichern(ausgabe/"massstab.npz", ref)
+    print(f"Gemessener Massstab: {wert:.6f} mm/Pixel -> {ausgabe/'massstab.npz'}")
+    print("Beim normalen Aufruf wird dieser Massstab fuer passende Kameraansichten verwendet.")
+    print("Bei veraenderter Blatt-/Kamerahoehe den Linealmassstab erneut einrichten.")
+    return ref
+
+
+def massstab_laden(pfad):
+    if not pfad.exists():
+        return None
+    with np.load(pfad, allow_pickle=False) as daten:
+        meta = json.loads(str(daten["meta"]))
+        if meta.get("kind") != "ruler_scale" or meta.get("mm_pro_pixel", 0) <= 0:
+            raise ValueError("Gespeicherter Linealmassstab ist ungueltig.")
+        return {"meta": meta, "bild": daten["bild"].copy(), "maske": daten["maske"].copy()}
+
+
+def massstab(bild, manuell, lineal=None):
+    if manuell is not None:
+        return float(manuell), "manuell_blattebene"
+    if lineal is not None:
+        lens_hash = hashlib.sha256(KALIBRIERUNG.read_bytes()).hexdigest() if KALIBRIERUNG.exists() else None
+        if lens_hash != lineal["meta"].get("lens_hash"):
+            return None, "objektiv_einstellung_gegenueber_lineal_geaendert"
+        arbeit = kleiner(bild)
+        details = {}
+        if arbeit.shape == lineal["bild"].shape and np.array_equal(arbeit, lineal["bild"]):
+            details["scale"] = 1.
+            flags = []
+        else:
+            _, _, flags = szene_abgleichen(arbeit, lineal, details)
+        if flags or "scale" not in details:
+            return None, "kameraansicht_passt_nicht_zum_linealbild"
+        faktor = details["scale"]*bild.shape[1]/lineal["meta"]["bildbreite"]
+        return lineal["meta"]["mm_pro_pixel"]/faktor, "lineal_blattebene"
+    if not hasattr(cv2, "aruco"):
+        return None, "nicht_kalibriert"
+    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+    detektor = cv2.aruco.ArucoDetector(dictionary)
+    ecken, ids, _ = detektor.detectMarkers(bild)
+    if ids is None:
+        return None, "nicht_kalibriert"
+    marker = {int(i): c.reshape(4, 2) for i, c in zip(ids.flatten(), ecken) if int(i) in (0, 1, 2, 3)}
+    if len(marker) != 4:
+        return None, "marker_unvollstaendig"
+    kanten = [np.linalg.norm(c-np.roll(c, -1, axis=0), axis=1).mean() for c in marker.values()]
+    if min(kanten) <= 0 or np.std(kanten)/np.mean(kanten) > .08:
+        return None, "marker_uneinheitlich"
+    if KAMERA_HOEHE_MM is None or BLATT_HOEHE_MM is None:
+        return None, "blattebene_unbekannt"
+    if not 0 <= BLATT_HOEHE_MM < KAMERA_HOEHE_MM or MARKER_HOEHE_MM >= KAMERA_HOEHE_MM:
+        return None, "geometrie_ungueltig"
+    return (MARKER_MM/float(np.median(kanten)) *
+            (KAMERA_HOEHE_MM-BLATT_HOEHE_MM)/(KAMERA_HOEHE_MM-MARKER_HOEHE_MM), "aruco_hoehenkorrigiert")
 
 
 def merkmale(bild, maske, mm_px):
-    """Die 20 Messwerte eines Bildes."""
-    w = {}
     pixel = cv2.countNonZero(maske)
-    w["pflanzen_pixel"] = pixel
-
-    if pixel:
-        konturen, _ = cv2.findContours(maske, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        umfang = sum(cv2.arcLength(k, True) for k in konturen)
-        _, _, bb, bh = cv2.boundingRect(np.vstack(konturen))
-
-        w["blattflaeche_cm2"] = round(pixel * mm_px ** 2 / 100, 2) if mm_px else None
-        w["durchmesser_mm"] = round(max(bb, bh) * mm_px, 1) if mm_px else None
-        # Kompaktheit: 1.0 = Kreis, kleiner = zerklueftet. Reagiert auf Welken.
-        w["kompaktheit"] = round(4 * np.pi * pixel / umfang ** 2, 4) if umfang else None
-
-        n, _, stats, _ = cv2.connectedComponentsWithStats(maske, 8)
-        w["groesste_komponente_pct"] = round(
-            100 * max(stats[1:, cv2.CC_STAT_AREA]) / pixel, 1) if n > 1 else None
-
-        m = maske > 0
-        b, g, r = cv2.split(bild.astype(np.float32))
-        w["mittel_r"] = round(float(r[m].mean()), 1)
-        w["mittel_g"] = round(float(g[m].mean()), 1)
-        w["mittel_b"] = round(float(b[m].mean()), 1)
-        w["farbe_hex"] = "#{:02x}{:02x}{:02x}".format(
-            round(w["mittel_r"]), round(w["mittel_g"]), round(w["mittel_b"]))
-
-        hsv = cv2.cvtColor(bild, cv2.COLOR_BGR2HSV)
-        h_, s_, _ = cv2.split(hsv.astype(np.float32))
-        w["mittel_h"] = round(float(h_[m].mean()), 1)
-        w["mittel_s"] = round(float(s_[m].mean()), 1)
-        w["gruenindex"] = round(float((g / (b + g + r + 1e-6))[m].mean()), 4)
-
-        gelb = cv2.bitwise_and(cv2.inRange(hsv, *GELB_HSV), maske)
-        braun = cv2.bitwise_and(cv2.inRange(hsv, *BRAUN_HSV), maske)
-        w["gelbanteil_pct"] = round(100 * cv2.countNonZero(gelb) / pixel, 2)
-        w["braunanteil_pct"] = round(100 * cv2.countNonZero(braun) / pixel, 2)
-    else:
-        for k in ["blattflaeche_cm2", "durchmesser_mm", "kompaktheit",
-                  "groesste_komponente_pct", "mittel_r", "mittel_g", "mittel_b", "farbe_hex",
-                  "mittel_h", "mittel_s", "gruenindex",
-                  "gelbanteil_pct", "braunanteil_pct"]:
-            w[k] = None
-
+    if pixel == 0:
+        return {"pflanzen_pixel": 0}
+    konturen, _ = cv2.findContours(maske, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    umfang = sum(cv2.arcLength(k, True) for k in konturen)
+    _, _, breite, hoehe = cv2.boundingRect(np.vstack(konturen))
+    huelle = cv2.convexHull(np.vstack(konturen)).reshape(-1,2).astype(np.float32)
+    abstaende = huelle[:,None,:]-huelle[None,:,:]
+    durchmesser_px = float(np.sqrt(np.max(np.sum(abstaende**2,axis=2))))+1
+    n, _, stats, _ = cv2.connectedComponentsWithStats(maske, 8)
     grau = cv2.cvtColor(bild, cv2.COLOR_BGR2GRAY)
-    lap = cv2.Laplacian(grau, cv2.CV_64F)
-    # Schaerfe nur auf der Pflanze - der dunkle Hintergrund liesse sonst
-    # jedes Bild unscharf erscheinen.
-    w["schaerfe"] = round(float(lap[maske > 0].var()), 1) if pixel else None
-    w["bildhelligkeit"] = round(float(grau.mean()), 1)
-    w["ueberbelichtet_pct"] = round(
-        100 * float((bild[:, :, 1] > 250).sum()) / grau.size, 2)
-    w["mm_pro_pixel"] = round(mm_px, 4) if mm_px else None
+    farbe = farbmerkmale(bild, maske)
+    w = {k: v for k, v in farbe.items() if not k.startswith("_")}
+    w.update({"pflanzen_pixel": pixel,
+              "blattflaeche_cm2": pixel*mm_px**2/100 if mm_px else None,
+              "durchmesser_mm": durchmesser_px*mm_px if mm_px else None,
+              "kompaktheit": float(4*np.pi*pixel/umfang**2) if umfang else None,
+              "groesste_komponente_pct": 100*float(stats[1:, cv2.CC_STAT_AREA].max())/pixel if n > 1 else None,
+              "mm_pro_pixel": mm_px,
+              "schaerfe": float(cv2.Laplacian(grau, cv2.CV_64F)[maske > 0].var()),
+              "bildhelligkeit": float(grau.mean()),
+              "ueberbelichtet_pct": 100*float(np.all(bild[maske > 0] >= 253, axis=1).mean()),
+              "farbe_hex": "#{:02x}{:02x}{:02x}".format(*[int(np.clip(round(w[k]), 0, 255)) for k in ("mittel_r", "mittel_g", "mittel_b")])})
     return w
 
 
-def kontrollbild(bild, maske, marker_box, pfad):
-    """Nur die bisherige obere rechte Ansicht: Kontur und Pflanzen-Overlay.
+def kontrollbild(bild, maske, z, pfad):
+    """Eine Ansicht: Originalfoto, transparente Blattmaske und duenne Kontur."""
+    vorschau = kleiner(bild)
+    m = cv2.resize(maske, (vorschau.shape[1], vorschau.shape[0]), interpolation=cv2.INTER_NEAREST)
+    vorschau[m > 0] = (.86*vorschau[m > 0]+.14*np.array([205, 80, 215])).astype(np.uint8)
+    konturen, _ = cv2.findContours(m, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(vorschau, konturen, -1, (220, 40, 220), 1, cv2.LINE_AA)
+    panel = np.full((vorschau.shape[0]+58, vorschau.shape[1], 3), 248, np.uint8)
+    panel[58:] = vorschau
+    cv2.putText(panel, f"Blattmaske | {z['bild']}", (12, 23), cv2.FONT_HERSHEY_SIMPLEX, .48, (45, 45, 45), 1, cv2.LINE_AA)
+    score = z.get("gesundheit")
+    info = (f"Sichtbarer Zustandsindex {score:.1f}/100 | " if score is not None else "Kein vergleichbarer Score | ") + (z.get("gesundheit_status") or "")
+    cv2.putText(panel, info, (12, 46), cv2.FONT_HERSHEY_SIMPLEX, .44, (65, 65, 65), 1, cv2.LINE_AA)
+    if not cv2.imwrite(str(pfad), panel):
+        raise OSError(f"Kontrollbild nicht gespeichert: {pfad}")
 
-    Nur diese Vorschau wird verkleinert, nicht Maske oder Messbild.
+
+def referenz_laden(pfad, neu=False):
+    if neu or not pfad.exists():
+        return None
+    with np.load(pfad, allow_pickle=False) as daten:
+        meta = json.loads(str(daten["meta"]))
+        if meta.get("version") not in (SCORING_VERSION, "2.0.0") or meta.get("messreihe") != MESSREIHE:
+            raise ValueError("Referenz gehoert zu anderer Messreihe/Scoreversion. --neue-referenz verwenden.")
+        if meta.get("arbeitsbreite", ARBEITSBREITE) != ARBEITSBREITE or meta.get("roi") != (list(ROI_NORMIERT) if ROI_NORMIERT else None):
+            raise ValueError("ROI/Aufloesung der Referenz passt nicht. --neue-referenz verwenden.")
+        ref = {"meta": meta, "bild": daten["bild"].copy(), "maske": daten["maske"].copy()}
+    if meta.get("analyse_version") != ANALYSE_VERSION or meta.get("version") != SCORING_VERSION:
+        # Den urspruenglichen Referenzzeitpunkt trotz neuem Maskenverfahren
+        # behalten. Veraltete, eventuell wandhaltige Masken nie weitergeben.
+        maske = segmentieren(ref["bild"])
+        if cv2.countNonZero(maske) < 80:
+            print("Alte Referenz nicht auswertbar; erste brauchbare Aufnahme wird Referenz.")
+            return None
+        h, w = ref["bild"].shape[:2]
+        breite, hoehe = meta.get("bildbreite", w), meta.get("bildhoehe", h)
+        gross = cv2.resize(maske, (breite, hoehe), interpolation=cv2.INTER_NEAREST)
+        geometrie = merkmale(cv2.resize(ref["bild"], (breite, hoehe)), gross, None)
+        ref["maske"] = maske
+        meta.update(version=SCORING_VERSION, analyse_version=ANALYSE_VERSION,
+                    pflanzen_pixel=geometrie["pflanzen_pixel"],
+                    kompaktheit=geometrie["kompaktheit"], historie=[])
+        print("Referenzmaske aktualisiert; urspruengliche Referenzaufnahme bleibt erhalten.")
+    return ref
+
+
+def referenz_speichern(pfad, ref):
+    tmp = pfad.with_name("."+pfad.name+".tmp")
+    with tmp.open("wb") as datei:
+        np.savez_compressed(datei, meta=json.dumps(ref["meta"], allow_nan=False),
+                            bild=ref["bild"], maske=ref["maske"])
+    tmp.replace(pfad)
+
+
+def stetiger_score(abweichung, toleranz, halbwert):
+    """100 bis kontinuierlich gegen 0; keine Schalter fuer gut/schlecht.
+
+    Bei toleranz+halbwert ist der Teilscore 50. Die Startparameter sind
+    nachvollziehbar und muessen spaeter an echten Verlaeufen validiert werden.
     """
-    overlay = bild.copy()
-    m = maske > 0
-    overlay[m] = (0.80*bild[m] + 0.20*np.array([180, 220, 20])).astype(np.uint8)
-    konturen, _ = cv2.findContours(maske, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(overlay, konturen, -1, (255, 0, 255), max(1, round(bild.shape[1]/900)))
-    if marker_box:
-        x, y, w, h = marker_box
-        cv2.rectangle(overlay, (x, y), (x+w, y+h), (255, 180, 0), 2)
-    breite = min(720, bild.shape[1])
-    hoehe = max(1, round(bild.shape[0]*breite/bild.shape[1]))
-    kopf = 36
-    panel = np.full((hoehe+kopf, breite, 3), 245, np.uint8)
-    panel[kopf:] = cv2.resize(overlay, (breite, hoehe))
-    cv2.putText(panel, "Kontur und erkannte Pflanzenflaeche", (10, 24),
-                cv2.FONT_HERSHEY_SIMPLEX, min(0.55, breite/1000),
-                (35, 35, 35), 1, cv2.LINE_AA)
-    cv2.imwrite(pfad, panel)
+    d = max(0.0, float(abweichung)-toleranz)/halbwert
+    return float(100*math.exp(-math.log(2)*min(d, 30)**2))
 
 
-# --- Zeitreihe und Pruefung ------------------------------------------
-def zeitreihe(zeilen, zeiten):
-    """Stunden seit Start und Wachstumsrate. Grundlage fuer den Digital Twin."""
-    echte_zeiten = [t for z, t in zip(zeilen, zeiten) if z["captured_at"]]
-    start = min(echte_zeiten) if echte_zeiten else None
-    vorher = None
-    for z, t in zip(zeilen, zeiten):
-        z["stunden_seit_start"] = None
-        z["wachstumsrate_cm2_pro_tag"] = None
-        z["_sprung_pct"] = None
-        if not z["captured_at"] or start is None:
-            continue
-        z["stunden_seit_start"] = round((t-start).total_seconds()/3600, 4)
-        flaeche = z["blattflaeche_cm2"]
-        if not z["brauchbar"] or flaeche is None:
-            continue
-        if vorher:
-            stunden = (t-vorher[0]).total_seconds()/3600
-            delta = flaeche-vorher[1]
-            if stunden > 0:
-                z["wachstumsrate_cm2_pro_tag"] = round(delta/stunden*24, 3)
-            if vorher[1] > 0:
-                z["_sprung_pct"] = 100*delta/vorher[1]
-        vorher = (t, flaeche)
+def gesundheitsmerkmale(arbeit, maske, ref_bild=None, ref_maske=None):
+    """Globalen Licht-/Weissabgleich-Drift am Hintergrund grob kompensieren.
+
+    Die gespeicherten RGB-Messwerte bleiben Rohwerte. Nur der Vergleichsindex
+    benutzt die korrigierte Arbeitskopie. Starke Lichtaenderungen sind ungültig.
+    """
+    if ref_bild is None:
+        return farbmerkmale(arbeit, maske), []
+    lab = cv2.cvtColor(arbeit.astype(np.float32)/255, cv2.COLOR_BGR2LAB)
+    ref_lab = cv2.cvtColor(ref_bild.astype(np.float32)/255, cv2.COLOR_BGR2LAB)
+    bg = (cv2.dilate(cv2.bitwise_or(maske, ref_maske), np.ones((25, 25), np.uint8)) == 0)
+    bg &= np.max(ref_bild, axis=2) > 30
+    bg &= np.max(arbeit, axis=2) > 30
+    if np.count_nonzero(bg) < .1*bg.size:
+        return farbmerkmale(arbeit, maske), ["lichtvergleich_nicht_verifiziert"]
+    delta = np.median((lab-ref_lab)[bg], axis=0)
+    if abs(float(delta[0])) > 18 or np.linalg.norm(delta[1:]) > 12:
+        return farbmerkmale(arbeit, maske), ["starke_lichtaenderung"]
+    lab -= np.clip(delta, [-12, -7, -7], [12, 7, 7])
+    korrigiert = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    korrigiert = np.rint(np.clip(korrigiert*255, 0, 255)).astype(np.uint8)
+    return farbmerkmale(korrigiert, maske), []
 
 
-def pruefen(zeilen):
-    """Setzt die Spalten 'auffaelligkeit' und 'brauchbar'."""
-    for z in zeilen:
-        gruende = []
-        if z["massstab_quelle"] == "" and not DATENSATZ_MODUS:
-            gruende.append("kein_marker")
-        if not z["pflanzen_pixel"]:
-            gruende.append("keine_pflanze")
-        if z["schaerfe"] is not None and z["schaerfe"] < SCHAERFE_MIN:
-            gruende.append("unscharf")
-        if z["ueberbelichtet_pct"] > UEBERBELICHTET_MAX_PCT:
-            gruende.append("ueberbelichtet")
-        if z["groesste_komponente_pct"] is not None and z["groesste_komponente_pct"] < ZERSPLITTERT_MIN_PCT:
-            gruende.append("zersplittert")
-        if z["_sprung_pct"] is not None and abs(z["_sprung_pct"]) > SPRUNG_MAX_PCT:
-            gruende.append("flaechensprung")
-        z["auffaelligkeit"] = ";".join(gruende)
-        z["brauchbar"] = not gruende
-
-
-# --- Spaltenreihenfolge der CSV --------------------------------------
-SPALTEN = (["bild", "ausgabe_stamm", "captured_at", "bildquelle", "analyse_modus", "stunden_seit_start", "zeitquelle",
-            "pflanzen_pixel", "blattflaeche_cm2", "durchmesser_mm", "kompaktheit",
-            "wachstumsrate_cm2_pro_tag",
-            "mittel_r", "mittel_g", "mittel_b", "farbe_hex", "mittel_h", "mittel_s",
-            "gruenindex", "gelbanteil_pct", "braunanteil_pct",
-            "mm_pro_pixel", "massstab_quelle", "schaerfe", "rauschen", "bildhelligkeit", "ueberbelichtet_pct",
-            "groesste_komponente_pct", "auffaelligkeit", "brauchbar"]
-           + gesundheit.SPALTEN)
-
-
-# --- Hauptprogramm ---------------------------------------------------
-def main():
-    global DATENSATZ_MODUS, AUSGABE, KALIBRIERUNG
-    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
-        print(__doc__)
+def bewerten(z, merkmale_gesund, ref, struktur_erlaubt=True):
+    if merkmale_gesund is None or not z["brauchbar"]:
+        z["gesundheit_status"] = "nicht_auswertbar"
+        z["gesundheit_kategorie"] = "keine_daten"
         return
-    if len(sys.argv) > 1 and sys.argv[1] == "--kalibrieren":
-        if len(sys.argv) < 3:
-            print("Aufruf: python analyse.py --kalibrieren schachbrett/")
+    basis = farbmerkmale(ref["bild"], ref["maske"])
+    cur, alt = merkmale_gesund, basis
+    hist_abstand = float(cv2.compareHist(cur["_hist"].astype(np.float32), alt["_hist"].astype(np.float32), cv2.HISTCMP_BHATTACHARYYA))
+    gruen_abstand = abs(cur["gruenindex"]-alt["gruenindex"])
+    z["score_gruen"] = .6*stetiger_score(hist_abstand, .035, .28)+.4*stetiger_score(gruen_abstand, .006, .045)
+    gelb_delta = max(0., cur["gelbanteil_pct"]-alt["gelbanteil_pct"])
+    braun_delta = max(0., cur["braunanteil_pct"]-alt["braunanteil_pct"], cur["_warm_last"]-alt["_warm_last"])
+    z["score_gelb"] = stetiger_score(gelb_delta, 1.5, 12.)
+    z["score_braun"] = stetiger_score(braun_delta, .8, 7.)
+    saett_delta = abs(math.log((cur["mittel_s"]+8)/(alt["mittel_s"]+8)))
+    z["score_saettigung"] = stetiger_score(saett_delta, .06, .32)
+    if cur["mittel_h"] is not None and alt["mittel_h"] is not None:
+        hue_delta = abs(cur["mittel_h"]-alt["mittel_h"])
+        hue_delta = min(hue_delta, 180-hue_delta)
+    else:
+        hue_delta = 0.0
+    lab_delta = float(np.linalg.norm(cur["_lab"][1:]-alt["_lab"][1:]))
+    z["score_farbton"] = stetiger_score(max(hue_delta, lab_delta/2), 2., 10.)
+    farbe = sum(GEWICHTE[k]*z["score_"+k] for k in GEWICHTE)
+    flaechenverlust = max(0., 1-z["pflanzen_pixel"]/ref["meta"]["pflanzen_pixel"])
+    form_delta = abs(math.log(max(z["kompaktheit"], 1e-6)/max(ref["meta"]["kompaktheit"], 1e-6)))
+    struktur = .7*stetiger_score(flaechenverlust, .05, .25)+.3*stetiger_score(form_delta, .12, .7)
+    z["_struktur_score"] = struktur if struktur_erlaubt else None
+    z["gesundheit_roh"] = .8*farbe+.2*struktur if struktur_erlaubt else farbe
+    z["gesundheit"] = z["gesundheit_roh"]
+    z["gesundheit_status"] = "freigegeben" if REFERENZ_FREIGEGEBEN else "vorlaeufige_referenz"
+    if not struktur_erlaubt:
+        z["gesundheit_status"] += ";nur_farbvergleich"
+    warnungen = []
+    if hist_abstand > .3 or hue_delta > 10:
+        warnungen.append("farbveraenderung")
+    if gelb_delta >= 8:
+        warnungen.append("gelbanteil_gestiegen")
+    if braun_delta >= 3:
+        warnungen.append("braunanteil_gestiegen")
+    if saett_delta > .25:
+        warnungen.append("saettigung_veraendert")
+    if struktur_erlaubt and flaechenverlust > .15:
+        warnungen.append("sichtbare_blattflaeche_gesunken")
+    z["gesundheitswarnung"] = ";".join(warnungen)
+
+
+def zeitreihe_und_glaettung(zeilen, alte_historie):
+    letzter = None
+    gueltige = []
+    start = min((z["_zeit"] for z in zeilen if z["_zeit"]), default=None)
+    fruehere_scores = [p for p in alte_historie if start and p.get("captured_at") and
+                       datetime.fromisoformat(p["captured_at"].replace("Z", "+00:00")) < start]
+    vorher_score = fruehere_scores[-1] if fruehere_scores else None
+    for z in zeilen:
+        t = z["_zeit"]
+        if t and start:
+            z["stunden_seit_start"] = (t-start).total_seconds()/3600
+        if not z["brauchbar"] or not t:
+            letzter = None
         else:
-            kalibrieren(sys.argv[2])
-        return
+            # Vergleich aufeinanderfolgender Aufnahmen statt pauschalem
+            # Ausschluss aller spaeteren Bilder nach EINEM Kameraversatz.
+            if letzter and z.get("_geometrie_ok"):
+                dt = (t-letzter["_zeit"]).total_seconds()/86400
+                if dt > 0:
+                    a, b = z["pflanzen_pixel"], letzter["pflanzen_pixel"]
+                    z["wachstumsrate_pct_pro_tag"] = 100*(a/b-1)/dt if b else None
+                    if z["blattflaeche_cm2"] is not None and letzter["blattflaeche_cm2"] is not None:
+                        z["wachstumsrate_cm2_pro_tag"] = (z["blattflaeche_cm2"]-letzter["blattflaeche_cm2"])/dt
+                    if abs(a/b-1) > .5:
+                        flags_hinzufuegen(z, "flaechensprung_pruefen")
+                        z["wachstumsrate_pct_pro_tag"] = None
+                        z["wachstumsrate_cm2_pro_tag"] = None
+            letzter = z
+        roh = z.get("gesundheit_roh")
+        if roh is None:
+            continue  # Kein alter Score wird als neue Messung fortgeschrieben.
+        if vorher_score and t:
+            t0 = datetime.fromisoformat(vorher_score["captured_at"].replace("Z", "+00:00"))
+            stunden = (t-t0).total_seconds()/3600
+            alpha = min(1., max(.25, 1-math.exp(-max(0., stunden)/2.)))
+            z["gesundheit"] = alpha*roh+(1-alpha)*vorher_score["gesundheit"]
+        score = z["gesundheit"]
+        z["gesundheit_kategorie"] = next(n for grenze, n in [(85,"sehr gut"),(70,"gut"),(50,"beobachten"),(30,"auffaellig"),(0,"kritisch")] if score >= grenze)
+        if t:
+            gueltige.append(z)
+            alle = fruehere_scores + [{"captured_at": iso(p["_zeit"]), "gesundheit": p["gesundheit"]} for p in gueltige[:-1]]
+            vor24 = [p for p in alle if 22 <= (t-datetime.fromisoformat(p["captured_at"].replace("Z", "+00:00"))).total_seconds()/3600 <= 26]
+            if vor24:
+                vergleich = min(vor24, key=lambda p: abs((t-datetime.fromisoformat(p["captured_at"].replace("Z", "+00:00"))).total_seconds()/3600-24))
+                z["gesundheit_trend_24h"] = score-vergleich["gesundheit"]
+            vorher_score = {"captured_at": iso(t), "gesundheit": score}
 
-    pi_modus = len(sys.argv) == 1 or sys.argv[1] in ("--pi", "--nur-bild")
-    if pi_modus:
-        try:
-            pi_pfade = pi_bilder_holen()
-        except (OSError, RuntimeError, subprocess.SubprocessError, tarfile.TarError) as fehler:
-            print(f"Fotoabruf fehlgeschlagen: {fehler}")
-            print("Analyse nicht gestartet. Tailscale, SSH-Zugang und Kamera pruefen.")
-            return 1
-        if len(sys.argv) > 1 and sys.argv[1] == "--nur-bild":
-            return
-        DATENSATZ_MODUS = False
-        ziel = str(BILDER_ORDNER)
-        AUSGABE = str(BILDER_ORDNER.parent / "auswertung")
-        KALIBRIERUNG = str(Path(__file__).resolve().parent / KALIBRIERUNG)
+
+def json_sicher(wert):
+    if isinstance(wert, dict):
+        return {k: json_sicher(v) for k, v in wert.items() if not k.startswith("_")}
+    if isinstance(wert, (list, tuple)):
+        return [json_sicher(v) for v in wert]
+    if isinstance(wert, (float, np.floating)):
+        return round(float(wert), 5) if math.isfinite(float(wert)) else None
+    if isinstance(wert, np.integer):
+        return int(wert)
+    return wert
+
+
+def api_datensatz(z, ref):
+    messung = {eng: z.get(de) for de, eng in API_MESSFELDER.items()}
+    gesundheit = {eng: z.get(de) for de, eng in API_GESUNDHEIT.items()}
+    fehlt = {}
+    if ist_pi_bild(z["bild"]):
+        # Stabiler relativer Pfad aus dem Hardware-Handover. Funktioniert
+        # auch auf beiden Archiven nach der lokalen 100-Bilder-Bereinigung.
+        sitzung = z["bild"][len("biobox_"):-4]
+        storage_path = f"recent/{sitzung}/normal.jpg"
     else:
-        ziel = sys.argv[1]
+        storage_path = None
+        fehlt["storage_path"] = "externer_import_noch_keinem_serverpfad_zugeordnet"
+    if z["blattflaeche_cm2"] is None:
+        for feld in ("leaf_area_cm2", "diameter_mm", "mm_per_pixel"):
+            fehlt[feld] = "kein_verifizierter_massstab_in_blattebene"
+    if z["wachstumsrate_cm2_pro_tag"] is None:
+        fehlt["growth_rate_cm2_per_day"] = "massstab_oder_vergleichsaufnahme_fehlt_oder_ansicht_geaendert"
+    if z["wachstumsrate_pct_pro_tag"] is None:
+        fehlt["growth_rate_pct_per_day"] = "zeit_oder_vergleichsaufnahme_fehlt_oder_ansicht_geaendert"
+    if z["gesundheit_trend_24h"] is None:
+        fehlt["health_trend_24h"] = "kein_gueltiger_score_vor_24_stunden_plusminus_2h"
+    if not z["captured_at"]:
+        fehlt["captured_at"] = "keine_aufnahmezeit_im_dateinamen"
+    if z["gesundheit"] is None:
+        fehlt["health_score"] = z["gesundheit_status"]
+    for feld, wert in messung.items():
+        if wert is None and feld not in fehlt:
+            fehlt[feld] = "bild_nicht_auswertbar" if not z["brauchbar"] else "kein_gueltiger_messwert"
+    return json_sicher({"device_id": DEVICE_ID,
+        "image": {"file_name": z["bild"], "captured_at": z["captured_at"],
+                  "storage_path": storage_path, "checksum_sha256": z.get("_sha256")},
+        "image_measurements": messung, "health_assessment": gesundheit,
+        "analysis": {"version": ANALYSE_VERSION, "health_status": z["gesundheit_status"],
+                     "measurement_mode": "metric" if z["mm_pro_pixel"] is not None else "pixels",
+                     "scale_status": z.get("_massstab_status"),
+                     "lens_corrected": z.get("_objektiv_entzerrt", False),
+                     "reference_file": ref["meta"]["bild"] if ref else None,
+                     "reference_sha256": ref["meta"].get("sha256") if ref else None,
+                     "reference_approved": REFERENZ_FREIGEGEBEN, "missing_values": fehlt}})
 
-    if pi_modus:
-        pfade = [str(p) for p in pi_pfade]
-    elif os.path.isfile(ziel):
-        pfade = [ziel]
-    elif os.path.isdir(ziel):
-        pfade = []
-        for wurzel, ordner, namen in os.walk(ziel):
-            ordner[:] = [o for o in ordner if o != AUSGABE]
-            pfade += [os.path.join(wurzel, n) for n in namen
-                      if n.lower().endswith(ENDUNGEN)]
-    else:
-        print("nicht gefunden:", ziel)
-        return
 
-    if DATENSATZ_MODUS and NUR_DRAUFSICHT and os.path.isdir(ziel):
-        top = [p for p in pfade if re.search(r"_top_", os.path.basename(p), re.I)]
-        if top:
-            print(f"Draufsicht-Filter: {len(top)} Bilder, {len(pfade)-len(top)} andere Ansichten ausgelassen")
-            pfade = top
-
-    bilder = []
-    for pfad in pfade:
-        # Relativer Pfad unterscheidet gleichnamige Bilder in Unterordnern.
-        name = (os.path.relpath(pfad, ziel) if os.path.isdir(ziel)
-                else os.path.basename(pfad)).replace(os.sep, "/")
-        zeit = None if DATENSATZ_MODUS else zeit_aus_name(os.path.basename(name))
-        quelle = "keine_aufnahmezeit" if DATENSATZ_MODUS else "name"
-        if not DATENSATZ_MODUS and zeit is None:
-            quelle = "dateidatum"
-            zeit = datetime.fromtimestamp(os.path.getmtime(pfad), timezone.utc)
-        bilder.append((zeit, name, quelle, pfad))
-    def namensschluessel(name):
-        return tuple((0, int(t)) if t.isdigit() else (1, t.lower())
-                     for t in re.split(r"(\d+)", name))
-    bilder.sort(key=lambda b: namensschluessel(b[1]) if DATENSATZ_MODUS
-                else (b[0], namensschluessel(b[1])))
-
-    # Erst aufraeumen, dann pruefen: auch bei null Bildern darf nichts
-    # aus einem frueheren Lauf stehen bleiben.
-    ordner_maske = os.path.join(AUSGABE, "masken")
-    ordner_kontrolle = os.path.join(AUSGABE, "kontrolle")
-    csv_pfad = os.path.join(AUSGABE, "ergebnis.csv")
-    os.makedirs(ordner_maske, exist_ok=True)
-    os.makedirs(ordner_kontrolle, exist_ok=True)
-
-    alt = (glob.glob(f"{ordner_maske}/*.png")
-           + glob.glob(f"{ordner_kontrolle}/*.png")
-           + glob.glob(os.path.join(AUSGABE, "grafiken", "*.png")))
-    if os.path.exists(csv_pfad):
-        alt.append(csv_pfad)
-    for f in alt:
-        os.remove(f)
-    if alt:
-        print(f"{len(alt)} alte Ausgabedatei(en) geloescht\n")
-
-    if not bilder:
-        print("keine Bilder gefunden in:", ziel)
-        return
-
-    kalibrierung = None if DATENSATZ_MODUS else kalibrierung_laden()
-    if DATENSATZ_MODUS:
-        print("Datensatzmodus: lokale Einzelbilder, ohne Kamera-Kalibrierung")
-    else:
-        print("Entzerrung aktiv" if kalibrierung else
-              f"Entzerrung inaktiv ({KALIBRIERUNG} fehlt)")
-
-    zeilen, zeiten, uebersprungen = [], [], []
-    for i, (zeit, name, quelle, pfad) in enumerate(bilder, 1):
-        kopf = f"[{i}/{len(bilder)}] {name:38s}"
-        bild = cv2.imread(pfad)
-        if bild is None:
-            print(f"{kopf} nicht lesbar")
-            uebersprungen.append((name, "nicht lesbar"))
-            continue
-
-        if min(bild.shape[:2]) < 3:
-            print(f"{kopf} uebersprungen: Bild zu klein")
-            uebersprungen.append((name, "Bild zu klein"))
-            continue
-
-        # Rauschen am Originalbild messen, vor Entzerrung und Filterung
-        rauschen = rauschen_schaetzen(bild)
-        if rauschen > MAX_RAUSCHEN:
-            print(f"{kopf} uebersprungen: zu verrauscht ({rauschen:.1f})")
-            uebersprungen.append((name, f"zu verrauscht ({rauschen:.1f})"))
-            continue
-
-        bild = entzerren(bild, kalibrierung)
-        maske = segmentieren(bild)
-        anteil = 100 * cv2.countNonZero(maske) / maske.size
-        if anteil < MIN_PFLANZE_PCT:
-            print(f"{kopf} uebersprungen: keine Pflanze erkannt ({anteil:.2f} %)")
-            uebersprungen.append((name, f"keine Pflanze erkannt ({anteil:.2f} %)"))
-            continue
-
-        # Erst jetzt steht fest, dass das Bild verwendet wird
-        # Ein weisses Quadrat im Datensatz ist kein verifizierter 40-mm-Marker.
-        mm_px, marker_box = (None, None) if DATENSATZ_MODUS else marker_finden(bild)
-        quelle_massstab = "marker" if mm_px else ""
-        if mm_px is None and MM_PRO_PIXEL_MANUELL:
-            mm_px = MM_PRO_PIXEL_MANUELL
-            quelle_massstab = "manuell"
-
-        ausgabename = f"{i:05d}_{os.path.splitext(os.path.basename(pfad))[0]}"
-        cv2.imwrite(f"{ordner_maske}/{ausgabename}_maske.png", maske)
-        kontrollbild(bild, maske, marker_box,
-                     f"{ordner_kontrolle}/{ausgabename}_kontrolle.png")
-
-        z = {"bild": name, "ausgabe_stamm": ausgabename,
-             "captured_at": zeit.isoformat().replace("+00:00", "Z") if zeit and quelle == "name" else "",
-             "zeitquelle": quelle, "massstab_quelle": quelle_massstab,
-             "bildquelle": BILDQUELLE if DATENSATZ_MODUS else "lokale_kameraaufnahme",
-             "analyse_modus": "datensatz" if DATENSATZ_MODUS else "zeitreihe",
-             **merkmale(bild, maske, mm_px), "rauschen": round(rauschen, 1)}
-        zeilen.append(z)
-        zeiten.append(zeit)
-        flaeche = z["blattflaeche_cm2"]
-        info = f"{flaeche} cm2" if flaeche else f"{z['pflanzen_pixel']} px (kein Massstab)"
-        print(f"{kopf} {info}")
-
-    if not zeilen:
-        print(f"\nalle {len(bilder)} Bilder uebersprungen - nichts auszuwerten")
-        return
-
-    # Qualitaet vor zeitlichen Vergleichen pruefen: unbrauchbare Bilder
-    # duerfen keine Vergleichsflaeche fuer spaetere Aufnahmen liefern.
-    for z in zeilen:
-        z["_sprung_pct"] = None
-    pruefen(zeilen)
-    if DATENSATZ_MODUS:
+def ergebnisse_speichern(zeilen, ref, ausgabe):
+    # CSV ist eine Kontrollansicht. Die API-Zahlen werden nie ueber CSV gelesen.
+    inhalt = [api_datensatz(z, ref) for z in zeilen]
+    json_tmp = ausgabe/".ergebnis.json.tmp"
+    with json_tmp.open("w", encoding="utf-8") as datei:
+        json.dump(inhalt, datei, ensure_ascii=False, indent=2, allow_nan=False)
+    json_tmp.replace(ausgabe/"ergebnis.json")
+    csv_tmp = ausgabe/".ergebnis.csv.tmp"
+    with csv_tmp.open("w", encoding="utf-8-sig", newline="") as datei:
+        writer = csv.DictWriter(datei, fieldnames=SPALTEN, delimiter=";", extrasaction="raise")
+        writer.writeheader()
         for z in zeilen:
-            z["stunden_seit_start"] = None
-            z["wachstumsrate_cm2_pro_tag"] = None
-            z["_sprung_pct"] = None
+            daten = {}
+            for k in SPALTEN:
+                v = json_sicher(z.get(k))
+                if v is None:
+                    daten[k] = "NULL"
+                elif isinstance(v, bool):
+                    daten[k] = str(v)
+                elif isinstance(v, float) and CSV_DEZIMALKOMMA:
+                    daten[k] = str(v).replace(".", ",")
+                else:
+                    daten[k] = v
+            writer.writerow(daten)
+    try:
+        csv_tmp.replace(ausgabe/"ergebnis.csv")
+    except PermissionError:
+        csv_tmp.unlink(missing_ok=True)
+        print("CSV kann nicht aktualisiert werden: ergebnis.csv in Excel schliessen und erneut ausfuehren. JSON und Grafiken werden trotzdem aktualisiert.")
+        return False
+    return True
+
+
+def grafiken(zeilen, ordner):
+    ordner.mkdir(exist_ok=True)
+    gruen, rot, grau = "#32816c", "#b95750", "#62737b"
+    zeiten = [z["_zeit"] for z in zeilen]
+    zeitachse = bool(zeiten) and all(zeiten)
+    x = zeiten if zeitachse else list(range(1, len(zeilen)+1))
+    plt.rcParams.update({"font.size": 10, "axes.spines.top": False, "axes.spines.right": False})
+    def linie(ax, feld, label, farbe):
+        y = [z.get(feld) if z.get(feld) is not None and z.get("brauchbar") else np.nan for z in zeilen]
+        if not any(np.isfinite(v) for v in y):
+            return False
+        ax.plot(x, y, "o-", ms=4, lw=1.7, color=farbe, label=label)
+        return True
+    def hinweis(ax, text):
+        ax.text(.5, .5, text, ha="center", va="center", transform=ax.transAxes,
+                fontsize=11, color=grau, linespacing=1.7)
+    def speichern(fig, nummer):
+        for ax in fig.axes:
+            ax.grid(alpha=.16)
+            ax.set_xlabel("Aufnahmezeit (UTC)" if zeitachse else "Aufnahme (ohne verlaessliche Zeit)")
+            if zeitachse:
+                locator = mdates.AutoDateLocator(minticks=3, maxticks=7)
+                ax.xaxis.set_major_locator(locator)
+                ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=timezone.utc))
+            if len(x) == 1 and zeitachse:
+                t = mdates.date2num(x[0])
+                ax.set_xlim(t-.02, t+.02)
+        fig.text(.012, .012, f"BioBox | {sum(bool(z['brauchbar']) for z in zeilen)}/{len(zeilen)} auswertbar | Index relativ zur eigenen Referenz", fontsize=8, color=grau)
+        fig.tight_layout(rect=(0, .05, 1, 1))
+        fig.savefig(ordner/GRAFIK_DATEIEN[nummer], dpi=150, facecolor="white")
+        plt.close(fig)
+    kalibriert = any(z.get("blattflaeche_cm2") is not None for z in zeilen)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.set_title("01 | Sichtbare projizierte Blattflaeche")
+    feld = "blattflaeche_cm2" if kalibriert else "pflanzen_pixel"
+    hat_werte = linie(ax, feld, "Auswertbare Blattmaske", gruen)
+    unbestaetigt = [(xi, z[feld]) for xi, z in zip(x, zeilen)
+                   if not z.get("brauchbar") and z.get(feld) is not None]
+    if unbestaetigt:
+        ax.scatter([p[0] for p in unbestaetigt], [p[1] for p in unbestaetigt],
+                   color=rot, marker="x", label="Maske pruefen; keine bestaetigte Messung")
+        ax.legend()
+    if not hat_werte and not unbestaetigt:
+        hinweis(ax, "Keine lesbare Blattmaske. Kontrollbilder und Qualitaetsflags pruefen.")
+    ax.set_ylabel("Flaeche [cm²]" if kalibriert else "Sichtbare Blattflaeche [Pixel]")
+    speichern(fig, 0)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    feld = "wachstumsrate_cm2_pro_tag" if kalibriert else "wachstumsrate_pct_pro_tag"
+    ax.set_title("02 | Aenderung der sichtbaren Blattflaeche")
+    if not linie(ax, feld, "Aenderungsrate", gruen):
+        hinweis(ax, "Ab zwei vergleichbaren Aufnahmen mit Zeitstempel berechenbar.\nKeine Messung wird als 0 ergaenzt.")
+    ax.axhline(0, color=grau, lw=.7)
+    ax.set_ylabel("cm²/Tag" if kalibriert else "%/Tag — nur bei unveraenderter Kamera")
+    speichern(fig, 1)
+    fig, (oben, unten) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+    oben.set_title("03 | Gemessene Blattfarben (keine Sollfarbe)")
+    for feld, farbe, label in [("mittel_r", "#ba6262", "R"), ("mittel_g", gruen, "G"), ("mittel_b", "#5685a5", "B")]:
+        linie(oben, feld, label, farbe)
+    oben.set_ylabel("Mittlerer RGB-Kanal [0–255]")
+    if oben.lines:
+        oben.legend()
     else:
-        zeitreihe(zeilen, zeiten)
-    pruefen(zeilen)
-    referenz = gesundheit.bewerten(zeilen, zeitreihe_aktiv=not DATENSATZ_MODUS,
-                                    referenz_freigegeben=REFERENZ_FREIGEGEBEN)
+        hinweis(oben, "Keine auswertbare Blattfarbe.")
+    for feld, farbe, label in [("gelbanteil_pct", "#c2a333", "Gelb"), ("braunanteil_pct", "#95684f", "Braun")]:
+        linie(unten, feld, label, farbe)
+    unten.set_ylabel("Anteil an Blattmaske [%]")
+    if unten.lines:
+        unten.legend()
+    else:
+        hinweis(unten, "Keine auswertbare Blattmaske.")
+    speichern(fig, 2)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.set_title("04 | Sichtbarer Zustandsindex — 100 = Referenzzustand")
+    for a, b, c in [(0,30,"#f6e3e0"),(30,50,"#f5e8da"),(50,70,"#f8f1d9"),(70,85,"#eaf0df"),(85,100,"#e0eee8")]:
+        ax.axhspan(a, b, color=c)
+    if linie(ax, "gesundheit", "Geglaettet", gruen):
+        linie(ax, "gesundheit_roh", "Einzelaufnahme", grau)
+        ax.legend()
+    else:
+        hinweis(ax, "Kein belastbarer Vergleich.\nGesundheit_status und Kontrollbilder pruefen.")
+    ax.set_ylim(-2, 103)
+    ax.set_ylabel("Relativer Index [0–100]")
+    speichern(fig, 3)
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    gute = [z for z in zeilen if z.get("gesundheit_roh") is not None]
+    ax.set_title("05 | Ursachen des letzten Vergleichsindexes")
+    if gute:
+        z = gute[-1]
+        labels = ["Farbverteilung", "Gelbzunahme", "Braun-/Warmzunahme", "Saettigungswechsel", "Farbtonwechsel"]
+        werte = [z["score_"+k] for k in GEWICHTE]
+        if z.get("_struktur_score") is not None:
+            labels.append("Blattflaeche / Form")
+            werte.append(z["_struktur_score"])
+        balken = ax.barh(labels, werte, color=[gruen]*5+["#658199"] if len(werte)==6 else gruen)
+        ax.bar_label(balken, fmt="%.1f", padding=3)
+        ax.set_xlim(0, 112)
+        ax.set_xlabel("Teilscore [0–100]; "+("Farbe 80 %, Struktur 20 %" if z.get("_struktur_score") is not None else "nur Farbvergleich"))
+        ax.set_title(f"05 | {z['bild']}\nIndex {z['gesundheit']:.1f}/100 | {z['gesundheit_status']}", fontsize=11)
+        ax.set_xticks([0, 25, 50, 75, 100])
+        # Diese Grafik hat keine Zeitachse.
+        fig.tight_layout()
+        fig.savefig(ordner/GRAFIK_DATEIEN[4], dpi=150, facecolor="white")
+        plt.close(fig)
+    else:
+        hinweis(ax, "Noch keine auswertbare Referenzaufnahme.")
+        speichern(fig, 4)
 
-    with open(csv_pfad, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=SPALTEN, extrasaction="ignore")
-        w.writeheader()
-        w.writerows(zeilen)
 
-    print(f"\n{len(zeilen)} Bilder ausgewertet -> {AUSGABE}/ergebnis.csv")
-    if uebersprungen:
-        print(f"{len(uebersprungen)} Bild(er) uebersprungen und nicht verwendet")
-
-    ohne_name = sum(1 for z in zeilen if z["zeitquelle"] == "dateidatum")
-    if ohne_name:
-        print(f"HINWEIS: {ohne_name} Bild(er) ohne Zeitstempel im Namen "
-              f"-> Dateidatum verwendet, siehe Spalte 'zeitquelle'")
-
-    schlecht = [z for z in zeilen if not z["brauchbar"]]
-    if schlecht:
-        print(f"\n{len(schlecht)} von {len(zeilen)} Bild(ern) auffaellig:")
-        for z in schlecht[:8]:
-            print(f"   {z['bild']:38s} {z['auffaelligkeit']}")
-        if len(schlecht) > 8:
-            print(f"   ... und {len(schlecht) - 8} weitere")
-
-    if DATENSATZ_MODUS:
-        print("Datensatz: Pixel- und Farbwerte; keine gemeinsame Wachstums- oder Gesundheitszeitreihe")
-
-    if referenz:
-        bewertet = [z for z in zeilen if z["gesundheit"] is not None]
-        if bewertet:
-            letzte = bewertet[-1]
-            print(f"\nReferenz aus {referenz['bilder']} Bildern")
-            print(f"Gesundheit aktuell: {letzte['gesundheit']}/100 "
-                  f"({letzte['gesundheit_kategorie']})")
-
-    if GRAFIKEN_ERSTELLEN:
-        print()
+def analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz=False):
+    ausgabe.mkdir(parents=True, exist_ok=True)
+    masken, kontrolle = ausgabe/"masken", ausgabe/"kontrolle"
+    masken.mkdir(exist_ok=True)
+    kontrolle.mkdir(exist_ok=True)
+    zustand = ausgabe/"referenz.npz"
+    lineal = massstab_laden(ausgabe/"massstab.npz")
+    ref = referenz_laden(zustand, neue_referenz) if not einzelbilder else None
+    alte_historie = ref["meta"].get("historie", []) if ref else []
+    kalibrierung = None
+    if KALIBRIERUNG.exists():
+        d = json.loads(KALIBRIERUNG.read_text(encoding="utf-8"))
+        kalibrierung = np.asarray(d["kamera_matrix"]), np.asarray(d["verzeichnung"])
+    pfade = sorted(pfade, key=lambda p: (zeit_aus_name(Path(p).name) or datetime.max.replace(tzinfo=timezone.utc), str(p)))
+    zeilen, erzeugt = [], set()
+    vorheriges_bild = None
+    for nummer, pfad in enumerate(pfade, 1):
+        pfad = Path(pfad)
+        zeit = None if einzelbilder else zeit_aus_name(pfad.name)
+        z = {k: None for k in SPALTEN}
+        z.update({"bild": pfad.name, "captured_at": iso(zeit), "zeitquelle": "name" if zeit else "unbekannt",
+                  "scoring_version": SCORING_VERSION, "auffaelligkeit": "", "gesundheitswarnung": "",
+                  "brauchbar": False, "gesundheit_status": "nicht_auswertbar", "gesundheit_kategorie": "keine_daten", "_zeit": zeit})
+        zeilen.append(z)
         try:
-            import grafiken
-            grafiken.main(csv_pfad=csv_pfad, ordner=os.path.join(AUSGABE, "grafiken"))
-        except ImportError:
-            print("matplotlib fehlt - 'pip install matplotlib', "
-                  "dann 'python grafiken.py'")
+            z["_sha256"] = hashlib.sha256(pfad.read_bytes()).hexdigest()
+            bild = cv2.imdecode(np.fromfile(pfad, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if bild is None or min(bild.shape[:2]) < 16:
+                flags_hinzufuegen(z, "nicht_lesbar")
+                continue
+            if kalibrierung is not None:
+                bild = cv2.undistort(bild, *kalibrierung)
+            arbeit = kleiner(bild)
+            prior, referenz_bild, szenen_flags = szene_abgleichen(arbeit, ref)
+            if ref and (ref["meta"].get("bildbreite", bild.shape[1]), ref["meta"].get("bildhoehe", bild.shape[0])) != (bild.shape[1], bild.shape[0]):
+                szenen_flags.append("aufloesung_geaendert")
+            geometrie_ok = not any(f in szenen_flags for f in ("ansicht_geaendert", "aufloesung_geaendert", "kameralage_nicht_verifiziert"))
+            z["_geometrie_ok"] = geometrie_ok and not einzelbilder
+            registriert = not any(f in szenen_flags for f in ("aufloesung_geaendert", "kameralage_nicht_verifiziert"))
+            maske_klein = segmentieren(arbeit, prior if registriert else None,
+                                      referenz_bild if registriert else None)
+            maske = cv2.resize(maske_klein, (bild.shape[1], bild.shape[0]), interpolation=cv2.INTER_NEAREST)
+            mm_px, quelle = massstab(bild, manuell, lineal)
+            z.update(merkmale(bild, maske, mm_px))
+            z["massstab_quelle"] = quelle if mm_px is not None else None
+            z["_massstab_status"] = quelle
+            z["_objektiv_entzerrt"] = kalibrierung is not None
+            z["rauschen"] = rauschen_schaetzen(bild)
+            flags_hinzufuegen(z, *szenen_flags)
+            if not zeit:
+                flags_hinzufuegen(z, "keine_aufnahmezeit")
+            genug = z["pflanzen_pixel"] >= max(80, .0004*maske.size)
+            if not genug:
+                flags_hinzufuegen(z, "keine_blattmaske")
+            scharf = z.get("schaerfe") is not None and z["schaerfe"] >= 8
+            if not scharf:
+                flags_hinzufuegen(z, "unscharf")
+            belichtet = z.get("ueberbelichtet_pct") is not None and z["ueberbelichtet_pct"] < 15
+            if not belichtet:
+                flags_hinzufuegen(z, "blattflaeche_ueberbelichtet")
+            if np.any(maske[0]) or np.any(maske[-1]) or np.any(maske[:, 0]) or np.any(maske[:, -1]):
+                flags_hinzufuegen(z, "blatt_am_bildrand")
+            z["brauchbar"] = bool(genug and scharf and belichtet and z["rauschen"] < 35)
+            if z["rauschen"] >= 35:
+                flags_hinzufuegen(z, "starkes_rauschen")
+            if vorheriges_bild is not None:
+                _, _, paar_flags = szene_abgleichen(arbeit, vorheriges_bild)
+                paar_gleich_gross = vorheriges_bild["meta"]["bildbreite"] == bild.shape[1] and vorheriges_bild["meta"]["bildhoehe"] == bild.shape[0]
+                z["_geometrie_ok"] = bool(not paar_flags and paar_gleich_gross and not einzelbilder)
+            if z["brauchbar"]:
+                vorheriges_bild = {"bild": arbeit.copy(), "maske": maske_klein.copy(),
+                                    "meta": {"bildbreite": bild.shape[1], "bildhoehe": bild.shape[0]}}
+            else:
+                vorheriges_bild = None
+            if ref is None and z["brauchbar"] and not einzelbilder:
+                ref = {"bild": arbeit.copy(), "maske": maske_klein.copy(), "meta": {
+                    "version": SCORING_VERSION, "analyse_version": ANALYSE_VERSION, "messreihe": MESSREIHE,
+                    "arbeitsbreite": ARBEITSBREITE, "roi": list(ROI_NORMIERT) if ROI_NORMIERT else None,
+                    "bild": z["bild"], "captured_at": z["captured_at"], "sha256": z["_sha256"],
+                    "bildbreite": bild.shape[1], "bildhoehe": bild.shape[0],
+                    "pflanzen_pixel": z["pflanzen_pixel"], "kompaktheit": z["kompaktheit"], "historie": []}}
+                prior, referenz_bild = maske_klein, arbeit
+            if einzelbilder:
+                z["gesundheit_status"] = "einzelbilder_keine_gemeinsame_referenz"
+            elif ref is not None:
+                f, licht_flags = gesundheitsmerkmale(arbeit, maske_klein, referenz_bild, prior)
+                flags_hinzufuegen(z, *licht_flags)
+                if "starke_lichtaenderung" in licht_flags:
+                    z["gesundheit_status"] = "starke_lichtaenderung"
+                else:
+                    bewerten(z, f, ref, struktur_erlaubt=geometrie_ok)
+            stamm = f"{nummer:05d}_{pfad.stem}"
+            z["_ausgabe_stamm"] = stamm
+            if not cv2.imwrite(str(masken/(stamm+"_maske.png")), maske):
+                raise OSError("Maske konnte nicht geschrieben werden")
+            erzeugt.add(stamm)
+            # Erst nach der zeitlichen Glaettung den Score ins Kontrollbild setzen.
+            z["_kontrolle"] = (bild, maske) if len(pfade) <= 5 else None
+            print(f"[{nummer}/{len(pfade)}] {pfad.name}: {z['pflanzen_pixel']} Blattpixel | {z['gesundheit_status']}")
+        except (OSError, cv2.error, ValueError) as fehler:
+            z["brauchbar"] = False
+            z["gesundheit"] = z["gesundheit_roh"] = None
+            for k in GEWICHTE:
+                z["score_"+k] = None
+            z["gesundheit_status"] = "analysefehler"
+            flags_hinzufuegen(z, "analysefehler:"+str(fehler).splitlines()[0][:150])
+            print(f"[{nummer}/{len(pfade)}] {pfad.name}: {z['auffaelligkeit']}")
+    zeitreihe_und_glaettung(zeilen, alte_historie)
+    # Einmal runden: CSV, JSON und Diagramme benutzen dieselben Zahlen.
+    for z in zeilen:
+        for feld, stellen in RUNDUNG.items():
+            if z.get(feld) is not None:
+                z[feld] = round(float(z[feld]), stellen)
+        if z.get("mittel_h") == 180:
+            z["mittel_h"] = 0.0  # Kreisfoermiger Farbton, nicht ausserhalb 0..180.
+    for z, pfad in zip(zeilen, pfade):
+        if not z.get("_ausgabe_stamm"):
+            continue
+        if z.get("_kontrolle") is not None:
+            bild, maske = z.pop("_kontrolle")
+        else:
+            bild = cv2.imdecode(np.fromfile(pfad, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if kalibrierung is not None:
+                bild = cv2.undistort(bild, *kalibrierung)
+            maske = cv2.imread(str(masken/(z["_ausgabe_stamm"]+"_maske.png")), cv2.IMREAD_GRAYSCALE)
+        kontrollbild(bild, maske, z, kontrolle/(z["_ausgabe_stamm"]+"_kontrolle.png"))
+    # Nur alte, von diesem Programm erzeugte Vorschauen aufraeumen.
+    for ordner, suffix in [(masken, "_maske.png"), (kontrolle, "_kontrolle.png")]:
+        for p in ordner.glob("*"+suffix):
+            if re.match(r"^\d{5}_", p.name) and p.name[:-len(suffix)] not in erzeugt:
+                p.unlink()
+    csv_aktuell = ergebnisse_speichern(zeilen, ref, ausgabe)
+    grafiken(zeilen, ausgabe/"grafiken")
+    if ref is not None and not einzelbilder:
+        neue = [{"captured_at": z["captured_at"], "gesundheit": z["gesundheit"]}
+                for z in zeilen if z["captured_at"] and z["gesundheit"] is not None]
+        historie = {p["captured_at"]: p for p in alte_historie+neue}
+        ref["meta"]["historie"] = [historie[k] for k in sorted(historie)][-200:]
+        referenz_speichern(zustand, ref)
+    print(f"\n{len(zeilen)} Eingabebilder -> {ausgabe/'ergebnis.json'}")
+    print("CSV aktualisiert." if csv_aktuell else "CSV noch gesperrt; aktuelle Daten stehen in ergebnis.json.")
+    print("5 Grafiken, Masken und Kontrollbilder erstellt.")
+    if manuell is None and not any(z.get("mm_pro_pixel") for z in zeilen):
+        print("Blattflaeche wird in Pixeln gemessen. Fuer cm2/mm einmal eine bekannte Linealstrecke auf Blatthoehe markieren (--massstab-bild / --referenz-mm).")
+    return zeilen
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("ordner", nargs="?", help="Optional: nur diesen lokalen Ordner/dieses Bild analysieren")
+    parser.add_argument("--lokal", metavar="PFAD", help="Vorhandene Bilder ohne Pi-Abruf analysieren")
+    parser.add_argument("--nur-bild", action="store_true", help="Pi-Bilder holen, keine Analyse")
+    parser.add_argument("--einzelbilder", action="store_true", help="Verschiedene Pflanzen: keine zeitlichen Gesundheits-/Wachstumsvergleiche")
+    parser.add_argument("--neue-referenz", action="store_true", help="Referenz fuer diese Messreihe neu bilden")
+    parser.add_argument("--ausgabe", type=Path, help="Ausgabeordner (Standard: neben bilder/auswertung)")
+    parser.add_argument("--mm-pro-pixel", type=float, default=MM_PRO_PIXEL_MANUELL, help="Verifizierter Massstab der Blattebene")
+    parser.add_argument("--kalibrieren", metavar="ORDNER", help="Objektiv mit Schachbrettbildern kalibrieren")
+    skala = parser.add_mutually_exclusive_group()
+    skala.add_argument("--massstab-bild", type=Path, metavar="JPG", help="Foto mit Lineal auf Blatthoehe: bekannte Strecke markieren und speichern")
+    skala.add_argument("--massstab", action="store_true", help="Neues Linealfoto vom Pi holen und eine bekannte Strecke markieren")
+    parser.add_argument("--referenz-mm", type=float, help="Tatsaechlich gemessene Laenge zwischen den zwei Punkten, in mm")
+    parser.add_argument("--punkte", nargs=4, type=float, metavar=("X1", "Y1", "X2", "Y2"), help="Messpunkte im Originalbild; ohne Angabe zwei Klicks im Bildfenster")
+    args = parser.parse_args()
+    if args.mm_pro_pixel is not None and (not math.isfinite(args.mm_pro_pixel) or args.mm_pro_pixel <= 0):
+        parser.error("--mm-pro-pixel muss positiv und endlich sein")
+    if args.kalibrieren:
+        kalibrieren(args.kalibrieren)
+        return 0
+    if args.massstab_bild or args.massstab:
+        if args.referenz_mm is None or not math.isfinite(args.referenz_mm) or args.referenz_mm <= 0:
+            parser.error("Massstab-Eingabe braucht eine positive, echte --referenz-mm Laenge")
+        try:
+            bildpfad = args.massstab_bild
+            if args.massstab:
+                if args.lokal or args.ordner:
+                    basis = Path(args.lokal or args.ordner).resolve()
+                    auswahl = [basis] if basis.is_file() else [p for p in basis.iterdir() if p.is_file() and p.suffix.lower() in ENDUNGEN]
+                else:
+                    auswahl = pi_bilder_holen()
+                if not auswahl:
+                    raise ValueError("Kein Foto fuer die Linealmessung vorhanden.")
+                bildpfad = max(auswahl, key=lambda p: (zeit_aus_name(Path(p).name) or datetime.min.replace(tzinfo=timezone.utc), str(p)))
+            massstab_einrichten(bildpfad, args.referenz_mm,
+                               args.ausgabe or BILDER_ORDNER.parent/"auswertung", args.punkte)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, tarfile.TarError) as fehler:
+            print(f"Massstab nicht gespeichert: {fehler}")
+            return 1
+        return 0
+    if args.referenz_mm is not None or args.punkte is not None:
+        parser.error("--referenz-mm und --punkte gehoeren zu --massstab-bild")
+    cv2.setNumThreads(2)
+    lokal = args.lokal or args.ordner
+    if lokal:
+        ziel = Path(lokal).expanduser().resolve()
+        if ziel.is_file():
+            pfade = [ziel]
+        elif ziel.is_dir():
+            pfade = [p for p in ziel.iterdir() if p.is_file() and p.suffix.lower() in ENDUNGEN]
+        else:
+            parser.error(f"Pfad nicht gefunden: {ziel}")
+        ausgabe = args.ausgabe or ((ziel.parent if ziel.is_file() else ziel.parent)/"auswertung")
+    else:
+        try:
+            pfade = pi_bilder_holen()
+        except (OSError, RuntimeError, subprocess.SubprocessError, tarfile.TarError) as fehler:
+            print(f"Fotoabruf fehlgeschlagen: {fehler}\nAnalyse nicht gestartet; vorhandene Auswertung bleibt erhalten.")
+            return 1
+        if args.nur_bild:
+            return 0
+        ausgabe = args.ausgabe or BILDER_ORDNER.parent/"auswertung"
+    if not pfade:
+        print("Keine Bilder gefunden. Keine vorhandene Auswertung geloescht.")
+        return 1
+    try:
+        analysieren(pfade, ausgabe, args.mm_pro_pixel, args.einzelbilder, args.neue_referenz)
+    except (OSError, ValueError) as fehler:
+        print(f"Analyse abgebrochen: {fehler}")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
