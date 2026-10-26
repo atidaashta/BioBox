@@ -448,5 +448,68 @@
         "scale_source": "kein_gueltiger_messwert"
       }
     }
+  },
+  {
+    "device_id": null,
+    "image": {
+      "file_name": "biobox_20261025T075703Z-oqp3MV.jpg",
+      "captured_at": "2026-10-25T07:57:03Z",
+      "storage_path": "recent/20261025T075703Z-oqp3MV/normal.jpg",
+      "checksum_sha256": "a2cdfac6e2b57431433d7caf0f98a787b687b513d37bf745de4f158cc1f009b4"
+    },
+    "image_measurements": {
+      "plant_pixels": 282508,
+      "leaf_area_cm2": null,
+      "diameter_mm": null,
+      "compactness": 0.0343,
+      "growth_rate_cm2_per_day": null,
+      "growth_rate_pct_per_day": -22.399,
+      "mean_r": 91.2,
+      "mean_g": 126.5,
+      "mean_b": 78.4,
+      "mean_hue": 54.7,
+      "mean_saturation": 114.8,
+      "greenness_index": 0.4489,
+      "yellow_fraction_pct": 0.85,
+      "brown_fraction_pct": 0.29,
+      "mm_per_pixel": null,
+      "scale_source": null,
+      "sharpness": 363.6,
+      "noise": 1.47,
+      "brightness": 99.1,
+      "overexposed_pct": 0.0,
+      "quality_flags": "kameralage_nicht_verifiziert;blatt_am_bildrand",
+      "usable": true
+    },
+    "health_assessment": {
+      "scoring_version": "2.1.0",
+      "health_score": 71.2,
+      "health_score_raw": 71.2,
+      "health_category": "gut",
+      "health_trend_24h": 3.2,
+      "health_warnings": "farbveraenderung;saettigung_veraendert",
+      "score_green": 28.4,
+      "score_yellow": 100.0,
+      "score_brown": 100.0,
+      "score_saturation": 58.4,
+      "score_hue": 88.8
+    },
+    "analysis": {
+      "version": "3.1.0",
+      "health_status": "vorlaeufige_referenz;nur_farbvergleich",
+      "measurement_mode": "pixels",
+      "scale_status": "nicht_kalibriert",
+      "lens_corrected": false,
+      "reference_file": "biobox_20261020T160551Z-bByql4.jpg",
+      "reference_sha256": "bcecb1298fc65dd1dbb6645c2d5fed520abead43380534350e34a6bd148d19cc",
+      "reference_approved": false,
+      "missing_values": {
+        "leaf_area_cm2": "kein_verifizierter_massstab_in_blattebene",
+        "diameter_mm": "kein_verifizierter_massstab_in_blattebene",
+        "mm_per_pixel": "kein_verifizierter_massstab_in_blattebene",
+        "growth_rate_cm2_per_day": "massstab_oder_vergleichsaufnahme_fehlt_oder_ansicht_geaendert",
+        "scale_source": "kein_gueltiger_messwert"
+      }
+    }
   }
 ]
