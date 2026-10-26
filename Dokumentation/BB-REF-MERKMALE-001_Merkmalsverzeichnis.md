@@ -1,162 +1,145 @@
 # Merkmalsverzeichnis BioBox
 
-| | |
+| Feld | Stand |
 |---|---|
-| **Dokument-ID** | BB-REF-MERKMALE-001 |
-| **Version** | 2.0 |
-| **Datum** | 13.09.2026 |
-| **Autorin** | Atida Ashta |
-| **Gilt für** | `auswertung/ergebnis.csv` |
-| **Änderung 2.0** | Eine gemeinsame Ergebnisdatei statt zwei; Gesundheitsskala 0–100 |
+| Dokument-ID | BB-REF-MERKMALE-001 |
+| Version | 3.0 |
+| Datum | 26.10.2026 |
+| Autorin | Atida Ashta |
+| Pipeline | analyse.py 4.0.0 |
+| Bewertung | Scoring 3.0.0 |
 
----
+## 1 Ausgabeprinzip
 
-## 1. Aufbau
+Pro Eingabebild wird genau ein Datensatz erzeugt. Auch eine unlesbare oder nicht auswertbare Datei bleibt mit ihrem Fehlerstatus enthalten. Es werden keine Messwerte durch erfundene Nullen oder einen alten Gesundheitswert ersetzt.
 
-Eine Datei, `auswertung/ergebnis.csv`, eine Zeile je Bild, zeitlich sortiert.
-Sie enthält Bildname, Messwerte aus der Computer-Vision-Pipeline und die
-Gesundheitsbewertung nebeneinander.
+Die Kontrollausgabe heißt `auswertung/ergebnis.csv`. CSV bedeutet Comma-Separated Values, ein tabellarisches Dateiformat. Für deutsche Tabellenprogramme werden hier Semikolon als Trennzeichen, Dezimalkomma und UTF-8 mit Byte Order Mark (BOM, Kennung der Textcodierung) verwendet. Fehlende Werte werden ausdrücklich als `NULL` geschrieben. `True` und `False` sind boolesche Angaben.
 
-## 2. Identifikation und Messwerte
+`ergebnis.json` verwendet JavaScript Object Notation (JSON), ein strukturiertes Datenaustauschformat. Dort stehen echte Zahlen, boolesche Werte und `null`, keine Dezimalkomma-Zahlen als Text. Beide Ausgaben und die Diagramme werden aus denselben gerundeten Datensätzen aufgebaut. Die spätere Programmierschnittstelle, Application Programming Interface (API), muss deshalb keine CSV-Datei einlesen.
 
-### Identifikation
+## 2 Spalten und Zuordnung
 
-| Spalte | Einheit | Bedeutung | Wofür |
+Die folgende Tabelle wird aus der aktuellen Feldzuordnung ergänzt. Die Namen in der ersten Spalte sind die tatsächlichen CSV-Überschriften. `image_measurements` und `health_assessment` bezeichnen die entsprechenden Objekte im JSON-Export, noch keinen bestätigten HTTP-Endpunkt.
+
+| CSV-Spalte | Einheit | Bedeutung | JSON-Zuordnung |
 |---|---|---|---|
-| `bild` | — | Dateiname ohne Endung. Enthält den Aufnahmezeitpunkt. | Zuordnung zu Maske und Kontrollbild |
-| `stunden_seit_start` | h | Abstand zur ersten Aufnahme | Zeitachse aller Diagramme und Modelle |
-| `zeitquelle` | — | `name` oder `dateidatum` | Nur `name` ist verlässlich; das Dateidatum ändert sich beim Kopieren |
+| `bild` | Text | Dateiname mit Endung | `image.file_name` |
+| `captured_at` | UTC | Expliziter Aufnahmezeitpunkt, sonst unbekannt | `image.captured_at` |
+| `zeitquelle` | Text | name oder unbekannt; kein Dateidatum als Ersatz | `analysis.capture_time_source` |
+| `stunden_seit_start` | h | Abstand zur festen Referenzzeit, sonst zum ersten bekannten Zeitpunkt der Auswahl | `aus Aufnahme- und Referenzzeit ableitbar` |
+| `pflanzen_pixel` | Pixelanzahl | Weiße Pixel der endgültigen Blattmaske | `image_measurements.plant_pixels` |
+| `blattflaeche_cm2` | cm² | Sichtbare projizierte Fläche bei verifiziertem Maßstab | `image_measurements.leaf_area_cm2` |
+| `durchmesser_mm` | mm | Größte Ausdehnung der maskierten Pixeloberfläche | `image_measurements.diameter_mm` |
+| `kompaktheit` | ohne Einheit | 4 pi A / U²; geometrischer Prüfwert | `image_measurements.compactness` |
+| `wachstumsrate_cm2_pro_tag` | cm²/Tag | Differenz eines vergleichbaren Bildpaars, zeitlich normiert | `image_measurements.growth_rate_cm2_per_day` |
+| `wachstumsrate_pct_pro_tag` | %/Tag | Relative Flächenänderung eines vergleichbaren Bildpaars | `image_measurements.growth_rate_pct_per_day` |
+| `mittel_r` | 0–255 | Mittlerer roter Rohkanal über der Maske | `image_measurements.mean_r` |
+| `mittel_g` | 0–255 | Mittlerer grüner Rohkanal über der Maske | `image_measurements.mean_g` |
+| `mittel_b` | 0–255 | Mittlerer blauer Rohkanal über der Maske | `image_measurements.mean_b` |
+| `farbe_hex` | Text | Mittlere Rohfarbe als #RRGGBB | `image_measurements.color_hex` |
+| `mittel_h` | 0 bis unter 180 | Kreisförmig gemittelter HSV-Farbton | `image_measurements.mean_hue` |
+| `mittel_s` | 0–255 | Mittlere HSV-Sättigung der Rohfarben | `image_measurements.mean_saturation` |
+| `gruenindex` | 0–1 | Mittelwert des normierten Grünanteils G/(R+G+B) | `image_measurements.greenness_index` |
+| `gelbanteil_pct` | % | Anteil der technischen gelben Farbklasse, Rohwert | `image_measurements.yellow_fraction_pct` |
+| `braunanteil_pct` | % | Anteil der technischen braunen Farbklasse, Rohwert | `image_measurements.brown_fraction_pct` |
+| `mm_pro_pixel` | mm/Pixel | Verifizierter Maßstab in der Blattebene | `image_measurements.mm_per_px` |
+| `massstab_quelle` | Text | manuell_blattebene, lineal_blattebene oder aruco_hoehenkorrigiert | `image_measurements.scale_source` |
+| `schaerfe` | Prüfwert | Laplace-Varianz des Originalbilds über den Blattpixeln | `image_measurements.sharpness` |
+| `rauschen` | Prüfwert | Rauschschätzung am Originalbild | `image_measurements.noise` |
+| `bildhelligkeit` | 0–255 | Grauwertmittel des gesamten Originalbilds | `image_measurements.image_brightness` |
+| `ueberbelichtet_pct` | % | Blattpixel mit mindestens einem RGB-Kanal ab 254 | `image_measurements.overexposed_pct` |
+| `groesste_komponente_pct` | % | Größte zusammenhängende Blattteilfläche / Gesamtmaske | `image_measurements.largest_component_pct` |
+| `auffaelligkeit` | Text | Qualitätsmeldungen, mit Semikolon getrennt | `image_measurements.quality_flags` |
+| `brauchbar` | boolesch | Grundlegende Bild-/Maskenqualität erfüllt | `image_measurements.usable` |
+| `pipeline_version` | Text | Version von Segmentierung und Messverfahren | `image_measurements.pipeline_version` |
+| `scoring_version` | Text | Version der Bewertungsregeln | `health_assessment.scoring_version` |
+| `gesundheit` | 0–100 | Zeitlich geglätteter relativer Index | `health_assessment.health_score` |
+| `gesundheit_roh` | 0–100 | Unglättete Bewertung dieser Aufnahme | `health_assessment.health_score_raw` |
+| `gesundheit_kategorie` | Text | Technischer Bereich des relativen Index | `health_assessment.health_category` |
+| `gesundheit_status` | Text | Verfügbarkeit und Referenzstatus des Index | `health_assessment.health_status` |
+| `gesundheit_trend_24h` | Scorepunkte | Differenz zu einem gültigen Vergleich vor 22–26 Stunden | `health_assessment.health_trend_24h` |
+| `gesundheitswarnung` | Text | Beobachtete Veränderungen, mit Semikolon getrennt | `health_assessment.health_warnings` |
+| `score_gruen` | 0–100 | Relative Farbverteilung und normierter Grünanteil | `health_assessment.score_green` |
+| `score_gelb` | 0–100 | Zunahme der gemeinsamen Gelb-/Braunfläche | `health_assessment.score_yellow` |
+| `score_braun` | 0–100 | Zusätzliche Braun-/Warmfärbung | `health_assessment.score_brown` |
+| `score_saettigung` | 0–100 | Änderung der Farbsättigung nach Lichtkorrektur | `health_assessment.score_saturation` |
+| `score_farbton` | 0–100 | Farbton- und Lab-Farbänderung nach Lichtkorrektur | `health_assessment.score_hue` |
 
-### Größe und Form
+## 3 Bedeutung der wichtigsten Messwerte
 
-| Spalte | Einheit | Bedeutung | Wofür |
-|---|---|---|---|
-| `pflanzen_pixel` | px | Anzahl segmentierter Pflanzenpixel | Rohwert, unabhängig vom Maßstab |
-| `blattflaeche_cm2` | cm² | projizierte Blattfläche | **Primärgröße** für Wachstum und Digital Twin |
-| `durchmesser_mm` | mm | größte Ausdehnung des Bestands | Ausbreitung, Platzbedarf |
-| `kompaktheit` | — | 4πA/U². 1,0 = Kreis, kleiner = zerklüftet | Formänderung bei Welke und Streckung |
-| `wachstumsrate_cm2_pro_tag` | cm²/d | Flächenänderung gegenüber der Vorgängeraufnahme, auf einen Tag normiert | **Eingangsgröße Digital Twin**; erkennt Stillstand |
+### Fläche und Ausdehnung
+
+`pflanzen_pixel` zählt weiße Pixel der endgültigen Blattmaske. Es wird keine Fläche des Topfes oder eine konvexe Hülle der gesamten Pflanze gemessen. Für `blattflaeche_cm2` wird mit dem Quadrat des verifizierten Millimeter-pro-Pixel-Maßstabs umgerechnet. `durchmesser_mm` ist die größte Ausdehnung der maskierten Pixeloberfläche einschließlich der äußeren Pixelgrenzen.
+
+Ohne passenden Maßstab bleiben die physischen Werte `NULL`. Eine gültige Pixelmaske kann trotzdem ausgewertet werden. Eine nicht erkannte Blattmaske ist kein Nachweis dafür, dass biologisch keine Pflanze vorhanden ist. Bei unlesbaren Bildern bleibt sogar die Pixelzahl unbekannt.
+
+`kompaktheit` wird aus `4 × pi × Fläche / Umfang²` berechnet. Die Umfänge der erfassten Blattbereiche und vorhandener innerer Lücken werden berücksichtigt. Eine Änderung kann auf eine andere Blattstellung oder eine andere Maske zurückgehen und ist keine sichere Diagnose einer Welke.
+
+`groesste_komponente_pct` ist ein geometrisches Prüfmerkmal. Mehrere getrennt sichtbare Blätter sind normal. Ein kleiner Wert führt deshalb nicht pauschal zum Ausschluss der Pflanze.
 
 ### Farbe
 
-| Spalte | Einheit | Bedeutung | Wofür |
-|---|---|---|---|
-| `mittel_r` / `mittel_g` / `mittel_b` | 0–255 | mittlere Kanalwerte über den Pflanzenpixeln | Rohdaten; erlauben später neue Indizes ohne erneute Bildverarbeitung |
-| `farbe_hex` | Text | Mittlere Pflanzenfarbe als Hexwert, z. B. `#67865c` | lesbare Farbangabe; direkt als Farbfeld im Dashboard darstellbar |
-| `mittel_h` | 0–179 | mittlerer HSV-Farbton | Verschiebung des Grüntons |
-| `mittel_s` | 0–255 | mittlere HSV-Sättigung | Farbkraft, sinkt bei Stress |
-| `gruenindex` | 0–1 | G / (R+G+B) | wichtigster Einzelindikator, Chlorophyll |
-| `gelbanteil_pct` | % | Anteil gelber Pixel an der Blattfläche | Chlorose |
-| `braunanteil_pct` | % | Anteil brauner Pixel an der Blattfläche | Nekrose |
+RGB bedeutet Rot, Grün und Blau. Die RGB-Mittelwerte, der Farbton, die Sättigung sowie Gelb- und Braunanteil in der CSV werden am Originalfoto über der endgültigen Maske gemessen. Sie sind **Rohwerte und lichtabhängig**. Der Gesundheitsvergleich verwendet zusätzlich eine aus dem Hintergrund ermittelte Lichtkorrektur; die Rohmessung wird dadurch nicht überschrieben.
 
-### Bildqualität
+HSV bedeutet Hue, Saturation, Value, also Farbton, Sättigung und Helligkeit. Der Farbton wird kreisförmig gemittelt. Bei zu wenig Farbsignal kann `mittel_h` fehlen. Der Grünindex ist der gemittelte normierte Anteil `G / (R + G + B)` der Blattpixel. Er ist keine direkte Messung des Chlorophyllgehalts.
 
-| Spalte | Einheit | Bedeutung | Wofür |
-|---|---|---|---|
-| `mm_pro_pixel` | mm/px | aus dem Marker berechneter Maßstab | **Nachweis der Aufbaustabilität** (BB-SPEC-IMG-001, 8.3); leer = kein Marker gefunden |
-| `schaerfe` | — | Laplace-Varianz, nur über den Pflanzenpixeln | Unschärfe erkennen |
-| `rauschen` | — | Sensorrauschen nach Immerkaer (1996), am Originalbild gemessen | Kalibrierung der Grenze `MAX_RAUSCHEN` |
-| `bildhelligkeit` | 0–255 | Mittelwert des Gesamtbildes | erkennt Belichtungs- und Fremdlichtänderungen |
-| `ueberbelichtet_pct` | % | Anteil geklippter Pixel im Grünkanal | Sättigung zerstört die Farbmessung |
-| `groesste_komponente_pct` | % | Anteil der größten Teilfläche an der Gesamtmaske | fällt der Wert, ist meist die Segmentierung gescheitert |
-| `auffaelligkeit` | Text | verletzte Kriterien, semikolongetrennt | Fehlersuche |
-| `brauchbar` | True/False | keine Auffälligkeit | **Filterspalte** vor jeder Auswertung |
+Die Gelb- und Braunanteile sind technische Farbklassen. Sie beweisen für sich keine Chlorose oder Nekrose. `farbe_hex` ist nur die lesbare Darstellung der mittleren RGB-Farbe als `#RRGGBB` und wird nicht als zusätzliche unabhängige Zustandsmessung gewichtet.
 
-### Werte von `auffaelligkeit`
+### Zeit und Wachstum
 
-| Wert | Auslöser |
+Zeitstempel werden aus einem expliziten Aufnahmezeitpunkt im Dateinamen gelesen und in Coordinated Universal Time (UTC, koordinierte Weltzeit) angegeben. Ein Download- oder Änderungsdatum wird nicht als Aufnahmezeit verwendet.
+
+`stunden_seit_start` wird bei bekannter Referenzzeit auf diese feste Zeit bezogen. Das Entfernen alter Bilder aus dem 100-Bilder-Fenster setzt den Beginn nicht auf null zurück. Ohne bekannte Referenzzeit wird die erste bekannte Zeit der aktuellen Auswahl verwendet.
+
+Eine Wachstumsrate wird nur für aufeinanderfolgende brauchbare und geometrisch vergleichbare Aufnahmen berechnet. Der Zeitabstand wird berücksichtigt. Bei großen Flächensprüngen über 50 % werden die Raten zunächst weggelassen und die Aufnahme markiert. Nach einer Kameraverschiebung kann die Rate bei einem nachfolgenden wieder stabilen Bildpaar erneut berechnet werden.
+
+Die Einheit pro Tag ist eine zeitliche Umrechnung, keine über einen ganzen Tag beobachtete Entwicklung. Bei kurzen Abständen können kleine Masken- oder Blattstellungsänderungen große hochgerechnete Raten ergeben. Eine einzelne Rate darf deshalb nicht als gesichertes biologisches Wachstum interpretiert werden.
+
+### Qualität und Zustand
+
+`brauchbar` beschreibt die grundlegende Bild- und Maskenqualität. Ein Maßstab ist dafür keine Pflicht. Ein wahrer Wert bedeutet auch nicht, dass jede zeitliche oder farbliche Vergleichsgröße verfügbar sein muss. Beispielsweise können Pixelwerte brauchbar sein, während ein verlässlicher Lichtvergleich fehlt.
+
+`schaerfe` und `rauschen` sind Rohmessungen. Für die Entscheidung über die Schärfe wird bei erfolgreichem Lichtabgleich eine normalisierte Arbeitskopie verwendet. `ueberbelichtet_pct` zählt Blattpixel, bei denen mindestens ein RGB-Kanal 254 erreicht. Dies ist nicht identisch mit dem für den Farbvergleich ausgeschlossenen Anteil, da dort beide Aufnahmen und ein kleiner Rand betrachtet werden.
+
+`gesundheit_status` erklärt die Verfügbarkeit des relativen Index. Eine automatische Referenz wird als vorläufig gekennzeichnet, aber nicht wegen einer fehlenden biologischen Kalibrierung vollständig gesperrt. Eine fehlende physische Längenreferenz verhindert ebenfalls keine reine Farbbewertung.
+
+## 4 Fehlende Werte und Meldungen
+
+| Situation | Ergebnis |
 |---|---|
-| `kein_marker` | Marker nicht gefunden, kein Maßstab |
-| `keine_pflanze` | Maske leer |
-| `unscharf` | Schärfe unter `SCHAERFE_MIN` |
-| `ueberbelichtet` | mehr als 1 % geklippte Pixel |
-| `zersplittert` | größte Teilfläche unter 70 % |
-| `flaechensprung` | Flächenänderung über `SPRUNG_MAX_PCT` gegenüber der Vorgängeraufnahme |
+| Datei nicht lesbar | Datensatz mit `nicht_lesbar`, Messwerte unbekannt |
+| keine ausreichende Blattmaske | `keine_blattmaske`, kein neuer Score |
+| Bild zu unscharf oder zu verrauscht | Qualitätsmeldung, kein neuer gültiger Score |
+| kein Maßstab | Pixel- und Farbwerte möglich, cm²/mm fehlen |
+| Zeit unbekannt | Einzelmessungen möglich, zeitabhängige Angaben fehlen |
+| Referenz oder Lichtabgleich ungeeignet | Erklärung im Status, keine erfundene Bewertung |
+| verschiedene Pflanzen mit `--einzelbilder` | keine gemeinsame Gesundheits- oder Wachstumszeitreihe |
+| CSV gerade in Excel gesperrt | vorhandene CSV bleibt erhalten; JSON und Diagramme werden aktualisiert |
 
----
+Mehrere Qualitätsmeldungen werden mit Semikolon getrennt. Der CSV-Schreiber setzt die nötigen Anführungszeichen, damit dadurch keine Spalten verschoben werden. Ein Hinweis wie `blatt_am_bildrand` ist eine Auffälligkeit, aber nicht allein ein Beweis für eine unbrauchbare Farbaufnahme.
 
-### Gesundheitsbewertung
+## 5 JSON-Struktur für die Übergabe
 
-| Spalte | Einheit | Bedeutung |
-|---|---|---|
-| `gesundheit` | 0–100 | geglätteter Wert (gleitender Median über 5 Bilder) — **Anzeigewert** |
-| `gesundheit_roh` | 0–100 | ungeglätteter Einzelwert |
-| `gesundheit_kategorie` | Text | sehr gut (≥85) / gut (≥70) / beobachten (≥50) / auffällig (≥30) / kritisch |
-| `gesundheit_trend_24h` | — | Änderung gegenüber vor 24 h; Richtung ist oft aussagekräftiger als der Absolutwert |
-| `gesundheitswarnung` | Text | vergilbung / nekrose / chlorose / entfaerbung / wachstumsstillstand |
-| `score_gruen` | 0–100 | Teilscore, Gewicht 0,30 |
-| `score_gelb` | 0–100 | Teilscore, Gewicht 0,25 |
-| `score_braun` | 0–100 | Teilscore, Gewicht 0,20 |
-| `score_saettigung` | 0–100 | Teilscore, Gewicht 0,15 |
-| `score_farbton` | 0–100 | Teilscore, Gewicht 0,10 |
+- `device_id`: vorhandener Plattformschlüssel; bis zur echten Zuordnung `null`.
+- `image`: Dateiname mit Endung, Aufnahmezeit, relativer Bildpfad und SHA-256-Prüfsumme. SHA-256 bedeutet Secure Hash Algorithm mit 256 Bit und dient hier zur eindeutigen Prüfung der Dateiinhalte.
+- `image_measurements`: Bildmesswerte mit den vereinbarten englischen Feldnamen.
+- `health_assessment`: Score, Kategorie, Teilbewertungen, Status und Scoring-Version.
+- `analysis`: Herkunft der Maske, Maßstabsstatus, Objektivstatus, Referenzdatei und -zeit, Lichtkorrektur und Gründe für fehlende Werte.
 
-Berechnung siehe BB-SPEC-HEALTH-001. Leer bleiben diese Spalten, solange weniger
-als drei brauchbare Bilder für eine Referenz vorliegen, sowie bei jedem Bild mit
-`brauchbar = False`.
+`mm_per_px`, `image_brightness`, `largest_component_pct`, `color_hex` und `pipeline_version` entsprechen den bekannten Projektfeldnamen. Die früher verwendeten Aliasnamen `mm_per_pixel` und `brightness` werden nicht zusätzlich als doppelte Messwerte ausgegeben. Die genauen Datenbank-IDs und der HTTP-Vertrag sind weiterhin abzugleichen.
 
----
+## 6 Diagramme und Dateien
 
-### Übersprungene Bilder
+Alle Schritte sind in `analyse.py` enthalten. Es werden keine getrennten Module `gesundheit.py` oder `grafiken.py` benötigt.
 
-Zwei Fälle werden **gar nicht ausgewertet** und erscheinen weder in der CSV noch
-bei Masken und Kontrollbildern. Die Bilddatei selbst bleibt unverändert erhalten.
-
-| Grund | Bedingung | Warum |
-|---|---|---|
-| keine Pflanze erkannt | Pflanzenanteil unter `MIN_PFLANZE_PCT` (0,05 %) | Dunkelheit: kein verwertbares Farbsignal |
-| zu verrauscht | `rauschen` über `MAX_RAUSCHEN` (25) | Die Erkennung liefert noch eine plausible Fläche, trifft die tatsächliche Pflanze aber zu weniger als 80 % |
-
-Der zweite Fall ist der gefährlichere: Bei starkem Rauschen meldet die Pipeline
-weiterhin eine Pflanze plausibler Größe, die aber nur noch zur Hälfte mit der
-tatsächlichen übereinstimmt. Eine falsche Zahl, die richtig aussieht.
-
-## 3. Bewusst nicht erfasste Größen
-
-Der Vollständigkeit halber dokumentiert — diese Größen wurden geprüft und verworfen:
-
-| Größe | Grund |
+| Datei unter `auswertung/grafiken/` | Inhalt |
 |---|---|
-| Bedeckungsgrad in % des Bildes | bei fest montierter Kamera exakt proportional zu `pflanzen_pixel`, also redundant |
-| Umfang in mm | steckt bereits normiert in `kompaktheit` |
-| ExG-Mittelwert | exakt aus `mittel_r/g/b` berechenbar (2G − R − B) |
-| Mittlerer HSV-Helligkeitswert | aus den RGB-Mittelwerten ableitbar |
-| Anzahl der Teilflächen | `groesste_komponente_pct` ist aussagekräftiger |
-| Unterbelichteter Bildanteil | bei mattschwarzem Hintergrund konstant hoch, ohne Aussagewert |
-| Geschätzte Blattanzahl | im Test 4 statt tatsächlich 6 Blättern; überlappende Blätter verschmelzen bei Top-Down-Aufnahme. Nicht belastbar, siehe Konzeptdokument |
-| Absolute Flächenänderung in cm² | aus `wachstumsrate_cm2_pro_tag` und dem Zeitabstand rekonstruierbar |
+| `01_wachstum.png` | sichtbare Blattfläche, mit cm² bei gültigem Maßstab, sonst Pixel |
+| `02_wachstumsrate.png` | verfügbare Wachstumsraten vergleichbarer Bildpaare |
+| `03_farbverlauf.png` | gemessene Rohfarben und Farbanteile; ausdrücklich lichtabhängig |
+| `04_gesundheit.png` | relative Bewertung vor und nach zeitlicher Glättung |
+| `05_teilscores.png` | letzte auswertbare Teilbewertungen mit identifizierter Aufnahme |
 
----
+Die fünf Dateien werden auch dann erzeugt, wenn einzelne Daten fehlen. Fehlende Daten werden erklärt und nicht als Nullkurve erfunden. Masken und einzelne Kontrollansichten liegen in `masken/` und `kontrolle/`. Eine manuell gespeicherte Maske wird separat unter `masken_korrektur/` erhalten.
 
-## 4. Diagramme
-
-`grafiken.py` erzeugt aus `ergebnis.csv` folgende PNG-Dateien in `auswertung/grafiken/`. Bilder mit `brauchbar = False` werden ausgelassen.
-
-| Datei | Inhalt |
-|---|---|
-| `01_wachstum.png` | Blattfläche über der Zeit — die Hauptkurve der Arbeit |
-| `02_wachstumsrate.png` | Wachstumsrate je Aufnahme; negative Balken deuten auf Messfehler oder Blattverlust |
-| `03_farbverlauf.png` | Grünindex oben, Gelb- und Braunanteil unten |
-| `04_gesundheit.png` | Gesundheitsverlauf mit farbig hinterlegten Kategoriebändern |
-| `05_teilscores.png` | Aufschlüsselung der letzten Aufnahme in die fünf Teilscores |
-
-Die Zeitachse aller Diagramme zeigt Datum und Uhrzeit aus dem Bildnamen, nicht
-die Nummer der Aufnahme. Bei Zeiträumen über 72 Stunden wird nur das Datum
-beschriftet.
-
-Die Prüfung der Aufbaustabilität nach BB-SPEC-IMG-001, Abschnitt 8.3 erfolgt
-direkt über die Spalte `mm_pro_pixel` in `ergebnis.csv`: Sie darf über die
-Messreihe um weniger als 1 % streuen.
-
-
----
-
-## 5. Skripte
-
-| Datei | Aufgabe | Selbst aufrufen? |
-|---|---|---|
-| `analyse.py` | Computer-Vision-Pipeline: Segmentierung, Marker, Messwerte, Zeitreihe, Qualitätsprüfung. Ruft `gesundheit` auf und schreibt `ergebnis.csv`. | ja |
-| `gesundheit.py` | Bewertung 0–100 aus den Farbmerkmalen | nein, wird importiert |
-| `grafiken.py` | Diagramme aus `ergebnis.csv` | ja |
-
-Vorgesehen für später: `zwilling.py` für das Digital-Twin-Modell (A-M4), ebenfalls
-auf Basis von `ergebnis.csv`.
+Blattanzahl, Pflanzenhöhe und eine absolute biologische Gesundheitswahrscheinlichkeit werden nicht zusätzlich erfunden. Die tatsächliche Datenquelle bleibt das Originalfoto mit der finalen sichtbaren Blattmaske.
