@@ -3,6 +3,9 @@
 Installation: python -m pip install opencv-contrib-python numpy matplotlib
 Normal:       python analyse.py
 Nur lokal:    python analyse.py --lokal bilder
+Pi-Stundenplan einrichten: python analyse.py --stundenaufnahme-einrichten
+Vorhandene Pi-Fotos holen: python analyse.py --abholen
+Zeitplan pruefen/stoppen:   --stundenaufnahme-status / --stundenaufnahme-ausschalten
 Nur Download: python analyse.py --nur-bild
 Massstab:     python analyse.py --massstab-bild bilder/FOTO.jpg --referenz-mm 50
               Dann die zwei Linealmarken im Bild anklicken, Enter druecken.
@@ -14,6 +17,10 @@ Neue Pflanze / geaenderter Aufbau: eigener Bildordner und --neue-referenz.
 Maske pruefen/korrigieren: python analyse.py --maske-korrigieren bilder/FOTO.jpg
 Import einer geprueften Originalmaske: zusaetzlich --korrekturmaske MASKE.png
 
+Jeder Lauf berechnet alle ausgewaehlten Bilder erneut, auch alte Aufnahmen.
+Masken, Kontrollbilder, CSV/JSON und Grafiken werden gemeinsam ersetzt.
+Bei gesperrten Ausgabedateien bleibt die vorherige komplette Auswertung erhalten.
+Ein Skript-Hash verhindert alte automatische Referenzmasken nach Codeaenderungen.
 Eine ausfuehrbare Datei; gesundheit.py und grafiken.py werden nicht importiert.
 Nur Kamera-JPEGs werden vom Pi geladen, lokal bleiben die neuesten 100.
 Die Ausgabe enthaelt IMMER einen Datensatz je Eingabebild, auch bei Fehlern.
@@ -49,6 +56,7 @@ OpenCV: docs.opencv.org/4.x/d8/d83/tutorial_py_grabcut.html
 """
 
 import argparse
+import contextlib
 import csv
 import hashlib
 import json
@@ -91,7 +99,8 @@ FELD_MM = 25.0
 ROI_NORMIERT = None  # Optional: (links, oben, rechts, unten), Werte 0..1.
 ARBEITSBREITE = 960
 SCORING_VERSION = "3.0.0"
-ANALYSE_VERSION = "4.0.0"
+ANALYSE_VERSION = "4.1.0"
+PIPELINE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 ENDUNGEN = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")
 CSV_DEZIMALKOMMA = True
 
@@ -158,7 +167,7 @@ def jpeg_lesbar(pfad):
     except OSError:
         return False
 
-def pi_bilder_holen():
+def pi_bilder_holen(neue_aufnahme=True):
     """Neu aufnehmen, vorhandene Aufnahmen abgleichen, lokal die letzten 100 behalten.
 
     Die UTC-Aufnahmezeit im Sitzungsnamen bestimmt die Reihenfolge, nicht das
@@ -177,9 +186,14 @@ def pi_bilder_holen():
     # find-Ergebnis erscheinen, wird aber vom strengen Sitzungsmuster verworfen.
     auflisten = (f"find {shlex.quote(PI_FOTO_ORDNER)} -mindepth 2 -maxdepth 2 "
                  "-type f -name normal.jpg -printf 'BIOBOX_FOTO:%h\\n'")
-    print(f"Neue Aufnahme und Bildliste von {PI_ADRESSE}; Pi-Passwort ggf. eingeben.", flush=True)
+    print(("Neue Aufnahme und Bildliste" if neue_aufnahme else "Vorhandene Bildliste")+
+          f" von {PI_ADRESSE}; Pi-Passwort ggf. eingeben.",flush=True)
+    # Derselbe Lock wie bei der stuendlichen Aufnahme auf dem Pi.
+    capture = ('mkdir -p "$HOME/.local/state/BioBox" && '
+               'flock -w 30 "$HOME/.local/state/BioBox/camera.lock" '+PI_AUFNAHME)
+    befehl = capture+" && "+auflisten if neue_aufnahme else auflisten
     aufnahme = subprocess.run(
-        ["ssh", *verbindung, PI_ADRESSE, PI_AUFNAHME + " && " + auflisten],
+        ["ssh", *verbindung, PI_ADRESSE, befehl],
         check=True, stdout=subprocess.PIPE, text=True, timeout=180)
 
     muster = re.escape(PI_FOTO_ORDNER) + r"/(\d{8}T\d{6}Z-[A-Za-z0-9]+)"
@@ -194,7 +208,7 @@ def pi_bilder_holen():
             treffer = re.fullmatch(muster, zeile[len("BIOBOX_FOTO:"):])
             if treffer and ist_pi_bild(f"biobox_{treffer[1]}.jpg"):
                 remote.add(treffer[1])
-    if len(neue_sitzungen) != 1 or neue_sitzungen[0] not in remote:
+    if neue_aufnahme and (len(neue_sitzungen) != 1 or neue_sitzungen[0] not in remote):
         raise RuntimeError("Der Pi hat keinen eindeutigen neuen Fotoordner gemeldet.")
 
     BILDER_ORDNER.mkdir(parents=True, exist_ok=True)
@@ -261,6 +275,167 @@ def ist_pi_bild(pfad):
         return True
     except ValueError:
         return False
+
+# Der Pi-Teil braucht nur die Python-Standardbibliothek, kein OpenCV.
+PI_STUNDEN_RUNNER = r'''import fcntl,json,os,re,signal,subprocess,sys
+from datetime import datetime,timezone
+from pathlib import Path
+CFG = __KONFIGURATION__
+state = Path.home()/'.local/state/BioBox'
+state.mkdir(parents=True,exist_ok=True)
+os.umask(0o077)
+lock = (state/'camera.lock').open('a+b')
+try:
+    fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit(75)  # Eine andere Aufnahme ist gerade aktiv, keine zweite starten.
+log = state/'stundenaufnahme.log'
+if log.exists() and log.stat().st_size>1048576:
+    log.replace(state/'stundenaufnahme.log.1')
+env = os.environ.copy()
+env['PATH'] = str(Path.home()/'.local/bin')+':/usr/local/bin:/usr/bin:/bin'
+result = {'zeit':datetime.now(timezone.utc).isoformat().replace('+00:00','Z'),'ok':False,'datei':None}
+code = 1
+with log.open('a',encoding='utf-8') as stream:
+    stream.write('\n'+result['zeit']+' Aufnahme gestartet\n');stream.flush()
+    try:
+        proc = subprocess.Popen(CFG['argv'],stdout=subprocess.PIPE,stderr=stream,text=True,
+                                env=env,start_new_session=True)
+    except OSError as error:
+        result['fehler']='Aufnahmehelfer nicht gestartet: '+str(error)
+        stream.write(json.dumps(result,ensure_ascii=False)+'\n')
+        tmp=state/'stundenaufnahme-status.tmp';tmp.write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
+        tmp.replace(state/'stundenaufnahme-status.json')
+        sys.exit(1)
+    try:
+        output,_ = proc.communicate(timeout=240)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid,signal.SIGTERM)
+        try: output,_ = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid,signal.SIGKILL);output,_ = proc.communicate()
+        result['fehler']='Aufnahme nach 240 Sekunden abgebrochen'
+    else:
+        folders = [line.split(':',1)[1].strip() for line in output.splitlines()
+                   if line.startswith('Photos and camera metadata:')]
+        if proc.returncode==0 and len(folders)==1:
+            folder = Path(folders[0]);photo=folder/'normal.jpg'
+            if (folder.parent==Path(CFG['ordner']) and
+                    re.fullmatch(r'\d{8}T\d{6}Z-[A-Za-z0-9]+',folder.name) and photo.is_file()):
+                with photo.open('rb') as f:
+                    good=f.read(2)==b'\xff\xd8'
+                    if photo.stat().st_size>128:
+                        f.seek(-2,os.SEEK_END);good=good and f.read(2)==b'\xff\xd9'
+                    else:good=False
+                if good and photo.stat().st_size>128:
+                    result.update(ok=True,datei=str(photo));code=0
+        if not result['ok']:result['fehler']='Keine eindeutige fertige normal.jpg; Rueckgabecode '+str(proc.returncode)
+    stream.write(output[-6000:]+'\n'+json.dumps(result,ensure_ascii=False)+'\n')
+tmp=state/'stundenaufnahme-status.tmp';tmp.write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
+tmp.replace(state/'stundenaufnahme-status.json')
+sys.exit(code)
+'''
+
+PI_STUNDEN_SETUP = r'''import fcntl,json,os,shlex,shutil,subprocess,sys,tempfile
+from datetime import datetime,timezone
+from pathlib import Path
+CFG = __KONFIGURATION__
+RUNNER = __RUNNER__
+os.umask(0o077)
+state=Path.home()/'.local/state/BioBox';state.mkdir(parents=True,exist_ok=True)
+with (state/'zeitplan.lock').open('a+b') as lock:
+    fcntl.flock(lock,fcntl.LOCK_EX)
+    if not shutil.which('crontab'):raise RuntimeError('crontab fehlt. Auf dem Pi: sudo apt install cron')
+    env=os.environ.copy();env['LC_ALL']='C'
+    read=subprocess.run(['crontab','-l'],capture_output=True,text=True,env=env)
+    if read.returncode==0:previous=read.stdout
+    elif read.returncode==1 and not read.stdout and 'no crontab' in read.stderr.lower():previous=''
+    else:raise RuntimeError('Vorhandener Zeitplan konnte nicht sicher gelesen werden: '+read.stderr.strip())
+    begin='# BEGIN BIOBOX STUNDENAUFNAHME'
+    end='# END BIOBOX STUNDENAUFNAHME'
+    lines=previous.splitlines(keepends=True)
+    plain=[];inside=False;seen=False
+    for line in lines:
+        if line.strip()==begin:
+            if inside or seen:raise RuntimeError('Doppelter BioBox-Zeitplan. Bitte vorhandene Eintraege pruefen.')
+            inside=True;seen=True
+        elif line.strip()==end:
+            if not inside:raise RuntimeError('Unvollstaendiger BioBox-Zeitplan.')
+            inside=False
+        elif not inside:plain.append(line)
+    if inside:raise RuntimeError('Unvollstaendiger BioBox-Zeitplan.')
+    service=subprocess.run(['systemctl','is-active','cron'],capture_output=True,text=True)
+    cron_ok=service.returncode==0
+    boot=subprocess.run(['systemctl','is-enabled','cron'],capture_output=True,text=True)
+    cron_boot=boot.returncode==0
+    wrapper=Path.home()/'.local/bin/biobox-hourly-capture.py'
+    action=CFG['aktion']
+    if action=='status':
+        last=state/'stundenaufnahme-status.json'
+        print(json.dumps({'aktiv':seen and wrapper.is_file() and cron_ok,'eingetragen':seen,
+                          'cron_aktiv':cron_ok,'cron_start_beim_boot':cron_boot,
+                          'letzte_aufnahme':json.loads(last.read_text()) if last.exists() else None},ensure_ascii=False))
+    else:
+        if action=='einrichten':
+            if not cron_ok:raise RuntimeError('cron ist nicht aktiv. Auf dem Pi: sudo systemctl enable --now cron')
+            if not cron_boot:raise RuntimeError('cron startet nicht beim Booten. Auf dem Pi: sudo systemctl enable --now cron')
+            if not Path(CFG['argv'][0]).is_file():raise RuntimeError('Aufnahmehelfer fehlt: '+CFG['argv'][0])
+            wrapper.parent.mkdir(parents=True,exist_ok=True)
+            with tempfile.NamedTemporaryFile('w',dir=wrapper.parent,prefix='.biobox-capture-',suffix='.py',delete=False) as f:
+                f.write(RUNNER);candidate=Path(f.name)
+            try:
+                test=subprocess.run([sys.executable,str(candidate)],timeout=270)
+                if test.returncode!=0:raise RuntimeError('Testaufnahme fehlgeschlagen oder Kamera belegt. Zeitplan nicht veraendert. --stundenaufnahme-status zeigt den letzten Versuch.')
+                new_runner=RUNNER
+            finally:candidate.unlink(missing_ok=True)
+            command=shlex.quote(sys.executable)+' '+shlex.quote(str(wrapper))+' >/dev/null 2>&1'
+            command=command.replace('%',r'\%')
+            clean=''.join(plain)
+            updated=clean+('' if not clean or clean.endswith('\n') else '\n')+begin+'\n0 * * * * '+command+'\n'+end+'\n'
+        elif action=='ausschalten':
+            updated=''.join(plain);new_runner=None
+        else:raise RuntimeError('Unbekannte Zeitplanaktion')
+        stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+        backup=state/('crontab-vorher-'+stamp+'.txt');backup.write_text(previous,encoding='utf-8')
+        old_runner=wrapper.read_bytes() if wrapper.exists() else None
+        try:
+            if new_runner is not None:
+                temp=wrapper.with_suffix('.tmp');temp.write_text(new_runner,encoding='utf-8');temp.chmod(0o700);temp.replace(wrapper)
+            subprocess.run(['crontab','-'],input=updated,text=True,capture_output=True,check=True,env=env)
+        except Exception:
+            if new_runner is not None:
+                if old_runner is None:wrapper.unlink(missing_ok=True)
+                else:wrapper.write_bytes(old_runner)
+            raise
+        print(json.dumps({'aktiv':action=='einrichten','testaufnahme':action=='einrichten','zeitplan':'0 * * * *','sicherung':str(backup)},ensure_ascii=False))
+'''
+
+
+def stundenaufnahme(aktion):
+    """Den eigenen Pi-Zeitplan einrichten/pruefen/stoppen, andere Jobs erhalten."""
+    cfg={'aktion':aktion,'argv':shlex.split(PI_AUFNAHME),'ordner':PI_FOTO_ORDNER}
+    if not cfg['argv'] or not cfg['argv'][0].startswith('/'):
+        raise ValueError('PI_AUFNAHME braucht den absoluten Pfad des Aufnahmehelfers.')
+    runner=PI_STUNDEN_RUNNER.replace('__KONFIGURATION__',repr(cfg))
+    script=PI_STUNDEN_SETUP.replace('__KONFIGURATION__',repr(cfg)).replace('__RUNNER__',repr(runner))
+    if shutil.which('ssh') is None:raise ValueError('Windows-OpenSSH-Client fehlt.')
+    print(f'Pi-Stundenaufnahme: {aktion}; Pi-Passwort ggf. eingeben.',flush=True)
+    result=subprocess.run(['ssh','-o','ConnectTimeout=15','-o','ServerAliveInterval=15',
+                           '-o','ServerAliveCountMax=2',PI_ADRESSE,'python3 -'],
+                          input=script,text=True,stdout=subprocess.PIPE,check=True,timeout=330)
+    data=json.loads(result.stdout)
+    if aktion=='status':
+        print('Stundenaufnahme aktiv.' if data['aktiv'] else 'Stundenaufnahme NICHT aktiv.')
+        if not data.get('cron_start_beim_boot'):print('cron startet aktuell nicht beim Booten des Pi.')
+        last=data.get('letzte_aufnahme')
+        if last:print('Letzter Versuch:',last.get('zeit'), '|',last.get('datei') if last.get('ok') else last.get('fehler'))
+        else:print('Noch kein Aufnahmeversuch protokolliert.')
+    elif aktion=='einrichten':
+        print('Testaufnahme erfolgreich. Der Pi nimmt jetzt zu jeder vollen Stunde auf, auch ohne Windows-PC.')
+        print('Spaeter mit python analyse.py --abholen die JPEGs holen und alle Bilder neu auswerten.')
+    else:print('Der BioBox-Stundenplan ist ausgeschaltet. Gespeicherte Fotos bleiben erhalten.')
+    return data
+
 
 def kalibrieren(ordner):
     """Bestimmt die Verzeichnung aus Schachbrettaufnahmen."""
@@ -406,6 +581,11 @@ def szene_abgleichen(bild, ref, details=None):
     scale = float(np.hypot(matrix[0, 0], matrix[1, 0]))
     winkel = abs(math.degrees(math.atan2(matrix[1, 0], matrix[0, 0])))
     versatz = float(np.linalg.norm(matrix[:, 2])) / max(bild.shape[:2])
+    # Unterhalb eines halben Arbeitspixels keine Interpolationsaenderung
+    # durch das Rauschen der Merkmalsanpassung erzeugen.
+    if abs(scale-1)<.0005 and winkel<.03 and np.linalg.norm(matrix[:,2])<.5:
+        matrix=np.array([[1.,0.,0.],[0.,1.,0.]])
+        scale,winkel,versatz=1.,0.,0.
     if details is not None:
         details.update(scale=scale, rotation=winkel, translation=versatz)
     flags = ["ansicht_geaendert"] if abs(scale-1) > .025 or winkel > 3 or versatz > .035 else []
@@ -445,12 +625,16 @@ def rand_hintergrund(maske):
     return sperre, kandidaten
 
 
-def linien_hintergrund(bild):
+def linien_hintergrund(bild,geometrie=None):
     """Gerade helle Halterungen/Fensterkanten, ohne breite Blattflaechen zu sperren."""
     b,g,r = cv2.split(bild.astype(np.float32))
     hsv = cv2.cvtColor(bild,cv2.COLOR_BGR2HSV)
     kuehl = (b > .88*g) & (g > 90) & (hsv[:,:,1] < 130)
-    kanten = cv2.Canny(cv2.cvtColor(bild,cv2.COLOR_BGR2GRAY),35,90)
+    basis=geometrie if geometrie is not None and geometrie.shape==bild.shape else bild
+    gb,gg,gr=cv2.split(basis.astype(np.float32))
+    geo_hsv=cv2.cvtColor(basis,cv2.COLOR_BGR2HSV)
+    geo_kuehl=(gb>.88*gg)&(gg>90)&(geo_hsv[:,:,1]<130)
+    kanten = cv2.Canny(cv2.cvtColor(basis,cv2.COLOR_BGR2GRAY),35,90)
     laenge = max(60,round(.23*min(bild.shape[:2])))
     linien = cv2.HoughLinesP(kanten,1,np.pi/360,45,minLineLength=laenge,maxLineGap=18)
     sperre = np.zeros(kanten.shape,np.uint8)
@@ -460,7 +644,7 @@ def linien_hintergrund(bild):
         t = np.linspace(.05,.95,40)
         xs = np.rint(x1+(x2-x1)*t).astype(int)
         ys = np.rint(y1+(y2-y1)*t).astype(int)
-        if np.mean(kuehl[ys,xs]) < .65:
+        if np.mean(geo_kuehl[ys,xs]) < .65:
             continue
         cv2.line(sperre,(x1,y1),(x2,y2),255,13)
     sperre[~kuehl] = 0
@@ -522,7 +706,7 @@ def segmentieren(arbeit, prior=None, prior_bild=None):
     nahe_blattfarbe = cv2.dilate(farbkern, kern(21)) > 0
     blasse_blaetter &= nahe_blattfarbe
     seed = (farbige_blaetter | blasse_blaetter).astype(np.uint8)*255
-    linien = linien_hintergrund(arbeit)
+    linien = linien_hintergrund(arbeit,cv2.medianBlur(prior_bild,3) if prior_bild is not None else None)
     holzig = warmer_hintergrund(arbeit,linien)
     if prior is not None:
         # Die Hintergrundheuristik darf eine inzwischen braune Blattkante
@@ -608,7 +792,7 @@ def segmentieren(arbeit, prior=None, prior_bild=None):
     cv2.setRNGSeed(7)
     cv2.grabCut(arbeit, gc, None, np.zeros((1, 65)), np.zeros((1, 65)), 5, cv2.GC_INIT_WITH_MASK)
     maske = np.isin(gc, [cv2.GC_FGD, cv2.GC_PR_FGD]).astype(np.uint8)*255
-    maske = cv2.morphologyEx(maske, cv2.MORPH_OPEN, kern(9))
+    maske = cv2.morphologyEx(maske, cv2.MORPH_OPEN, kern(5))
     maske = saubere_komponenten(maske, 70)
     maske[sperre > 0] = 0
     # Erst die zusammenhaengende Blattflaeche bilden. Die Gerade kann
@@ -623,26 +807,36 @@ def segmentieren(arbeit, prior=None, prior_bild=None):
     return cv2.morphologyEx(maske, cv2.MORPH_CLOSE, kern(3))
 
 
-def stiele_entfernen(maske, faktor=1.):
-    """Lange schmale Fortsaetze entfernen, kleine Blattspitzen zuruecklassen."""
-    n = max(3,round(7*faktor))|1
-    geoeffnet = cv2.morphologyEx(maske,cv2.MORPH_OPEN,
-                               cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(n,n)))
-    rest = cv2.bitwise_and(maske,255-geoeffnet)
-    anzahl,labels,stats,_ = cv2.connectedComponentsWithStats(rest,8)
-    out = maske.copy()
+def stiele_entfernen(maske,faktor=1.):
+    """Breite Blattflaechen erhalten, lange duenne Verbindungen ausschliessen.
+
+    Ein verzweigtes Stielnetz kann ein breites Rechteck besitzen. Deshalb
+    entscheidet nicht nur das Seitenverhaeltnis seiner gesamten Komponente.
+    Kleine Randkorrekturen und kurze Blattspitzen werden zurueckgenommen.
+    """
+    n=max(3,round(7*faktor))|1
+    geoeffnet=cv2.morphologyEx(maske,cv2.MORPH_OPEN,
+                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(n,n)))
+    if not np.any(geoeffnet):return geoeffnet
+    rest=cv2.bitwise_and(maske,255-geoeffnet)
+    distanz=cv2.distanceTransform(255-geoeffnet,cv2.DIST_L2,5)
+    out=geoeffnet.copy()
+    # Die echte Kontur nahe einem Blatt bleibt erhalten; ein langer Stiel
+    # darf nicht durch vollstaendige Rekonstruktion wieder hinzukommen.
+    out[(rest>0)&(distanz<=max(1.,1.5*faktor))]=255
+    anzahl,labels,stats,_=cv2.connectedComponentsWithStats(rest,8)
     for i in range(1,anzahl):
-        if stats[i,cv2.CC_STAT_AREA] < 8*faktor*faktor:
-            continue
-        punkte = np.column_stack(np.where(labels==i)[::-1]).astype(np.float32)
-        _,(a,b),_ = cv2.minAreaRect(punkte)
-        lang,kurz = max(a,b),min(a,b)
-        if lang > 20*faktor and kurz < 6*faktor and lang/max(kurz,1) > 4:
-            out[labels==i] = 0
+        teil=labels==i
+        if float(distanz[teil].max())<=5*faktor:
+            out[teil]=255
+        elif stats[i,cv2.CC_STAT_AREA]<=70*faktor*faktor:
+            punkte=np.column_stack(np.where(teil)[::-1]).astype(np.float32)
+            _,(a,b),_=cv2.minAreaRect(punkte)
+            if max(a,b)<=12*faktor:out[teil]=255
     return out
 
 
-def maske_verfeinern(bild, maske_klein):
+def maske_verfeinern(bild, maske_klein, prior_bild=None):
     """Unsichere Blattraender an den Originalpixeln neu trennen.
 
     Kein blosses Hochskalieren der 960-px-Maske. Sichere Innenbereiche bleiben
@@ -654,7 +848,7 @@ def maske_verfeinern(bild, maske_klein):
     if not np.any(basis):
         return basis
     faktor = w/maske_klein.shape[1]
-    radius = max(2,round(4*faktor))
+    radius = max(2,round(7*faktor))
     kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(2*radius+1,2*radius+1))
     region = cv2.dilate(basis,kern)
     innen = cv2.erode(basis,kern)
@@ -663,8 +857,13 @@ def maske_verfeinern(bild, maske_klein):
     cv2.drawContours(umhuellt,konturen,-1,255,cv2.FILLED)
     b,g,r = cv2.split(bild.astype(np.float32))
     helles_gewebe = (umhuellt > 0)&(g-r > -4)&(g-b > -8)&(np.max(bild,axis=2)>55)
+    helles_gewebe &= cv2.distanceTransform(255-basis,cv2.DIST_L2,5) <= 2*radius
     region[helles_gewebe] = 255
-    linien = linien_hintergrund(kleiner(bild))
+    klein=kleiner(bild)
+    linien = linien_hintergrund(klein,prior_bild)
+    holz=warmer_hintergrund(klein,linien).astype(np.uint8)*255
+    holz=cv2.resize(holz,(w,h),interpolation=cv2.INTER_NEAREST)
+    holz[basis>0]=0  # Vorher erkannte braune Blattbereiche nicht abschneiden.
     blattkern = (cv2.distanceTransform(maske_klein,cv2.DIST_L2,5)>12.).astype(np.uint8)*255
     linien[cv2.dilate(blattkern,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(7,7)))>0] = 0
     sperre = cv2.resize(linien,(w,h),interpolation=cv2.INTER_NEAREST)
@@ -678,6 +877,7 @@ def maske_verfeinern(bild, maske_klein):
     gc[basis[y0:y1,x0:x1]>0] = cv2.GC_PR_FGD
     gc[innen[y0:y1,x0:x1]>0] = cv2.GC_FGD
     gc[sperre[y0:y1,x0:x1]>0] = cv2.GC_BGD
+    gc[holz[y0:y1,x0:x1]>0] = cv2.GC_BGD
     if not np.any(gc==cv2.GC_FGD) or not np.any(gc==cv2.GC_BGD):
         return basis
     cv2.setRNGSeed(7)
@@ -894,23 +1094,30 @@ def merkmale(bild, maske, mm_px):
     return w
 
 
-def kontrollbild(bild, maske, z, pfad):
-    """Eine Ansicht: Originalfoto, transparente Blattmaske und duenne Kontur."""
-    vorschau = kleiner(bild)
-    m = cv2.resize(maske, (vorschau.shape[1], vorschau.shape[0]), interpolation=cv2.INTER_NEAREST)
-    vorschau[m > 0] = (.86*vorschau[m > 0]+.14*np.array([205, 80, 215])).astype(np.uint8)
-    konturen, _ = cv2.findContours(m, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(vorschau, konturen, -1, (220, 40, 220), 1, cv2.LINE_AA)
-    panel = np.full((vorschau.shape[0]+58, vorschau.shape[1], 3), 248, np.uint8)
-    panel[58:] = vorschau
-    cv2.putText(panel, f"Blattmaske | {z['bild']}", (12, 23), cv2.FONT_HERSHEY_SIMPLEX, .48, (45, 45, 45), 1, cv2.LINE_AA)
-    score = z.get("gesundheit")
-    flaeche = (f"{z['blattflaeche_cm2']:.2f} cm2" if z.get("blattflaeche_cm2") is not None
-               else f"{z.get('pflanzen_pixel',cv2.countNonZero(maske))} Blattpixel")
-    info = flaeche+" | "+(f"Index {score:.1f}/100 | " if score is not None else "Kein vergleichbarer Score | ")+(z.get("gesundheit_status") or "")
-    cv2.putText(panel, info, (12, 46), cv2.FONT_HERSHEY_SIMPLEX, .44, (65, 65, 65), 1, cv2.LINE_AA)
-    if not cv2.imwrite(str(pfad), panel):
-        raise OSError(f"Kontrollbild nicht gespeichert: {pfad}")
+def kontrollbild(bild,maske,z,pfad):
+    """Eine hochaufgeloeste Ansicht mit feiner Kontur und schwacher Einfaerbung."""
+    faktor=min(1.,1920/bild.shape[1])
+    vorschau=(cv2.resize(bild,(round(bild.shape[1]*faktor),round(bild.shape[0]*faktor)),interpolation=cv2.INTER_AREA)
+              if faktor<1 else bild.copy())
+    m=cv2.resize(maske,(vorschau.shape[1],vorschau.shape[0]),interpolation=cv2.INTER_NEAREST)
+    vorschau[m>0]=(.94*vorschau[m>0]+.06*np.array([205,80,215])).astype(np.uint8)
+    scale=max(.6,vorschau.shape[1]/960)
+    konturen,_=cv2.findContours(m,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(vorschau,konturen,-1,(220,40,220),max(1,round(scale)),cv2.LINE_AA)
+    header=round(58*scale)
+    panel=np.full((vorschau.shape[0]+header,vorschau.shape[1],3),248,np.uint8);panel[header:]=vorschau
+    cv2.putText(panel,f"Blattmaske | {z['bild']}",(round(12*scale),round(23*scale)),cv2.FONT_HERSHEY_SIMPLEX,.48*scale,(45,45,45),max(1,round(scale)),cv2.LINE_AA)
+    score=z.get('gesundheit')
+    flaeche=(f"{z['blattflaeche_cm2']:.2f} cm2" if z.get('blattflaeche_cm2') is not None
+             else f"{z.get('pflanzen_pixel',cv2.countNonZero(maske))} Blattpixel")
+    info=flaeche+(' | Index '+f'{score:.1f}/100' if score is not None else ' | Kein verlaesslicher Score')
+    status=z.get('gesundheit_status') or ''
+    if status.startswith('vorlaeufige_referenz'):info+=' | Referenz ungeprueft'
+    if z.get('_maskenquelle')=='manuell':info+=' | gepruefte Korrekturmaske'
+    cv2.putText(panel,info,(round(12*scale),round(46*scale)),cv2.FONT_HERSHEY_SIMPLEX,.42*scale,(65,65,65),max(1,round(scale)),cv2.LINE_AA)
+    ok,png=cv2.imencode('.png',panel)
+    if not ok:raise OSError(f'Kontrollbild nicht gespeichert: {pfad}')
+    Path(pfad).write_bytes(png.tobytes())
 
 
 def korrektur_pfad(ausgabe, sha256, entzerrt=None):
@@ -1028,7 +1235,7 @@ def maske_korrigieren(bildpfad, ausgabe, uebernehmen=None):
         except cv2.error:pass
 
 
-def referenz_laden(pfad, neu=False):
+def referenz_laden(pfad, neu=False, bilder=None):
     if neu or not pfad.exists():
         return None
     with np.load(pfad, allow_pickle=False) as daten:
@@ -1046,6 +1253,19 @@ def referenz_laden(pfad, neu=False):
         ref = {"meta": meta, "bild": daten["bild"].copy(), "maske": daten["maske"].copy()}
         if "maske_original" in daten.files:
             ref["maske_original"] = daten["maske_original"].copy()
+        if "bild_original" in daten.files:
+            ref["bild_original"] = daten["bild_original"].copy()
+    if "bild_original" not in ref and bilder:
+        for foto in bilder:
+            foto=Path(foto)
+            if foto.name!=meta.get("bild") or not foto.is_file():continue
+            if hashlib.sha256(foto.read_bytes()).hexdigest()!=meta.get("sha256"):continue
+            original=cv2.imdecode(np.fromfile(foto,dtype=np.uint8),cv2.IMREAD_COLOR)
+            if original is not None:
+                if KALIBRIERUNG.exists():
+                    original=objektiv_entzerren(original,json.loads(KALIBRIERUNG.read_text(encoding="utf-8")))
+                ref["bild_original"]=original
+                break
     breite,hoehe = meta.get("bildbreite"),meta.get("bildhoehe")
     if breite and hoehe and meta.get("sha256"):
         korr = korrektur_laden(pfad.parent,meta["sha256"],(hoehe,breite))
@@ -1056,7 +1276,9 @@ def referenz_laden(pfad, neu=False):
             ref["maske"] = cv2.resize(korr,(ref["bild"].shape[1],ref["bild"].shape[0]),interpolation=cv2.INTER_NEAREST)
             geo = merkmale(cv2.resize(ref["bild"],(breite,hoehe)),korr,None)
             meta.update(mask_source="manuell",pflanzen_pixel=geo["pflanzen_pixel"],kompaktheit=geo.get("kompaktheit"),historie=[])
-    if meta.get("analyse_version") != ANALYSE_VERSION or meta.get("version") != SCORING_VERSION:
+    neues_verfahren=(meta.get("analyse_version") != ANALYSE_VERSION or meta.get("version") != SCORING_VERSION
+                    or meta.get("pipeline_sha256") != PIPELINE_SHA256)
+    if neues_verfahren or meta.get("mask_source")!="manuell":
         # Den urspruenglichen Referenzzeitpunkt trotz neuem Maskenverfahren
         # behalten. Veraltete, eventuell wandhaltige Masken nie weitergeben.
         maske = ref["maske"].copy() if meta.get("mask_source")=="manuell" else segmentieren(ref["bild"])
@@ -1065,15 +1287,24 @@ def referenz_laden(pfad, neu=False):
             return None
         h, w = ref["bild"].shape[:2]
         breite, hoehe = meta.get("bildbreite", w), meta.get("bildhoehe", h)
-        gross = cv2.resize(maske, (breite, hoehe), interpolation=cv2.INTER_NEAREST)
+        if meta.get("mask_source")=="manuell" and ref.get("maske_original") is not None:
+            gross=ref["maske_original"]
+        elif ref.get("bild_original") is not None:
+            gross=maske_verfeinern(ref["bild_original"],maske)
+            maske=cv2.resize(gross,(w,h),interpolation=cv2.INTER_NEAREST)
+        else:
+            gross = cv2.resize(maske, (breite, hoehe), interpolation=cv2.INTER_NEAREST)
         geometrie = merkmale(cv2.resize(ref["bild"], (breite, hoehe)), gross, None)
         ref["maske"] = maske
         if meta.get("mask_source") != "manuell":
-            ref.pop("maske_original",None)
+            if ref.get("bild_original") is not None:ref["maske_original"]=gross
+            else:ref.pop("maske_original",None)
         meta.update(version=SCORING_VERSION, analyse_version=ANALYSE_VERSION,
+                    pipeline_sha256=PIPELINE_SHA256,
                     pflanzen_pixel=geometrie["pflanzen_pixel"],
-                    kompaktheit=geometrie["kompaktheit"], historie=[])
-        print("Referenzmaske aktualisiert; urspruengliche Referenzaufnahme bleibt erhalten.")
+                    kompaktheit=geometrie["kompaktheit"],
+                    historie=[] if neues_verfahren else meta.get("historie",[]))
+        print("Referenzmaske neu berechnet; urspruengliche Referenzaufnahme bleibt erhalten.")
     return ref
 
 
@@ -1083,6 +1314,8 @@ def referenz_speichern(pfad, ref):
         arrays = {"bild":ref["bild"],"maske":ref["maske"]}
         if "maske_original" in ref:
             arrays["maske_original"] = ref["maske_original"]
+        if "bild_original" in ref:
+            arrays["bild_original"] = ref["bild_original"]
         np.savez_compressed(datei,meta=json.dumps(ref["meta"],allow_nan=False),**arrays)
     tmp.replace(pfad)
 
@@ -1369,6 +1602,7 @@ def api_datensatz(z, ref):
                   "storage_path": storage_path, "checksum_sha256": z.get("_sha256")},
         "image_measurements": messung, "health_assessment": gesundheit,
         "analysis": {"version": ANALYSE_VERSION, "health_status": z["gesundheit_status"],
+                     "pipeline_sha256": PIPELINE_SHA256,
                      "capture_time_source":z.get("zeitquelle"),
                      "mask_source": z.get("_maskenquelle","automatisch"),
                      "illumination": {"method": z.get("_lichtinfo",{}).get("modell"),
@@ -1412,7 +1646,7 @@ def ergebnisse_speichern(zeilen, ref, ausgabe):
         csv_tmp.replace(ausgabe/"ergebnis.csv")
     except PermissionError:
         csv_tmp.unlink(missing_ok=True)
-        print("CSV kann nicht aktualisiert werden: ergebnis.csv in Excel schliessen und erneut ausfuehren. JSON und Grafiken werden trotzdem aktualisiert.")
+        print("CSV gesperrt: ergebnis.csv in Excel schliessen und erneut ausfuehren. Die neue Auswertung wird nicht uebernommen.")
         return False
     return True
 
@@ -1525,14 +1759,98 @@ def grafiken(zeilen, ordner):
         speichern(fig, 4)
 
 
-def analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz=False):
+@contextlib.contextmanager
+def auswertung_sperren(ausgabe):
+    """Nur ein schreibender Analyselauf; die Sperre endet auch bei Programmabbruch."""
+    with (ausgabe/'.analyse.lock').open('a+b') as lock:
+        if lock.seek(0,os.SEEK_END)==0:lock.write(b'0');lock.flush()
+        lock.seek(0)
+        try:
+            if os.name=='nt':
+                import msvcrt
+                msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
+            else:
+                import fcntl
+                fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except OSError as error:
+            raise ValueError('In diesem Ausgabeordner laeuft bereits eine Analyse.') from error
+        try:yield
+        finally:
+            lock.seek(0)
+            if os.name=='nt':msvcrt.locking(lock.fileno(),msvcrt.LK_UNLCK,1)
+            else:fcntl.flock(lock,fcntl.LOCK_UN)
+
+
+def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=False):
+    """Alle Eingaben erneut auswerten; zusammenpassende Ausgaben gemeinsam ersetzen.
+
+    Automatische Masken werden nicht aus dem Ausgabeordner eingelesen.
+    Manuelle dateigenaue Korrekturen bleiben als bewusst gepruefte Eingabe.
+    Bei einem Schreibfehler werden bereits ersetzte Dateien zurueckgesetzt.
+    """
+    pfade=list(pfade);ausgabe=Path(ausgabe).expanduser().resolve()
+    if not pfade:raise ValueError('Keine Eingabebilder; vorhandene Auswertung bleibt erhalten.')
+    ausgabe.mkdir(parents=True,exist_ok=True)
+    with auswertung_sperren(ausgabe):
+        work=Path(tempfile.mkdtemp(prefix='.biobox-auswertung-',dir=ausgabe.parent))
+        fertig=work/'neu';fertig.mkdir();backup=work/'vorher';backup.mkdir()
+        cleanup=True
+        try:
+            for name in ('referenz.npz','massstab.npz'):
+                if (ausgabe/name).is_file():shutil.copy2(ausgabe/name,fertig/name)
+            if (ausgabe/'masken_korrektur').is_dir():
+                shutil.copytree(ausgabe/'masken_korrektur',fertig/'masken_korrektur')
+            # Eigene fremde Dateien nicht als alte generierte Vorschauen loeschen.
+            for folder,suffix in [('masken','_maske.png'),('kontrolle','_kontrolle.png')]:
+                (fertig/folder).mkdir()
+                if (ausgabe/folder).is_dir():
+                    for path in (ausgabe/folder).iterdir():
+                        generated=bool(re.match(r'^\d{5}_',path.name) and path.name.endswith(suffix))
+                        if not generated:
+                            target=fertig/folder/path.name
+                            if path.is_dir():shutil.copytree(path,target,symlinks=True)
+                            else:shutil.copy2(path,target,follow_symlinks=False)
+            rows=_analysieren(pfade,fertig,manuell,einzelbilder,neue_referenz)
+            required=['ergebnis.csv','ergebnis.json','masken','kontrolle','grafiken']
+            if not all((fertig/name).exists() for name in required):
+                raise OSError('Neue Auswertung ist unvollstaendig; alte Ausgabe bleibt erhalten.')
+            if (fertig/'referenz.npz').is_file():required.append('referenz.npz')
+            changes=[]
+            try:
+                for name in required:
+                    old=ausgabe/name;new=fertig/name
+                    item={'name':name,'old':False,'new':False};changes.append(item)
+                    if old.exists():old.replace(backup/name);item['old']=True
+                    new.replace(old);item['new']=True
+            except OSError as error:
+                rollback=[]
+                for item in reversed(changes):
+                    name=item['name']
+                    try:
+                        if item['new']:(ausgabe/name).replace(fertig/name)
+                        if item['old']:(backup/name).replace(ausgabe/name)
+                    except OSError:rollback.append(name)
+                if rollback:
+                    cleanup=False
+                    raise OSError('Wiederherstellung blockiert. Sicherung erhalten unter '+str(backup)+': '+', '.join(rollback)) from error
+                raise OSError('Ausgaben konnten nicht ersetzt werden. ergebnis.csv in Excel und offene Vorschauen schliessen. Bisherige Auswertung bleibt erhalten.') from error
+        finally:
+            if cleanup:shutil.rmtree(work)
+    print(f'\n{len(rows)} Bilder erneut ausgewertet -> {ausgabe/"ergebnis.csv"}')
+    print('Masken, Kontrollbilder, CSV/JSON und alle 5 Grafiken gemeinsam aktualisiert.')
+    if manuell is None and not any(z.get('mm_pro_pixel') for z in rows):
+        print('Fuer cm2/mm einmal eine bekannte Linealstrecke auf Blatthoehe markieren (--massstab-bild / --referenz-mm).')
+    return rows
+
+
+def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz=False):
     ausgabe.mkdir(parents=True, exist_ok=True)
     masken, kontrolle = ausgabe/"masken", ausgabe/"kontrolle"
     masken.mkdir(exist_ok=True)
     kontrolle.mkdir(exist_ok=True)
     zustand = ausgabe/"referenz.npz"
     lineal = massstab_laden(ausgabe/"massstab.npz")
-    ref = referenz_laden(zustand, neue_referenz) if not einzelbilder else None
+    ref = referenz_laden(zustand, neue_referenz, pfade) if not einzelbilder else None
     alte_historie = ref["meta"].get("historie", []) if ref else []
     kalibrierung = None
     if KALIBRIERUNG.exists() and not einzelbilder:
@@ -1584,7 +1902,8 @@ def analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz=
             if maske is None:
                 maske_klein = segmentieren(normal if normal is not None else arbeit,prior if registriert else None,
                                           referenz_bild if registriert else None)
-                maske = maske_verfeinern(licht_anwenden(bild,lichtinfo) if normal is not None else bild,maske_klein)
+                maske = maske_verfeinern(licht_anwenden(bild,lichtinfo) if normal is not None else bild,
+                                         maske_klein,referenz_bild if registriert else None)
             maske_klein = cv2.resize(maske,(arbeit.shape[1],arbeit.shape[0]),interpolation=cv2.INTER_NEAREST)
             z["_maskenquelle"] = "manuell" if korrigiert_manuell else "automatisch"
             mm_px, quelle = (massstab(bild,manuell,lineal) if not einzelbilder else
@@ -1626,8 +1945,9 @@ def analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz=
             else:
                 vorheriges_bild = None
             if ref is None and z["brauchbar"] and not einzelbilder:
-                ref = {"bild": arbeit.copy(), "maske": maske_klein.copy(), "maske_original":maske.copy(), "meta": {
+                ref = {"bild": arbeit.copy(), "bild_original":bild.copy(), "maske": maske_klein.copy(), "maske_original":maske.copy(), "meta": {
                     "version": SCORING_VERSION, "analyse_version": ANALYSE_VERSION, "messreihe": MESSREIHE,
+                    "pipeline_sha256":PIPELINE_SHA256,
                     "arbeitsbreite": ARBEITSBREITE, "roi": list(ROI_NORMIERT) if ROI_NORMIERT else None,
                     "bild": z["bild"], "captured_at": z["captured_at"], "sha256": z["_sha256"],
                     "lens_hash": hashlib.sha256(KALIBRIERUNG.read_bytes()).hexdigest() if kalibrierung is not None else None,
@@ -1640,6 +1960,7 @@ def analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz=
                 # am Original gemessene Geometrie als Referenz nachziehen.
                 ref["maske"] = maske_klein.copy()
                 ref["maske_original"] = maske.copy()
+                ref["bild_original"] = bild.copy()
                 ref["meta"].update(pflanzen_pixel=z["pflanzen_pixel"],kompaktheit=z["kompaktheit"],mask_source=z["_maskenquelle"])
                 prior,referenz_bild = maske_klein,arbeit
                 normal,licht_flags,lichtinfo = arbeit,[],{"modell":"referenz","korrigiert":False}
@@ -1697,6 +2018,8 @@ def analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz=
             if re.match(r"^\d{5}_", p.name) and p.name[:-len(suffix)] not in erzeugt:
                 p.unlink()
     csv_aktuell = ergebnisse_speichern(zeilen, ref, ausgabe)
+    if not csv_aktuell:
+        raise PermissionError("CSV konnte nicht erstellt werden; bisherige Auswertung bleibt erhalten.")
     grafiken(zeilen, ausgabe/"grafiken")
     if ref is not None and not einzelbilder:
         neue = [{"captured_at": z["captured_at"], "gesundheit": z["gesundheit"]}
@@ -1704,11 +2027,6 @@ def analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz=
         historie = {p["captured_at"]: p for p in alte_historie+neue}
         ref["meta"]["historie"] = [historie[k] for k in sorted(historie)][-200:]
         referenz_speichern(zustand, ref)
-    print(f"\n{len(zeilen)} Eingabebilder -> {ausgabe/'ergebnis.json'}")
-    print("CSV aktualisiert." if csv_aktuell else "CSV noch gesperrt; aktuelle Daten stehen in ergebnis.json.")
-    print("5 Grafiken, Masken und Kontrollbilder erstellt.")
-    if manuell is None and not any(z.get("mm_pro_pixel") for z in zeilen):
-        print("Blattflaeche wird in Pixeln gemessen. Fuer cm2/mm einmal eine bekannte Linealstrecke auf Blatthoehe markieren (--massstab-bild / --referenz-mm).")
     return zeilen
 
 
@@ -1716,6 +2034,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("ordner", nargs="?", help="Optional: nur diesen lokalen Ordner/dieses Bild analysieren")
     parser.add_argument("--lokal", metavar="PFAD", help="Vorhandene Bilder ohne Pi-Abruf analysieren")
+    parser.add_argument("--abholen",action="store_true",help="Vorhandene Pi-Fotos abgleichen und alle Bilder neu auswerten; keine neue Aufnahme")
+    plan=parser.add_mutually_exclusive_group()
+    plan.add_argument("--stundenaufnahme-einrichten",action="store_true",help="Testaufnahme und stuendliche Aufnahmen direkt auf dem Pi einrichten")
+    plan.add_argument("--stundenaufnahme-status",action="store_true",help="Pi-Zeitplan und letzten Aufnahmeversuch anzeigen")
+    plan.add_argument("--stundenaufnahme-ausschalten",action="store_true",help="Nur den eigenen Pi-Stundenplan ausschalten")
     parser.add_argument("--nur-bild", action="store_true", help="Pi-Bilder holen, keine Analyse")
     parser.add_argument("--einzelbilder", action="store_true", help="Verschiedene Pflanzen: keine zeitlichen Gesundheits-/Wachstumsvergleiche")
     parser.add_argument("--neue-referenz", action="store_true", help="Referenz fuer diese Messreihe neu bilden")
@@ -1733,6 +2056,14 @@ def main():
     cv2.setNumThreads(2)
     if args.mm_pro_pixel is not None and (not math.isfinite(args.mm_pro_pixel) or args.mm_pro_pixel <= 0):
         parser.error("--mm-pro-pixel muss positiv und endlich sein")
+    for aktion in ("einrichten","status","ausschalten"):
+        if getattr(args,"stundenaufnahme_"+aktion):
+            try:stundenaufnahme(aktion)
+            except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as fehler:
+                print(f"Pi-Zeitplan nicht bestaetigt: {fehler}");return 1
+            return 0
+    if args.abholen and (args.lokal or args.ordner or args.massstab):
+        parser.error("--abholen ist fuer den Pi-Abruf, ohne --lokal/Ordner/--massstab")
     if args.kalibrieren:
         kalibrieren(args.kalibrieren)
         return 0
@@ -1781,7 +2112,7 @@ def main():
         ausgabe = args.ausgabe or ((ziel.parent.parent if ziel.is_file() else ziel.parent)/"auswertung")
     else:
         try:
-            pfade = pi_bilder_holen()
+            pfade = pi_bilder_holen(neue_aufnahme=not args.abholen)
         except (OSError, RuntimeError, subprocess.SubprocessError, tarfile.TarError) as fehler:
             print(f"Fotoabruf fehlgeschlagen: {fehler}\nAnalyse nicht gestartet; vorhandene Auswertung bleibt erhalten.")
             return 1
