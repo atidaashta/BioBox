@@ -4,7 +4,7 @@ Bildgestützte Beobachtung von Pflanzen als Teil der Diplomarbeit **BioBox**. Au
 
 Dieses Repository dokumentiert den Teilbereich **Bildaufnahme, Bildauswertung und Zustandsbewertung** von **Atida Ashta** an der HTL Shkodra. Einstiegspunkt für die Verarbeitung ist `analyse.py`.
 
-**Projektstatus:** Entwicklung und Validierung. Der Aufnahme- und Analyseablauf ist implementiert. Die Genauigkeit der Blattmasken und die fachliche Aussage des Zustandsindex werden weiter untersucht; die direkte Backend-Anbindung ist geplant.
+**Projektstatus:** Entwicklung und Validierung · Bildanalyse 4.3.0, Zustandsindex 4.0.0. Der Aufnahme- und Analyseablauf ist implementiert. Die Genauigkeit der Blattmasken und die fachliche Aussage des Zustandsindex werden weiter untersucht; die direkte Backend-Anbindung ist geplant.
 
 ## Inhalt
 
@@ -196,7 +196,7 @@ python analyse.py --lokal bilder --neue-referenz --ausgabe auswertung
 
 ### Blattmaske
 
-Die Verarbeitung verwendet Farbhinweise, GrabCut zur Vordergrund-/Hintergrundtrennung und geometrische Prüfungen. Berücksichtigt werden unter anderem helle Blattzeichnungen, große Hintergrundflächen, gerade Halterungen und dünne Stielverbindungen. Die unsicheren Blattgrenzen werden am Originalbild verfeinert.
+Die Blattkerne werden anhand der CIELAB-Farbachsen bestimmt. Kühle Halterungen und schwach grüne Bodenbereiche werden möglichst ausgeschlossen. Dünne Verbindungen werden nach ihrer Nähe zu breiten Blattflächen gefiltert. GrabCut verfeinert anschließend ein schmales Konturband am Original. Die Kontrollansicht zeigt genau diese Maske über dem Foto.
 
 Gemessen wird die **sichtbare projizierte Blattfläche**. Überdeckte Blattteile werden nicht ergänzt. Blattstellung, Perspektive und Verdeckung können deshalb die gemessene Fläche verändern, ohne dass biologisches Wachstum stattgefunden hat.
 
@@ -227,7 +227,7 @@ Das verwendete Muster und seine echte Feldgröße müssen zu den Einstellungen p
 
 ### Relativer Zustandsindex
 
-Als Referenz wird die erste brauchbare Aufnahme einer Messreihe gespeichert. Verglichen werden Farbverteilung, normierter Grünanteil, Gelb-/Braunzunahme, Farbsättigung und Farbton. Bei geeigneter Kamerageometrie werden außerdem Flächen- und Formänderungen berücksichtigt. Es wird kein fester „gesunder Basilikum-Grünton“ vorgegeben.
+Als Referenz wird die erste brauchbare Aufnahme einer Messreihe gespeichert. Farbe wird an übereinstimmenden Blattpositionen geprüft. Der Index berücksichtigt auch lokale Verfärbungen, die den mittleren Grünton kaum verändern. Bei geeigneter Kamerageometrie und vollständigem Bildausschnitt fließt sichtbarer Flächenverlust ergänzend ein. Ein fester gesunder Basilikum-Grünton wird nicht vorausgesetzt.
 
 Geeignete Lichtänderungen werden anhand des registrierten Hintergrunds ausgeglichen. Die Blattfarben werden nicht auf eine Sollfarbe gesetzt. Überbelichtete oder zu dunkle Vergleichsbereiche werden ausgeschlossen; bei einem unzuverlässigen Vergleich wird kein neuer Score ausgegeben. Die exportierten Rohfarbwerte bleiben lichtabhängig.
 
@@ -235,11 +235,13 @@ Die automatische Referenz wird zunächst als `vorlaeufige_referenz` gekennzeichn
 
 ### Zeitbezug
 
-Aufnahmezeiten werden aus eindeutigen Zeitangaben im Dateinamen gelesen und als Coordinated Universal Time (UTC, koordinierte Weltzeit) ausgegeben. Ein Download- oder Änderungsdatum wird nicht als Aufnahmezeit verwendet. Bei externen Bildern muss eine erkannte Zeitangabe im Dateinamen zum angenommenen UTC-Zeitbezug passen.
+Aufnahmezeiten werden aus eindeutigen Zeitangaben im Dateinamen oder aus Foto-Metadaten (EXIF) mit vorhandenem Zeitzonenoffset gelesen und als Coordinated Universal Time (UTC, koordinierte Weltzeit) ausgegeben. Ein Download- oder Änderungsdatum wird nicht als Aufnahmezeit verwendet. Bei externen Bildern muss eine erkannte Zeitangabe im Dateinamen zum angenommenen UTC-Zeitbezug passen.
 
-Wachstumsraten benötigen vergleichbare Aufnahmen mit bekanntem Zeitabstand. Der 24-Stunden-Trend benötigt einen passenden Vergleich im vorgesehenen Zeitfenster. Fehlt diese Grundlage, bleibt die entsprechende Angabe unbekannt. Kurze Zeitabstände können kleine Masken- oder Blattstellungsänderungen zu großen Tagesraten hochrechnen.
+Wachstumsraten für die sichtbare Blattfläche sind bei vergleichbaren Aufnahmen ab 30 Minuten Abstand möglich. Abstände ab zwölf Stunden werden bevorzugt; kürzere werden gekennzeichnet, weil Maskenschwankungen stark ins Gewicht fallen. Bei geändertem Bildmaßstab oder wenn Blätter am Rand liegen und sich der Bildausschnitt verschiebt, wird keine Rate ausgegeben. Der 24-Stunden-Trend benötigt einen passenden Vergleich im selben Bewertungsmodus vor 22 bis 26 Stunden. Fehlt diese Grundlage, bleibt die entsprechende Angabe unbekannt. Kurze Zeitabstände können kleine Masken- oder Blattstellungsänderungen zu großen Tagesraten hochrechnen.
 
 ## Ausgaben und Datenmodell
+
+Die Grafiken `02_wachstumsrate.png` und `04_gesundheit.png` markieren jede Aufnahme im Statusbereich unter der Messkurve. Die Aufnahmenummer entspricht der Zeile in `ergebnis.csv` ohne Kopfzeile. Ein Kreuz ist ein fehlender Messwert mit Grund. Das Referenzfoto wird im Zustandsindex gesondert markiert. Die Konsole nennt nach der Auswertung die Anzahl berechneter Werte.
 
 ### Dateien
 
@@ -249,7 +251,7 @@ Wachstumsraten benötigen vergleichbare Aufnahmen mit bekanntem Zeitabstand. Der
 | `Dokumentation/` | Spezifikationen zu Aufnahme, Bewertung und Messfeldern |
 | `bilder/` | Lokale Eingabebilder im üblichen Projektaufbau |
 | `auswertung/masken/` | Binäre Messmasken in Originalauflösung |
-| `auswertung/kontrolle/` | Je eine Kontrollansicht pro lesbarer Aufnahme, bis 1920 Pixel breit |
+| `auswertung/kontrolle/` | Je eine Kontrollansicht pro lesbarer Aufnahme, Foto bis 1500 Pixel breit |
 | `auswertung/grafiken/` | Fünf Auswertungsdiagramme |
 | `auswertung/ergebnis.csv` | Tabellarische Kontrollausgabe |
 | `auswertung/ergebnis.json` | Strukturierte Datensätze für die weitere Verarbeitung |
@@ -320,9 +322,15 @@ python analyse.py --help
 
 ## Validierung und bekannte Grenzen
 
-Die technischen Entwicklungsprüfungen umfassen die Verarbeitung gültiger und ungültiger Bilder, reine Lichtänderungen, simulierte Verfärbungen, Maßstabsrechnung, die Neuberechnung alter Ausgaben und Fehler beim Speichern. Der Pi-Zeitplan wurde zusätzlich mit nachgebildetem Geräteverhalten geprüft.
+| Meilenstein | Technischer Nachweis mit diesem Stand | Vor der praktischen Abnahme |
+|---|---|---|
+| A-M1 · Bilderfassungssystem | Ein echtes BioBox-Original wurde lokal eingelesen und ausgewertet. | Kameraansicht und Bildqualität am endgültigen Aufbau prüfen. Die automatische Aufnahme separat einrichten und am Pi testen. |
+| A-M2 · Computer-Vision-Pipeline | Maske, eine Kontrollansicht je lesbarem Bild, Pixel- und Maßstabsrechnung, CSV/JSON und fünf Grafiken wurden geprüft. | Originale des Endaufbaus sichten und Blattflächen mit einem Maßstab auf Blatthöhe kontrollieren. |
+| A-M3 · Gesundheitsbewertungssystem | Der Index wurde an kontrollierten Lichtvarianten, simulierter Gelb-/Braunfärbung und ungeeigneten Aufnahmen geprüft. | Eine eigene Folge realer Aufnahmen derselben Pflanze mit überprüfter Referenz auswerten. |
 
-Der tatsächliche Kamera-Dauerbetrieb muss am jeweiligen Pi überprüft werden. Eine technische Prüfung mit kontrollierten Bildänderungen belegt noch keine biologische Diagnosegenauigkeit. Für belastbare Aussagen werden weitere reale Bildserien, unabhängig geprüfte Blattmasken und Vergleichsmessungen benötigt.
+Im technischen Versuch mit einem BioBox-Original und vier simulierten Lichtvarianten lag der Rohwert jeweils bei 100,0. Nach einer kleinen simulierten Gelbfärbung lag er bei 99,0, nach einer Braunfärbung derselben Stelle bei 97,2 und mit zusätzlicher Abdunkelung bei 97,1. In der künstlichen Pflanzenszene betrug die Überlappung der Vorhersage mit den vorgegebenen Blattmasken 98,5–99,0 % (Schnittfläche geteilt durch Vereinigungsfläche).
+
+Die Änderungen am Zustand wurden für den technischen Vergleich künstlich erzeugt. Für die Segmentierung wurde zusätzlich eine künstliche Pflanzenszene mit vorgegebenen Blattgrenzen geprüft. Die Zahlen aus diesen Versuchen gelten für die geprüften Bilder. Sie sind kein Nachweis biologischer Diagnosegenauigkeit.
 
 | Prüfbereich | Erwartetes Verhalten |
 |---|---|
@@ -333,7 +341,6 @@ Der tatsächliche Kamera-Dauerbetrieb muss am jeweiligen Pi überprüft werden. 
 | Geänderte Kamerageometrie | Ungeeignete Wachstumsvergleiche werden unterdrückt |
 | Neue Skriptdatei | Alte ausgewählte Aufnahmen und automatische Referenzmasken werden erneut verarbeitet |
 | Gesperrte Ausgabedatei | Vorherige zusammengehörige Ausgabe bleibt erhalten |
-| Wiederholte Stundenplan-Einrichtung | Ein eigener Auftrag; bestehende andere Aufträge bleiben erhalten |
 
 Helle Blattzeichnungen, Schatten, ähnliche Hintergrundfarben, schmale Blätter und Verdeckungen bleiben anspruchsvolle Fälle. Eine automatische Maske kann dabei fehlerhaft sein und muss am Kontrollbild überprüft werden. Das Messverfahren erfasst weder verdeckte Blattflächen noch Pflanzenhöhe oder die dreidimensionale Blattoberfläche.
 

@@ -3,11 +3,11 @@
 | Feld | Stand |
 |---|---|
 | Dokument-ID | BB-REF-MERKMALE-001 |
-| Version | 3.0 |
-| Datum | 26.10.2026 |
+| Version | 3.3 |
+| Datum | 04.11.2026 |
 | Autorin | Atida Ashta |
-| Pipeline | analyse.py 4.0.0 |
-| Bewertung | Scoring 3.0.0 |
+| Pipeline | analyse.py 4.3.0 |
+| Bewertung | Scoring 4.0.0 |
 
 ## 1 Ausgabeprinzip
 
@@ -57,7 +57,7 @@ Die folgende Tabelle wird aus der aktuellen Feldzuordnung ergänzt. Die Namen in
 | `gesundheit_roh` | 0–100 | Unglättete Bewertung dieser Aufnahme | `health_assessment.health_score_raw` |
 | `gesundheit_kategorie` | Text | Technischer Bereich des relativen Index | `health_assessment.health_category` |
 | `gesundheit_status` | Text | Verfügbarkeit und Referenzstatus des Index | `health_assessment.health_status` |
-| `gesundheit_trend_24h` | Scorepunkte | Differenz zu einem gültigen Vergleich vor 22–26 Stunden | `health_assessment.health_trend_24h` |
+| `gesundheit_trend_24h` | Scorepunkte | Differenz zu einem gültigen Vergleich im gleichen Bewertungsmodus vor 22–26 Stunden | `health_assessment.health_trend_24h` |
 | `gesundheitswarnung` | Text | Beobachtete Veränderungen, mit Semikolon getrennt | `health_assessment.health_warnings` |
 | `score_gruen` | 0–100 | Relative Farbverteilung und normierter Grünanteil | `health_assessment.score_green` |
 | `score_gelb` | 0–100 | Zunahme der gemeinsamen Gelb-/Braunfläche | `health_assessment.score_yellow` |
@@ -87,11 +87,11 @@ Die Gelb- und Braunanteile sind technische Farbklassen. Sie beweisen für sich k
 
 ### Zeit und Wachstum
 
-Zeitstempel werden aus einem expliziten Aufnahmezeitpunkt im Dateinamen gelesen und in Coordinated Universal Time (UTC, koordinierte Weltzeit) angegeben. Ein Download- oder Änderungsdatum wird nicht als Aufnahmezeit verwendet.
+Zeitstempel werden aus einem expliziten Aufnahmezeitpunkt im Dateinamen oder aus EXIF-Fotometadaten mit Zeitzonenoffset gelesen und in Coordinated Universal Time (UTC, koordinierte Weltzeit) angegeben. Ein Download- oder Änderungsdatum wird nicht als Aufnahmezeit verwendet.
 
 `stunden_seit_start` wird bei bekannter Referenzzeit auf diese feste Zeit bezogen. Das Entfernen alter Bilder aus dem 100-Bilder-Fenster setzt den Beginn nicht auf null zurück. Ohne bekannte Referenzzeit wird die erste bekannte Zeit der aktuellen Auswahl verwendet.
 
-Eine Wachstumsrate wird nur für aufeinanderfolgende brauchbare und geometrisch vergleichbare Aufnahmen berechnet. Der Zeitabstand wird berücksichtigt. Bei großen Flächensprüngen über 50 % werden die Raten zunächst weggelassen und die Aufnahme markiert. Nach einer Kameraverschiebung kann die Rate bei einem nachfolgenden wieder stabilen Bildpaar erneut berechnet werden.
+Eine Rate der sichtbaren Blattfläche wird ab 30 Minuten Abstand bestimmt, wenn beide Aufnahmen brauchbar sind und die Kameraansicht vergleichbar ist. Vergleiche ab zwölf Stunden werden bevorzugt. Kürzere Abstände werden gekennzeichnet. Bei abgeschnittenen Blättern und gleichzeitig verändertem Bildausschnitt oder Bildmaßstab wird keine Rate ausgegeben. Flächensprünge über 50 % werden als prüfbedürftig markiert und unterbrechen die Vergleichsreihe.
 
 Die Einheit pro Tag ist eine zeitliche Umrechnung, keine über einen ganzen Tag beobachtete Entwicklung. Bei kurzen Abständen können kleine Masken- oder Blattstellungsänderungen große hochgerechnete Raten ergeben. Eine einzelne Rate darf deshalb nicht als gesichertes biologisches Wachstum interpretiert werden.
 
@@ -114,9 +114,9 @@ Die Einheit pro Tag ist eine zeitliche Umrechnung, keine über einen ganzen Tag 
 | Zeit unbekannt | Einzelmessungen möglich, zeitabhängige Angaben fehlen |
 | Referenz oder Lichtabgleich ungeeignet | Erklärung im Status, keine erfundene Bewertung |
 | verschiedene Pflanzen mit `--einzelbilder` | keine gemeinsame Gesundheits- oder Wachstumszeitreihe |
-| CSV gerade in Excel gesperrt | vorhandene CSV bleibt erhalten; JSON und Diagramme werden aktualisiert |
+| CSV oder andere Ausgabedatei gesperrt | die vorherige zusammengehörige Ausgabe bleibt erhalten; Datei schließen und erneut starten |
 
-Mehrere Qualitätsmeldungen werden mit Semikolon getrennt. Der CSV-Schreiber setzt die nötigen Anführungszeichen, damit dadurch keine Spalten verschoben werden. Ein Hinweis wie `blatt_am_bildrand` ist eine Auffälligkeit, aber nicht allein ein Beweis für eine unbrauchbare Farbaufnahme.
+Mehrere Qualitätsmeldungen werden mit Semikolon getrennt. Der CSV-Schreiber setzt die nötigen Anführungszeichen, damit dadurch keine Spalten verschoben werden. Ein Hinweis wie `blatt_am_bildrand` ist eine Auffälligkeit und verhindert den Strukturvergleich dieser Aufnahme. Ein Farbvergleich kann bei ausreichender Überlappung weiterhin möglich sein.
 
 ## 5 JSON-Struktur für die Übergabe
 
@@ -124,7 +124,7 @@ Mehrere Qualitätsmeldungen werden mit Semikolon getrennt. Der CSV-Schreiber set
 - `image`: Dateiname mit Endung, Aufnahmezeit, relativer Bildpfad und SHA-256-Prüfsumme. SHA-256 bedeutet Secure Hash Algorithm mit 256 Bit und dient hier zur eindeutigen Prüfung der Dateiinhalte.
 - `image_measurements`: Bildmesswerte mit den vereinbarten englischen Feldnamen.
 - `health_assessment`: Score, Kategorie, Teilbewertungen, Status und Scoring-Version.
-- `analysis`: Herkunft der Maske, Maßstabsstatus, Objektivstatus, Referenzdatei und -zeit, Lichtkorrektur und Gründe für fehlende Werte.
+- `analysis`: Herkunft der Maske, Maßstabsstatus, Objektivstatus, Referenzdatei und -zeit, Lichtkorrektur, Anteil des gemeinsamen Blattgewebes (`illumination.common_leaf_pct`, bezogen auf die kleinere Rand-bereinigte Maske) und Gründe für fehlende Werte. `pipeline_sha256` kennzeichnet den vollständigen Skriptstand und ist ein technisches Herkunftsmerkmal, kein zusätzlicher Pflanzenmesswert.
 
 `mm_per_px`, `image_brightness`, `largest_component_pct`, `color_hex` und `pipeline_version` entsprechen den bekannten Projektfeldnamen. Die früher verwendeten Aliasnamen `mm_per_pixel` und `brightness` werden nicht zusätzlich als doppelte Messwerte ausgegeben. Die genauen Datenbank-IDs und der HTTP-Vertrag sind weiterhin abzugleichen.
 
@@ -134,12 +134,12 @@ Alle Schritte sind in `analyse.py` enthalten. Es werden keine getrennten Module 
 
 | Datei unter `auswertung/grafiken/` | Inhalt |
 |---|---|
-| `01_wachstum.png` | sichtbare Blattfläche, mit cm² bei gültigem Maßstab, sonst Pixel |
-| `02_wachstumsrate.png` | verfügbare Wachstumsraten vergleichbarer Bildpaare |
+| `01_wachstum.png` | sichtbare Blattfläche, in cm² bei durchgehendem Maßstab der brauchbaren Aufnahmen, sonst in Pixeln |
+| `02_wachstumsrate.png` | verfügbare Raten und Status je Aufnahme |
 | `03_farbverlauf.png` | gemessene Rohfarben und Farbanteile; ausdrücklich lichtabhängig |
-| `04_gesundheit.png` | relative Bewertung vor und nach zeitlicher Glättung |
+| `04_gesundheit.png` | relative Bewertung vor und nach zeitlicher Glättung, Referenzfoto und Status je Aufnahme |
 | `05_teilscores.png` | letzte auswertbare Teilbewertungen mit identifizierter Aufnahme |
 
-Die fünf Dateien werden auch dann erzeugt, wenn einzelne Daten fehlen. Fehlende Daten werden erklärt und nicht als Nullkurve erfunden. Masken und einzelne Kontrollansichten liegen in `masken/` und `kontrolle/`. Eine manuell gespeicherte Maske wird separat unter `masken_korrektur/` erhalten.
+Die ausgewählte Bildliste wird bei jedem Lauf vollständig neu ausgewertet; dazu gehören auch die alten Aufnahmen. Automatisch erzeugte alte Masken und Kontrollbilder werden durch die neuen Ausgaben ersetzt. Manuelle dateigenaue Korrekturen bleiben erhalten. Die fünf Dateien werden auch dann erzeugt, wenn einzelne Daten fehlen. Fehlende Daten werden erklärt und nicht als Nullkurve erfunden. Masken und einzelne Kontrollansichten liegen in `masken/` und `kontrolle/`. Eine manuell gespeicherte Maske wird separat unter `masken_korrektur/` erhalten.
 
 Blattanzahl, Pflanzenhöhe und eine absolute biologische Gesundheitswahrscheinlichkeit werden nicht zusätzlich erfunden. Die tatsächliche Datenquelle bleibt das Originalfoto mit der finalen sichtbaren Blattmaske.

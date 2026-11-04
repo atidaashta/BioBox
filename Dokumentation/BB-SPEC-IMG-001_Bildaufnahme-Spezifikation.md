@@ -3,10 +3,10 @@
 | Feld | Stand |
 |---|---|
 | Dokument-ID | BB-SPEC-IMG-001 |
-| Version | 1.0 |
-| Datum | 26.10.2026 |
+| Version | 1.3 |
+| Datum | 04.11.2026 |
 | Autorin | Atida Ashta |
-| Software | analyse.py 4.0.0 |
+| Software | analyse.py 4.3.0 |
 | Status | Implementierter Analyseablauf; Aufnahmeprofil und reale Messgenauigkeit weiter zu prüfen |
 
 ## 1 Zweck
@@ -28,7 +28,17 @@ Mit `python analyse.py` wird eine Aufnahme ausgelöst. Anschließend werden die 
 
 Es werden nur JPEGs vom Pi in den lokalen Bilderordner geladen. Die dortigen Kameraprotokolle und JSON-Begleitdateien werden nicht mitkopiert. Das lokal erzeugte `ergebnis.json` ist eine Analyseausgabe und gehört nicht zu diesen Kamera-Begleitdateien.
 
-Der Zugriff erfolgt über Tailscale und normale Secure Shell (SSH, verschlüsselter Fernzugriff). Ein zeitgesteuerter Fotoauftrag wird von `analyse.py` nicht eingerichtet. Ein 30-Minuten-Intervall bleibt ein mögliches Betriebsziel und ist mit der Hardwareseite abzustimmen.
+Der Zugriff erfolgt über Tailscale und normale Secure Shell (SSH, verschlüsselter Fernzugriff).
+
+### Stündliche Aufnahme auf dem Pi
+
+Mit `python analyse.py --stundenaufnahme-einrichten` wird nach einer erfolgreichen Testaufnahme ein eigener Zeitplaneintrag beim Pi-Benutzer eingerichtet. Verwendet wird der Dienst cron mit `0 * * * *`, also einer Aufnahme zu jeder vollen Stunde nach der Pi-Uhr. Der Windows-PC muss dafür nicht laufen. Der Pi muss eingeschaltet und cron aktiv sein. Eine ausgeschaltete Kamera kann keine historischen Aufnahmen nachholen.
+
+Andere Zeitplaneinträge werden erhalten. Vor einer Änderung wird die bisherige Benutzer-Crontab gesichert. Wiederholtes Einrichten erzeugt keinen zweiten eigenen Auftrag. Ein gemeinsamer Kameralock verhindert parallele Aufnahmen durch den neuen Stundenauftrag und den normalen Abruf. Ein blockierter oder fehlerhafter Test schaltet keinen neuen Auftrag ein.
+
+Mit `python analyse.py --abholen` werden später vorhandene fertige JPEGs abgeglichen und alle lokalen Kamerabilder erneut analysiert. Es wird dabei keine zusätzliche Aufnahme ausgelöst. `python analyse.py` bleibt der Weg für eine sofortige neue Aufnahme mit anschließendem Abgleich. `--stundenaufnahme-status` zeigt den eigenen Zeitplan und den letzten protokollierten Aufnahmeversuch; `--stundenaufnahme-ausschalten` entfernt den eigenen Auftrag und erhält vorhandene Fotos.
+
+Für die stündliche Ausführung wird auf dem Pi ein kleiner Helfer unter `~/.local/bin/biobox-hourly-capture.py` erzeugt. Protokoll und letzter Aufnahmestatus stehen unter `~/.local/state/BioBox/`. Der Stundenhelfer benötigt keine OpenCV-Installation auf dem Pi. Ein realer erfolgreicher Aufnahmeversuch ist erst nach der Einrichtung am tatsächlichen Gerät bestätigt.
 
 ## 3 Aufbau und Vergleichbarkeit
 
@@ -40,15 +50,21 @@ Für einen späteren festen Aufnahmebetrieb sollen Belichtung, Verstärkung, Wei
 
 ## 4 Verarbeitung der Blattmaske
 
-1. Das Originalfoto wird gelesen und bei vorhandenem gültigem Objektivprofil entzerrt.
-2. Für die grobe Erkennung wird eine Arbeitskopie mit höchstens 960 Pixeln Breite erstellt.
-3. Blattbereiche werden mit Farbhinweisen und GrabCut, einem Verfahren zur Trennung von Vorder- und Hintergrund, ausgewählt. Eine registrierte frühere Blattmaske kann verfärbte Bereiche stützen.
-4. Große zusammenhängende Randflächen werden als Hintergrund geprüft. Lange gerade helle Kanten helfen bei der Erkennung von Rahmen und Halterungen. Nur ausreichend breite Blattkerne werden vor einer solchen Kantenmaske geschützt. Sind genügend helle schwach gesättigte Linienbereiche vorhanden, wird deren Farbstich zusätzlich genutzt, um grünlich beleuchtete warme Bodenbereiche von sicheren Blattkernen auszuschließen. Diese vorsichtige Heuristik ersetzt keine geprüfte Blattmaske.
-5. Kleine eingeschlossene helle Gewebelücken dürfen ergänzt werden. Zwischenräume im Topf werden nicht mit einer gemeinsamen konvexen Hülle gefüllt.
-6. Die unsicheren Ränder werden am höher aufgelösten Originalbild erneut getrennt. Lange schmale Fortsätze und sehr kleine Störungen werden geprüft.
-7. Erst die endgültige binäre Maske wird für Pixelzahl, Fläche und Ausdehnung verwendet. 255 bedeutet erfasstes Blatt, 0 bedeutet ausgeschlossen.
+1. Das Originalfoto wird gelesen und bei vorhandenem gültigem Objektivprofil entzerrt. Die Arbeitskopie ist höchstens 960 Pixel breit.
+2. Blattkerne werden über Grün-Rot- und Blau-Gelb-Komponenten im CIELAB-Farbraum ausgewählt. Ein begrenzter Otsu-Schwellenwert dient als Startwert. Kühle und schwach grüne Halterungen sowie dunkle, wenig grüne Bodenbereiche werden gedämpft.
+3. Nur nahe Randbereiche werden ergänzt. Gelb oder braun gewordenes Gewebe kann innerhalb einer registrierten älteren Blattfläche erhalten werden, wenn es an aktuell erfasstes Blattgewebe grenzt. Die alte Maske wird dabei nicht als aktuelle Messung kopiert.
+4. Kleine eingeschlossene Lücken werden geschlossen. Dünne, weit vom breiten Blattkern entfernte Verbindungen werden abgetrennt. GrabCut prüft die unsicheren Grenzen in einem begrenzten Randband am Original.
+5. Die binäre Maske wird in der Größe des Originalbilds gespeichert: 255 steht für erfasstes Blatt, 0 für ausgeschlossene Bereiche. Die Pixelzahl wird direkt aus dieser Maske bestimmt. Verdeckte Flächen werden nicht ergänzt.
 
-Ein Kontrollbild zeigt die Maske direkt auf dem Original. Es wird nur eine solche Ansicht pro Aufnahme erzeugt. Die Kontrollansicht ist keine Eingabe für eine weitere Messung; dafür wird das unveränderte Original benötigt.
+Für jedes lesbare Foto wird eine Kontrollansicht mit dünner Kontur und schwacher Einfärbung erzeugt. Das Foto wird darin höchstens 1500 Pixel breit dargestellt. Die Ansicht enthält keine weiteren Fotoausschnitte. Berührt die Maske den Bild- oder Auswerterand, bleibt die **sichtbare** Fläche bei unverändertem Bildausschnitt zeitlich vergleichbar. Der Strukturteil des Zustandsindex für die gesamte Pflanze wird dabei ausgesetzt. Stängelreste, sehr schmale Blätter und gleichfarbiger Hintergrund bleiben mögliche Grenzfälle.
+
+### Erneute Auswertung alter Bilder
+
+Jeder Analyselauf verarbeitet die gesamte ausgewählte Bildliste erneut. Auch die automatische Referenzmaske wird neu berechnet. Ein SHA-256-Prüfwert der vollständigen Skriptdatei erkennt Änderungen, selbst wenn die Versionsnummer nicht angepasst wurde. Bei einem geänderten Verfahren werden alte Scorehistorien verworfen und die ausgewählten Bilder mit dem neuen Verfahren bewertet.
+
+Bei neu angelegten Referenzen wird das ursprüngliche Referenzbild zusätzlich in `referenz.npz` erhalten. Dadurch kann seine Maske auch nach dem Ausscheiden aus dem 100-Bilder-Fenster neu berechnet werden. Bei alten Referenzen wird das Original nachgeladen, sofern es noch ausgewählt werden kann. Ist nur eine alte verkleinerte Referenz vorhanden, können verlorene Bilddetails nicht zurückgewonnen werden.
+
+Neue Masken, Kontrollbilder, CSV/JSON-Ergebnisse, Grafiken und Referenz werden zunächst getrennt erzeugt und anschließend zusammen übernommen. Ein Schreibfehler führt zur Wiederherstellung der vorherigen Ausgaben. Ist eine Datei in Excel oder einer Vorschau gesperrt, muss sie geschlossen und der Lauf wiederholt werden. Bereits bestätigte manuelle Korrekturmasken und der Maßstab werden erhalten.
 
 ### Geprüfte Korrektur für Grenzfälle
 
@@ -105,11 +121,11 @@ Die erzeugte `kamera_kalibrierung.json` enthält Kameramatrix, Verzerrung und Ka
 
 Der Gesundheitsvergleich verwendet eine separate lichtkorrigierte Arbeitskopie. Die Korrektur wird aus passenden Hintergrundpixeln derselben Ansicht geschätzt, nicht aus den Blattfarben. Linearer Helligkeits- und Kanaldrift sowie geeignete langsame Lichtverläufe können dadurch ausgeglichen werden. Die Rohfarbwerte im Export werden nicht überschrieben.
 
-Ausgebrannte oder zu dunkle Blattpixel werden in beiden Vergleichsbildern gemeinsam ausgeschlossen. Wenn zu wenig geeignetes Gewebe oder Hintergrund übrig bleibt, wird kein neuer Gesundheitswert ausgegeben. Ein dunkler schwarzer Hintergrund ohne messbare Referenz kann für einen verlässlichen Lichtabgleich unzureichend sein. Ein kleines mattes neutrales Referenzfeld hilft bei der Trennung von Licht- und Pflanzenänderungen.
+Nur überlappende Blattbereiche werden verglichen. Ausgebrannte oder zu dunkle Pixel werden in beiden Vergleichsbildern gemeinsam ausgeschlossen. Wenn zu wenig geeignetes Gewebe oder Hintergrund übrig bleibt, wird kein neuer Gesundheitswert ausgegeben. Ein dunkler schwarzer Hintergrund ohne messbare Referenz kann für einen verlässlichen Lichtabgleich unzureichend sein. Ein kleines mattes neutrales Referenzfeld hilft bei der Trennung von Licht- und Pflanzenänderungen.
 
 ## 8 Schnittstellen und Grenzen
 
-Der stabile Bildpfad lautet beispielsweise `recent/20261020T160551Z-bByql4/normal.jpg`. Dieser Pfad bleibt auch nach der Archivierung verwendbar. UTC-Zeitpunkt und Dateihash werden im JSON-Export mitgegeben. Geräteschlüssel und HTTP-Endpunkt müssen mit Edona abgeglichen werden; durch das Analyseskript werden keine Datensätze an einen unbekannten Endpunkt versendet.
+Der im JSON ausgegebene relative Bildpfad wird aus dem Sitzungsnamen abgeleitet, beispielsweise `recent/20261020T160551Z-bByql4/normal.jpg`. Die Auflösung archivierter Dateien muss bei der späteren Plattformintegration mit den tatsächlichen Serverpfaden abgeglichen werden. UTC-Zeitpunkt und Dateihash werden im JSON-Export mitgegeben. Geräteschlüssel und HTTP-Endpunkt müssen mit Edona abgeglichen werden; durch das Analyseskript werden keine Datensätze an einen unbekannten Endpunkt versendet.
 
 Eine neue Pflanzenart benötigt keinen fest vorgeschriebenen Grünton, aber eine eigene Messreihe mit eigener Referenz. Alte und neue Pflanzen dürfen nicht gemeinsam als Wachstumsverlauf bewertet werden. Beim Pflanzenwechsel werden die Eingabebilder getrennt und die Referenz für die tatsächlich ausgewählte neue Bildserie gebildet.
 
@@ -120,3 +136,5 @@ Die aktuelle Prüfung umfasst ein vorhandenes Originalfoto und kontrollierte Bil
 - Projektdatei `Atida-Handover.md`, Stand 20.10.2026, für Aufnahme- und Archivpfade.
 - OpenCV, GrabCut: https://docs.opencv.org/4.x/d8/d83/tutorial_py_grabcut.html
 - BB-SPEC-HEALTH-001 und BB-REF-MERKMALE-001 in der zu diesem Stand gehörenden Version.
+
+- Debian, cron-Zeitpläne: https://manpages.debian.org/trixie/cron/crontab.5.en.html

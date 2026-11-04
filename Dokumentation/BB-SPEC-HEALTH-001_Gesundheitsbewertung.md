@@ -3,11 +3,11 @@
 | Feld | Stand |
 |---|---|
 | Dokument-ID | BB-SPEC-HEALTH-001 |
-| Version | 1.0 |
-| Datum | 26.10.2026 |
+| Version | 1.3 |
+| Datum | 04.11.2026 |
 | Autorin | Atida Ashta |
-| Implementierung | analyse.py 4.0.0 |
-| Scoring-Version | 3.0.0 |
+| Implementierung | analyse.py 4.3.0 |
+| Scoring-Version | 4.0.0 |
 | Status | Technischer relativer Zustandsindex; keine biologisch validierte Diagnose |
 
 ## 1 Aussage des Wertes
@@ -24,86 +24,49 @@ Die erste brauchbare Aufnahme einer ausgewählten Messreihe wird als Referenz ge
 
 Es müssen nicht erst drei oder zehn Bilder gesammelt werden. Die automatische Referenz bleibt zunächst als `vorlaeufige_referenz` gekennzeichnet; die Berechnung wird dadurch nicht blockiert. Nach Sichtprüfung kann `REFERENZ_FREIGEGEBEN` auf `True` gesetzt werden. Eine solche Freigabe bestätigt die Referenzwahl, keine biologische Diagnose.
 
-Bei einem Versionswechsel werden veraltete automatische Masken aktualisiert und alte Scorehistorien verworfen. Manuell geprüfte Masken werden geschützt. Bei einem Wechsel der Pflanze oder eines unpassenden Aufnahmeprofils muss eine passende neue Messreihe gewählt werden. `--neue-referenz` bildet die Referenz aus den tatsächlich ausgewählten Eingabebildern neu und entfernt keine alten Pflanzenbilder aus dem Eingabeordner.
+Die automatische Referenzmaske wird bei jedem Analyselauf neu berechnet. Bei einer geänderten Skriptdatei, Pipeline- oder Scoring-Version werden veraltete automatische Masken aktualisiert und alte Scorehistorien verworfen. Der ursprüngliche Referenzzeitpunkt bleibt erhalten. Neue Referenzdateien enthalten auch das Originalbild; bei alten Profilen wird es aus der Bildauswahl ergänzt, sofern verfügbar. Manuell geprüfte Masken werden geschützt. Bei einem Wechsel der Pflanze oder eines unpassenden Aufnahmeprofils muss eine passende neue Messreihe gewählt werden. `--neue-referenz` bildet die Referenz aus den tatsächlich ausgewählten Eingabebildern neu und entfernt keine alten Pflanzenbilder aus dem Eingabeordner.
 
-## 3 Ausgleich von Lichtänderungen
+## 3 Vergleich von Kamera, Licht und Blattgewebe
 
-### 3.1 Hintergrund statt Blattfarbe
+1. Verteilte Merkmale des Hintergrunds werden verwendet, um die Aufnahme an der Referenz auszurichten. Fehlen genug automatisch zugeordnete Merkmale, können übereinstimmende Kanten in mehreren Hintergrundbereichen eine unveränderte Ansicht bestätigen. Bei nicht bestätigter oder deutlich veränderter Ansicht entfällt der Index. Bei kleinen Maßstabs- oder Winkeländerungen kann ein Farbvergleich möglich sein, während der Strukturvergleich ausfällt.
+2. Aus nicht überbelichteten Hintergrundpaaren wird eine robuste Abbildung für Helligkeit und Weißabgleich geschätzt. Ein linearer Ansatz wird gegen eine Kurve und einen langsamen räumlichen Gradienten geprüft. Dafür werden getrennte Prüfwerte verwendet. Auch regionale Restfehler werden geprüft. Blattbereiche werden ausgeschlossen und die Korrektur wird nach der Segmentierung nochmals bestimmt.
+3. Nur die Überlappung der beiden Blattmasken wird für die Farbe bewertet. Der äußere Maskenrand wird um ein Arbeitspixel verkleinert. Die gemeinsame Fläche muss mindestens 60 % der kleineren und 35 % der größeren erodierten Maske abdecken. Beide Bilder werden an denselben Positionen geprüft. Sind weniger als 65 % der gemeinsamen Blattfläche oder weniger als 50 geeignete Arbeitspixel nutzbar, entfällt der Score. Gesättigte und sehr dunkle Pixel werden nicht rekonstruiert.
 
-Die Referenzansicht wird anhand von Hintergrundmerkmalen mit der aktuellen Ansicht abgeglichen. Ausgeschlossen werden die Referenzblätter, aktuelle wahrscheinliche Blattbereiche und ein zusätzlicher Rand. Über- oder unterbelichtete Hintergrundpixel werden nicht zum Lernen verwendet.
-
-Auf räumlich verteilten Hintergrundpixeln wird eine robuste Abbildung von aktuellen RGB-Kanalwerten auf die Referenz geschätzt. Eine lineare Abbildung wird mit einer einfachen gekrümmten Tonwertabbildung und gegebenenfalls einem langsamen räumlichen Lichtgradienten verglichen. Zur Prüfung werden andere Pixel als zur Anpassung verwendet. Eine kompliziertere Abbildung wird nur bei deutlich kleinerem Vergleichsfehler übernommen.
-
-**Die Blattfarbe wird nicht zum Lernen dieser Korrektur verwendet.** Echte Verfärbungen der Pflanze sollen deshalb nach der Korrektur erhalten bleiben. Die normalisierte Arbeitskopie wird für Segmentierung und Gesundheitsvergleich verwendet. Die gespeicherten Rohwerte `mittel_r`, `mittel_g`, `mittel_b`, `mittel_h`, `mittel_s`, Grünindex und Farbanteile werden nicht durch die korrigierten Werte ersetzt.
-
-### 3.2 Unwiederbringlich verlorene Information
-
-Pixel mit mindestens einem Kanalwert ab 254 oder mit sehr geringem Signal können nicht zuverlässig farbmetrisch verglichen werden. Solche Stellen werden im aktuellen Bild und in der Referenz gemeinsam ausgeschlossen. Damit wird eine geänderte Gewichtung heller Blattteile möglichst vermieden.
-
-Mindestens 65 % der aktuellen Blattmaske und mindestens 50 Arbeitsbildpixel müssen für den Farbvergleich übrig bleiben. Ein unzureichender Hintergrund, eine instabile Korrektur oder zu wenig messbares Gewebe führen zu einem fehlenden Gesundheitswert mit erklärtem Status. Ein bisheriger Score wird nicht als neue Messung weitergeschrieben.
-
-Das Verfahren kann geeignete Helligkeits-, Weißabgleichs- und langsame Lichtänderungen vermindern. Eine vollständige Unabhängigkeit von beliebigen Lichtspektren, örtlichen Reflexen oder zerstörten Bilddaten wird nicht behauptet. Ein neutrales Referenzfeld und stabile Aufnahmebedingungen bleiben sinnvoll.
+Die Blattfarben werden nicht an einen Sollzustand angepasst. Die Rohwerte in der Ergebnistabelle bleiben lichtabhängig. Eine ungleichmäßige Beleuchtung, die nur auf die Blätter fällt, kann trotz Hintergrundabgleich zu Fehlern führen. Für die Aufnahme wird deshalb ein gleichmäßiges Licht mit möglichst konstanten Kameraeinstellungen empfohlen. Ein mattes, neutrales Referenzfeld außerhalb der Blattfläche kann bei der späteren Validierung helfen.
 
 ## 4 Teilbewertungen
 
-Die vorhandenen fünf Feldnamen bleiben erhalten. Sie werden relativ, stetig und ohne einen vorgeschriebenen gesunden Grünton berechnet. Für die Bewertungen werden die lichtkorrigierten Blattfarben und die passende Referenzteilfläche verwendet.
-
-| Feld | Eingangsänderung | Gewicht im Farbscore |
+| Feld | Eingang | Gewicht im Farbteil |
 |---|---|---:|
-| `score_gruen` | Abstand der Farbverteilung und Änderung des normierten Grünanteils | 0,30 |
-| `score_gelb` | Zunahme der Summe aus Gelb- und Braunanteil gegenüber der Referenz | 0,20 |
-| `score_braun` | Zunahme des Braunanteils bzw. eines weichen Warmfarbindikators | 0,25 |
-| `score_saettigung` | Verhältnisänderung der Farbsättigung | 0,15 |
-| `score_farbton` | Kreisförmige Farbtonänderung und Änderung der Farbkomponenten in Lab | 0,10 |
+| `score_gruen` | Farbverteilung (42 %), Verlust des normierten Grünanteils (26 %), lokale Abweichung in Lab (32 %) | 0,30 |
+| `score_gelb` | Zusätzliche Gelb-/Warmfärbung an gleichen Blattpositionen; Braun bleibt enthalten | 0,20 |
+| `score_braun` | Zusätzliche dunkle Warmfärbung mit Verschiebung in Richtung Rot; reine Abdunkelung allein reicht nicht | 0,25 |
+| `score_saettigung` | Logarithmische Änderung der mittleren Sättigung | 0,15 |
+| `score_farbton` | Kreisförmige Farbtonänderung und Abstand der Lab-Farbkomponenten | 0,10 |
 
-Der weiche Warmfarbindikator reduziert Sprünge an einer einzelnen Braun-Schwelle. Da die Farben vorher auf die Referenzbeleuchtung bezogen werden, soll ein helleres Foto nicht automatisch als weniger braun und damit als erholt bewertet werden.
+Lab bezeichnet den Farbraum der Internationalen Beleuchtungskommission (CIE). Für die lokale Farbänderung wird die Helligkeitskomponente L* nicht als Stress gewertet. Aus den Farbkomponenten a* und b* wird pro gemeinsamem Blattpixel der Abstand berechnet. Kleine Abweichungen werden gedämpft; stärkere Abweichungen werden über die gemeinsam sichtbare Fläche gemittelt. So gehen lokale Flecken in die Bewertung ein, auch wenn sie die mittlere Farbe des ganzen Blatts kaum ändern. Die Farb- und Warnschwellen sind technische Startwerte.
 
-Gelb und Braun werden für `score_gelb` zusammen betrachtet, damit eine gelbe Stelle nach einer weiteren Braunfärbung nicht durch einen sinkenden Gelbanteil als Verbesserung bewertet wird. `score_braun` bewertet die zusätzliche Braunfärbung gesondert und stärker.
-
-Die Grundkennlinie lautet für eine nichtnegative Abweichung `d`:
+Für alle Teilbewertungen gilt mit nichtnegativem Abstand d und Halbwert h:
 
 ```text
-q = max(0, d - Toleranz) / Halbwertabstand
-Teilscore = 100 × exp(-ln(2) × min(q, 30)²)
+Teilscore = 100 × exp(−ln(2) × (d / h)²)
 ```
 
-Innerhalb der Toleranz werden 100 Punkte erreicht. Bei `Toleranz + Halbwertabstand` werden 50 Punkte erreicht. Dazwischen und darunter wird stetig bewertet.
-
-| Eingang der Kennlinie | Toleranz | Halbwertabstand |
-|---|---:|---:|
-| Histogrammabstand | 0,035 | 0,28 |
-| Unterschied des Grünindex | 0,006 | 0,045 |
-| zusätzliche Summe aus Gelb- und Braunanteil in Prozentpunkten | 1,5 | 12 |
-| zusätzlicher Braun-/Warmanteil in Prozentpunkten | 0,8 | 7 |
-| Betrag des logarithmischen Sättigungsverhältnisses | 0,06 | 0,32 |
-| kombinierter Farbton-/Lab-Abstand | 2 | 10 |
-
-`score_gruen` besteht zu 60 % aus dem Histogrammvergleich und zu 40 % aus dem Grünindexvergleich. Für Sättigung wird vor dem Verhältnis eine kleine Stabilisierung von 8 Kanalstufen addiert. Der HSV-Farbton wird kreisförmig behandelt; 179 und 0 sind benachbart. Der Lab-Vergleich verwendet die Farbkomponenten, nicht die reine Helligkeit.
-
-Die Parameter sind technische Startwerte. Ihre Nennung ist keine Behauptung einer biologischen Kalibrierung.
+Wo angegeben, wird vor der Berechnung eine Toleranz abgezogen. Innerhalb der Toleranz werden 100 Punkte erreicht. Beispiele: Der zusätzliche Gelb-/Warmanteil hat eine Toleranz von 0,4 und einen Halbwert von 8 Prozentpunkten; für Braun sind es 0,3 und 4,5 Prozentpunkte. Die Teilwerte sind technische Ähnlichkeitswerte und keine Wahrscheinlichkeiten.
 
 ## 5 Struktur und Rohscore
 
-Bei ausreichend vergleichbarer Kamerageometrie werden außerdem ein Rückgang der sichtbaren Blattfläche und eine Änderung der Kompaktheit berücksichtigt. Wachstum allein wird nicht als schlechter Zustand bewertet.
+Struktur wird mit 15 % einbezogen, wenn die Ansicht vergleichbar ist und weder die aktuelle Maske noch die Referenz den Aufnahme- oder Auswerterand berührt. Die Farbgewichte werden dafür insgesamt auf 85 % skaliert. Andernfalls wird ausschließlich Farbe bewertet.
 
-```text
-Farbscore = 0,30 × score_gruen + 0,20 × score_gelb
-         + 0,25 × score_braun + 0,15 × score_saettigung
-         + 0,10 × score_farbton
+Bei der Struktur zählt vor allem der Verlust sichtbarer Blattfläche. Bis 3,5 % Flächenverlust werden toleriert. Die Kompaktheit wird nur ergänzend berücksichtigt und verändert ohne Flächenverlust den Strukturwert nicht. Ein hinzugewachsenes Blatt wird dadurch nicht automatisch als Schaden gewertet.
 
-Strukturscore = 0,70 × Score(Flächenverlust)
-             + 0,30 × Score(Änderung der Kompaktheit)
-
-gesundheit_roh = 0,80 × Farbscore + 0,20 × Strukturscore
-```
-
-Für den Flächenverlust gelten Toleranz 0,05 und Halbwertabstand 0,25. Für den Betrag der logarithmischen Kompaktheitsänderung gelten 0,12 und 0,70. Kann die Geometrie nicht sinnvoll verglichen werden, wird bei sonst verlässlicher Farbregistrierung nur der Farbscore verwendet und dies im Status angegeben. Die interne Strukturbewertung wird nicht als zusätzliche redundante CSV-Messgröße eingeführt.
+Der Rohwert besteht zu 65 % aus dem gewichteten arithmetischen und zu 35 % aus dem gewichteten geometrischen Mittel der Teilwerte. Für das geometrische Mittel wird jeder Teilwert intern mindestens mit 0,01 angesetzt. So wirkt ein deutlich schlechter Teilwert sichtbar auf den Gesamtwert, ohne den Index allein auf null zu setzen.
 
 ## 6 Zeitliche Darstellung
 
-`gesundheit_roh` ist die Bewertung der einzelnen Aufnahme. `gesundheit` wird zeitabhängig exponentiell geglättet. Der neue Anteil wird mit `1 - exp(-Zeitabstand / 2 Stunden)` bestimmt und auf 0,25 bis 1 begrenzt. Damit werden größere Zeitabstände stärker berücksichtigt.
+`gesundheit_roh` ist die Bewertung der einzelnen Aufnahme. `gesundheit` wird zeitabhängig exponentiell geglättet. Der neue Anteil wird mit `1 - exp(-Zeitabstand / 2 Stunden)` bestimmt und auf 0,25 bis 1 begrenzt. Damit werden größere Zeitabstände stärker berücksichtigt. Über einen Wechsel zwischen reinem Farbvergleich und Vergleich mit Struktur wird nicht geglättet.
 
-Für den 24-Stunden-Trend wird ein gültiger Vergleich zwischen 22 und 26 Stunden Abstand gesucht. Verwendet wird die Aufnahme mit dem kleinsten Abstand zu 24 Stunden. Fehlt sie, bleibt `gesundheit_trend_24h` leer. Die Einheit sind Scorepunkte, keine Prozentänderung.
+Für den 24-Stunden-Trend wird ein gültiger Vergleich desselben Modus zwischen 22 und 26 Stunden Abstand gesucht. Verwendet wird die Aufnahme mit dem kleinsten Abstand zu 24 Stunden. Fehlt sie, bleibt `gesundheit_trend_24h` leer. Die Einheit sind Scorepunkte, keine Prozentänderung.
 
 | Bereich | Ausgabekategorie |
 |---|---|
@@ -124,15 +87,15 @@ Lichtprobleme stehen bei den Qualitätsmerkmalen und im Gesundheitsstatus, beisp
 
 ## 8 Ausgabe und Datenbank
 
-CSV und JSON werden aus denselben gerundeten Datensätzen erzeugt. JSON enthält echte Zahlen, boolesche Werte und `null`. Die CSV dient der Kontrolle mit Tabellenprogrammen. Bei unbrauchbaren Bildern oder fehlender Vergleichbarkeit bleiben Scorefelder leer; es wird kein alter Wert als neuer Wert übernommen.
+CSV und JSON werden aus denselben gerundeten Datensätzen erzeugt. JSON enthält echte Zahlen, boolesche Werte und `null`. Die CSV dient der Kontrolle mit Tabellenprogrammen. Sie wird gemeinsam mit Masken, Kontrollbildern, JSON und Diagrammen ersetzt. Bei einem Schreibfehler bleibt die vorherige zusammengehörige Ausgabe erhalten; eine gesperrte Excel-Datei muss vor einem erneuten Lauf geschlossen werden. Bei unbrauchbaren Bildern oder fehlender Vergleichbarkeit bleiben Scorefelder leer; es wird kein alter Wert als neuer Wert übernommen.
 
-Die Gesundheitsdaten werden unter `health_assessment` ausgegeben, getrennt von `image_measurements`. `health_status` und `scoring_version` gehören zur Erklärung des Wertes. Die genaue HTTP-Anbindung und die Datenbank-IDs müssen mit Edona abgestimmt werden. Maßgeblich sind der aktuelle Feldvertrag BB-DB-HEALTH-001 und das Merkmalsverzeichnis.
+Die Gesundheitsdaten werden unter `health_assessment` ausgegeben, getrennt von `image_measurements`. `health_status` und `scoring_version` gehören zur Erklärung des Wertes. Die genaue HTTP-Anbindung und die Datenbank-IDs müssen mit Edona abgestimmt werden. Die konkreten Messfelder und Einheiten werden im Merkmalsverzeichnis beschrieben.
 
-## 9 Prüfung und noch offene Validierung
+## 9 Technische Prüfung und Grenzen
 
-Zur technischen Prüfung gehören identische Bilder, reine Helligkeitsänderungen, Weißabgleichs- und Gammaänderungen, schrittweise Verfärbung sowie nicht auswertbare Aufnahmen. Ein bereits verfärbtes Bild muss bei geänderter Beleuchtung ungefähr dieselbe Bewertung behalten. Gute Ergebnisse bei künstlichen Veränderungen beweisen keine biologische Diagnosegenauigkeit.
+Geprüft wurden ein echtes BioBox-Foto, Varianten desselben Fotos mit simulierter Lichtänderung und künstlich eingefärbte Blattstellen. Zusätzlich wurde eine künstliche Pflanzenszene mit bekannten Blattgrenzen für die Masken-, Farb-, Flächen- und Zeitreihentests verwendet. Das Verfahren wurde auf Wachstum ohne Verfärbung, Gelb- und Braunfärbung, schlechte Belichtung, geänderte Kameraansicht und fehlende Messwerte getestet.
 
-Für eine reale Validierung werden Originalbilder mit unabhängig geprüften Blattmasken und eine Beobachtungsreihe derselben Pflanze benötigt. Pflanzenzustand und Aufnahmebedingungen müssen getrennt protokolliert werden. Frühere Testbehauptungen aus dem Entwurf werden nicht ungeprüft als Nachweis dieser Softwareversion übernommen.
+Ein stabiler Index bei den getesteten Lichtvarianten bedeutet keine vollständige Lichtunabhängigkeit. Ebenso sind die künstlichen Verfärbungen kein Nachweis von Pflanzenkrankheiten. Für eine fachliche Abnahme werden weitere unveränderte Originalaufnahmen derselben Pflanze unter dokumentierten Bedingungen und eine überprüfte Referenz benötigt.
 
 ## 10 Grundlagen
 
