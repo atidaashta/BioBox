@@ -1,7 +1,7 @@
 """BioBox: Kamera, Blattmaske, Messwerte, relativer Zustandsindex und 5 Grafiken.
 
 Installation: python -m pip install opencv-contrib-python numpy matplotlib
-Normal:       python analyse.py
+Normal:       python analyse.py (vorhandene Stundenfotos abholen und analysieren)
 Nur lokal:    python analyse.py --lokal bilder
 Pi-Stundenplan einrichten: python analyse.py --stundenaufnahme-einrichten
 Vorhandene Pi-Fotos holen: python analyse.py --abholen
@@ -13,7 +13,7 @@ Massstab:     python analyse.py --massstab-bild bilder/FOTO.jpg --referenz-mm 50
 Direkt neu:   python analyse.py --massstab --referenz-mm 50
               Vorher Lineal auf Blatthoehe ins Bild legen. Aufnehmen + markieren.
 Einzelbilder verschiedener Pflanzen: python analyse.py --lokal bilder --einzelbilder
-Neue Pflanze / geaenderter Aufbau: eigener Bildordner und --neue-referenz.
+Neue Pflanze / geaenderter Aufbau: eigener Bildordner (Referenz nur im RAM).
 Maske pruefen/korrigieren: python analyse.py --maske-korrigieren bilder/FOTO.jpg
 Import einer geprueften Originalmaske: zusaetzlich --korrekturmaske MASKE.png
 
@@ -85,6 +85,7 @@ import matplotlib.pyplot as plt
 PI_ADRESSE = "biobox@100.65.232.105"
 PI_AUFNAHME = "/home/biobox/.local/bin/biobox-photo-test --single"
 PI_FOTO_ORDNER = "/home/biobox/Pictures/BioBox/recent"
+PI_SSH_KEY = Path.home() / ".ssh" / "biobox_ed25519"  # Verschluesselter privater SSH-Schluessel, nie das Pi-Passwort.
 BILDER_ORDNER = Path.home() / "Downloads" / "Diploma" / "bilder"
 MAX_KAMERA_BILDER = 100
 DEVICE_ID = None  # Erst Edonas echte Datenbank-ID eintragen, keine ID erfinden.
@@ -176,8 +177,17 @@ def jpeg_lesbar(pfad):
     except OSError:
         return False
 
-def pi_bilder_holen(neue_aufnahme=True):
-    """Neu aufnehmen, vorhandene Aufnahmen abgleichen, lokal die letzten 100 behalten.
+def pi_ssh_optionen():
+    """SSH-Schluessel ueber ssh-agent verwenden; nie Passwortdialoge im Analyselauf."""
+    if not PI_SSH_KEY.is_file():
+        raise RuntimeError(f"SSH-Schluessel fehlt: {PI_SSH_KEY}. Erst unter Windows einrichten.")
+    return ["-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+            "-i", str(PI_SSH_KEY), "-o", "ConnectTimeout=15",
+            "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2"]
+
+
+def pi_bilder_holen(neue_aufnahme=False):
+    """Vorhandene Stundenfotos abgleichen; nur auf Wunsch neu aufnehmen.
 
     Die UTC-Aufnahmezeit im Sitzungsnamen bestimmt die Reihenfolge, nicht das
     Download-Datum. Bereits importierte Bilder bleiben auch erhalten, wenn die
@@ -189,14 +199,13 @@ def pi_bilder_holen(neue_aufnahme=True):
         raise RuntimeError("ssh fehlt. Bitte den Windows-OpenSSH-Client aktivieren.")
     if not isinstance(MAX_KAMERA_BILDER, int) or MAX_KAMERA_BILDER < 1:
         raise RuntimeError("MAX_KAMERA_BILDER muss mindestens 1 sein.")
-    verbindung = ["-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15",
-                  "-o", "ServerAliveCountMax=2"]
+    verbindung = pi_ssh_optionen()
     # Der Helfer veroeffentlicht nur fertige Sitzungen. .pending-* kann im
     # find-Ergebnis erscheinen, wird aber vom strengen Sitzungsmuster verworfen.
     auflisten = (f"find {shlex.quote(PI_FOTO_ORDNER)} -mindepth 2 -maxdepth 2 "
                  "-type f -name normal.jpg -printf 'BIOBOX_FOTO:%h\\n'")
     print(("Neue Aufnahme und Bildliste" if neue_aufnahme else "Vorhandene Bildliste")+
-          f" von {PI_ADRESSE}; Pi-Passwort ggf. eingeben.",flush=True)
+          f" von {PI_ADRESSE} ueber SSH-Schluessel.",flush=True)
     # Derselbe Lock wie bei der stuendlichen Aufnahme auf dem Pi.
     capture = ('mkdir -p "$HOME/.local/state/BioBox" && '
                'flock -w 30 "$HOME/.local/state/BioBox/camera.lock" '+PI_AUFNAHME)
@@ -238,7 +247,7 @@ def pi_bilder_holen(neue_aufnahme=True):
         with tempfile.TemporaryDirectory(dir=BILDER_ORDNER, prefix=".biobox-download-") as tmp:
             tmp = Path(tmp)
             paket = tmp / "download.tar"
-            print("Kamera-JPEGs herunterladen; Pi-Passwort ggf. erneut eingeben.", flush=True)
+            print("Kamera-JPEGs ueber verschluesselten SSH-Kanal herunterladen.", flush=True)
             with paket.open("wb") as stream:
                 subprocess.run(["ssh", *verbindung, PI_ADRESSE, befehl],
                                check=True, stdout=stream, timeout=600)
@@ -437,9 +446,8 @@ def stundenaufnahme(aktion):
     runner=PI_STUNDEN_RUNNER.replace('__KONFIGURATION__',repr(cfg))
     script=PI_STUNDEN_SETUP.replace('__KONFIGURATION__',repr(cfg)).replace('__RUNNER__',repr(runner))
     if shutil.which('ssh') is None:raise ValueError('Windows-OpenSSH-Client fehlt.')
-    print(f'Pi-Stundenaufnahme: {aktion}; Pi-Passwort ggf. eingeben.',flush=True)
-    result=subprocess.run(['ssh','-o','ConnectTimeout=15','-o','ServerAliveInterval=15',
-                           '-o','ServerAliveCountMax=2',PI_ADRESSE,'python3 -'],
+    print(f'Pi-Stundenaufnahme: {aktion}; SSH-Schluessel verwenden.',flush=True)
+    result=subprocess.run(['ssh',*pi_ssh_optionen(),PI_ADRESSE,'python3 -'],
                           input=script,text=True,stdout=subprocess.PIPE,check=True,timeout=330)
     data=json.loads(result.stdout)
     if aktion=='status':
@@ -2117,24 +2125,65 @@ def grafiken(zeilen, ordner):
 
 @contextlib.contextmanager
 def auswertung_sperren(ausgabe):
-    """Nur ein schreibender Analyselauf; die Sperre endet auch bei Programmabbruch."""
-    with (ausgabe/'.analyse.lock').open('a+b') as lock:
-        if lock.seek(0,os.SEEK_END)==0:lock.write(b'0');lock.flush()
-        lock.seek(0)
+    """Parallele Analysen verhindern, ohne eine .analyse.lock-Datei zu erzeugen."""
+    name = hashlib.sha256(str(ausgabe).casefold().encode("utf-8")).hexdigest()[:24]
+    if os.name == 'nt':
+        # Windows: benannter System-Mutex, kein Sperrfile im Ausgabeordner.
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel.CreateMutexW.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        kernel.ReleaseMutex.argtypes = [wintypes.HANDLE]
+        kernel.ReleaseMutex.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+        mutex = kernel.CreateMutexW(None, False, 'Local\\BioBox-Analyse-' + name)
+        if not mutex:
+            raise OSError('Windows-Sperre konnte nicht erstellt werden.')
+        status = kernel.WaitForSingleObject(mutex, 0)
+        if status not in (0, 0x80):
+            kernel.CloseHandle(mutex)
+            if status == 0x102:
+                raise ValueError('In diesem Ausgabeordner laeuft bereits eine Analyse.')
+            raise OSError('Windows-Sperre konnte nicht aktiviert werden.')
         try:
-            if os.name=='nt':
-                import msvcrt
-                msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
-            else:
-                import fcntl
-                fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except OSError as error:
-            raise ValueError('In diesem Ausgabeordner laeuft bereits eine Analyse.') from error
-        try:yield
+            yield
         finally:
-            lock.seek(0)
-            if os.name=='nt':msvcrt.locking(lock.fileno(),msvcrt.LK_UNLCK,1)
-            else:fcntl.flock(lock,fcntl.LOCK_UN)
+            kernel.ReleaseMutex(mutex)
+            kernel.CloseHandle(mutex)
+    else:
+        # Andere Betriebssysteme: Sperrfile ausschliesslich im System-Tempordner.
+        import fcntl
+        with (Path(tempfile.gettempdir()) / ('biobox-analyse-' + name + '.lock')).open('a+b') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as error:
+                raise ValueError('In diesem Ausgabeordner laeuft bereits eine Analyse.') from error
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def alte_referenzdateien_entfernen(ausgabe):
+    """Ausschliesslich frueher erzeugte Referenzdateien nach erfolgreicher Analyse entfernen."""
+    for name in ('referenz.npz', '.analyse.lock'):
+        try:
+            (ausgabe/name).unlink(missing_ok=True)
+        except OSError as fehler:
+            print(f"Alte Datei konnte nicht entfernt werden: {name} ({fehler}).")
+    ordner = ausgabe/'kamera_referenzen'
+    if ordner.is_dir() and not ordner.is_symlink():
+        try:
+            for pfad in ordner.iterdir():
+                if pfad.is_file() and re.fullmatch(r'ansicht-[0-9a-f]{64}\.npz',pfad.name):
+                    pfad.unlink()
+            ordner.rmdir()  # Unbekannte Dateien niemals automatisch loeschen.
+        except OSError as fehler:
+            print(f"Alter Ordner kamera_referenzen konnte nicht entfernt werden: {fehler}.")
 
 
 def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=False):
@@ -2152,10 +2201,10 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
         fertig=work/'neu';fertig.mkdir();backup=work/'vorher';backup.mkdir()
         cleanup=True
         try:
-            for name in ('referenz.npz','massstab.npz'):
-                if (ausgabe/name).is_file():shutil.copy2(ausgabe/name,fertig/name)
-            if not neue_referenz and not einzelbilder and (ausgabe/'kamera_referenzen').is_dir():
-                shutil.copytree(ausgabe/'kamera_referenzen',fertig/'kamera_referenzen')
+            # Referenzen werden waehrend jeder Auswertung im Arbeitsspeicher
+            # aufgebaut. Nur die optional gespeicherte Lineal-Kalibrierung bleibt.
+            if (ausgabe/'massstab.npz').is_file():
+                shutil.copy2(ausgabe/'massstab.npz',fertig/'massstab.npz')
             if (ausgabe/'masken_korrektur').is_dir():
                 shutil.copytree(ausgabe/'masken_korrektur',fertig/'masken_korrektur')
             # Eigene fremde Dateien nicht als alte generierte Vorschauen loeschen.
@@ -2172,8 +2221,6 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
             required=['ergebnis.csv','ergebnis.json','masken','kontrolle','grafiken']
             if not all((fertig/name).exists() for name in required):
                 raise OSError('Neue Auswertung ist unvollstaendig; alte Ausgabe bleibt erhalten.')
-            if (fertig/'referenz.npz').is_file():required.append('referenz.npz')
-            if (fertig/'kamera_referenzen').is_dir():required.append('kamera_referenzen')
             changes=[]
             try:
                 for name in required:
@@ -2195,6 +2242,7 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
                 raise OSError('Ausgaben konnten nicht ersetzt werden. ergebnis.csv in Excel und offene Vorschauen schliessen. Bisherige Auswertung bleibt erhalten.') from error
         finally:
             if cleanup:shutil.rmtree(work)
+    alte_referenzdateien_entfernen(ausgabe)
     print(f'\n{len(rows)} Bilder erneut ausgewertet -> {ausgabe/"ergebnis.csv"}')
     print('Masken, Kontrollbilder, CSV/JSON und alle 5 Grafiken gemeinsam aktualisiert.')
     n_rate = sum(z.get("wachstumsrate_pct_pro_tag") is not None for z in rows)
@@ -2212,17 +2260,12 @@ def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz
     masken, kontrolle = ausgabe/"masken", ausgabe/"kontrolle"
     masken.mkdir(exist_ok=True)
     kontrolle.mkdir(exist_ok=True)
-    zustand = ausgabe/"referenz.npz"
     lineal = massstab_laden(ausgabe/"massstab.npz")
-    hauptref = referenz_laden(zustand,neue_referenz,pfade) if not einzelbilder else None
-    kamera_ordner = ausgabe/"kamera_referenzen"
-    ansichten = [hauptref] if hauptref is not None else []
-    if not neue_referenz and not einzelbilder:
-        for alt in sorted(kamera_ordner.glob("ansicht-*.npz"),key=lambda p:p.stat().st_mtime)[-11:]:
-            ref_alt = referenz_laden(alt,False,pfade)
-            if ref_alt is not None and all(a["meta"]["sha256"]!=ref_alt["meta"]["sha256"] for a in ansichten):
-                ansichten.append(ref_alt)
-    alte_historie = {a["meta"]["sha256"]:a["meta"].get("historie",[]) for a in ansichten}
+    # Keine gespeicherten Kamera-Referenzdateien lesen oder anlegen.
+    # Die erste geeignete Aufnahme ist die Referenz dieser Auswertung.
+    hauptref = None
+    ansichten = []
+    alte_historie = {}
     ansichtnummern = {}
     lens_hash = hashlib.sha256(KALIBRIERUNG.read_bytes()).hexdigest() if KALIBRIERUNG.exists() else None
     kalibrierung = None
@@ -2407,27 +2450,6 @@ def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz
     if not csv_aktuell:
         raise PermissionError("CSV konnte nicht erstellt werden; bisherige Auswertung bleibt erhalten.")
     grafiken(zeilen,ausgabe/"grafiken")
-    if hauptref is not None and not einzelbilder:
-        kamera_ordner.mkdir(exist_ok=True)
-        behalten = [hauptref]+[a for a in ansichten if a is not hauptref][-11:]
-        dateien = set()
-        for ref in behalten:
-            uid = ref["meta"]["sha256"]
-            auswahl = [z for z in zeilen if z.get("_ansicht_id")==uid and z["captured_at"]]
-            neu_berechnet = {z["captured_at"] for z in auswahl}
-            historie = {p["captured_at"]:p for p in alte_historie.get(uid,[])
-                        if p["captured_at"] not in neu_berechnet}
-            for z in auswahl:
-                if z["gesundheit"] is not None:
-                    historie.setdefault(z["captured_at"],{"captured_at":z["captured_at"],
-                                         "gesundheit":z["gesundheit"],"modus":z["_score_modus"]})
-            ref["meta"]["historie"] = [historie[k] for k in sorted(historie)][-200:]
-            datei = zustand if ref is hauptref else kamera_ordner/f"ansicht-{uid}.npz"
-            referenz_speichern(datei,ref)
-            dateien.add(datei)
-        for p in kamera_ordner.glob("ansicht-*.npz"):
-            if p not in dateien:
-                p.unlink()
     return zeilen
 
 
@@ -2488,7 +2510,7 @@ def main():
                     basis = Path(args.lokal or args.ordner).resolve()
                     auswahl = [basis] if basis.is_file() else [p for p in basis.iterdir() if p.is_file() and p.suffix.lower() in ENDUNGEN]
                 else:
-                    auswahl = pi_bilder_holen()
+                    auswahl = pi_bilder_holen(neue_aufnahme=True)
                 if not auswahl:
                     raise ValueError("Kein Foto fuer die Linealmessung vorhanden.")
                 bildpfad = max(auswahl, key=lambda p: (zeit_aus_name(Path(p).name) or datetime.min.replace(tzinfo=timezone.utc), str(p)))
@@ -2512,23 +2534,16 @@ def main():
             parser.error(f"Pfad nicht gefunden: {ziel}")
         ausgabe = args.ausgabe or ((ziel.parent.parent if ziel.is_file() else ziel.parent)/"auswertung")
     else:
-        abruf_ok = True
         try:
-            pfade = pi_bilder_holen(neue_aufnahme=not args.abholen)
+            pfade = pi_bilder_holen(neue_aufnahme=False)
         except (OSError, RuntimeError, subprocess.SubprocessError, tarfile.TarError) as fehler:
-            # Ein nicht erreichbarer Pi darf die Auswertung nicht verhindern.
-            # Alle vorhandenen Bilder werden trotzdem komplett neu gerechnet.
-            abruf_ok = False
+            # Kein stiller Rueckfall auf alte Fotos: sonst scheinen neue
+            # Stundenaufnahmen verarbeitet worden zu sein, obwohl der Abruf scheiterte.
             print(f"Fotoabruf fehlgeschlagen: {fehler}")
-            pfade = vorhandene_bilder(BILDER_ORDNER)
-            if pfade:
-                print(f"Weiter mit {len(pfade)} bereits vorhandenen Bildern; "
-                      "alle Masken, Kontrollbilder, Tabellen und Grafiken werden neu erzeugt.")
-            else:
-                print(f"Keine Bilder in {BILDER_ORDNER}; vorhandene Auswertung bleibt erhalten.")
-                return 1
+            print("Keine Analyse mit veralteten lokalen Fotos gestartet. Bestehende Auswertung bleibt erhalten.")
+            return 1
         if args.nur_bild:
-            return 0 if abruf_ok else 1
+            return 0
         ausgabe = args.ausgabe or BILDER_ORDNER.parent/"auswertung"
     if not pfade:
         print("Keine Bilder gefunden. Keine vorhandene Auswertung geloescht.")
