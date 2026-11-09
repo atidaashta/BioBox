@@ -1,140 +1,400 @@
-# Bildaufnahme und Blattmessung BioBox
+# Bildaufnahme-Spezifikation BioBox
 
-| Feld | Stand |
+| | |
 |---|---|
-| Dokument-ID | BB-SPEC-IMG-001 |
-| Version | 1.3 |
-| Datum | 04.11.2026 |
-| Autorin | Atida Ashta |
-| Software | analyse.py 4.3.0 |
-| Status | Implementierter Analyseablauf; Aufnahmeprofil und reale Messgenauigkeit weiter zu prüfen |
+| **Dokument-ID** | BB-SPEC-IMG-001 |
+| **Version** | 0.2 (Entwurf) |
+| **Datum** | 13.09.2026 |
+| **Autorin** | Atida Ashta |
+| **Arbeitspaket** | 3.1 Bilderfassungssystem, PSP 1.1–1.8 |
+| **Meilenstein** | A-M1, Termin 30.09.2026 |
+| **Status** | Entwurf – Abstimmung mit Grid Tanushi (Hardware) und Edona Peraj (Plattform) offen |
+| **Änderung 0.2** | Kamera auf **Camera Module 3 Wide** festgelegt; Einbauhöhe aus Bench-Report übernommen (Z 815 / Substratebene Z 442 → 373 mm); Entzerrung als Pflichtschritt ergänzt |
 
-## 1 Zweck
+---
 
-Es wird die **sichtbare projizierte Blattfläche einer einzelnen Pflanze** gemessen. Topf, Erde, Halterung, Fensterrahmen und möglichst auch lange dünne Stiele sollen ausgeschlossen werden. Überlappende oder verdeckte Blattflächen werden nicht hinzugeschätzt. Eine Blattanzahl und eine dreidimensionale Blattoberfläche werden nicht aus einem einzelnen Foto berechnet.
+## 1. Zweck und Geltungsbereich
 
-Die Verarbeitung ist nicht auf Basilikum oder einen festgelegten dunklen Grünton beschränkt. Die automatische Initialisierung nutzt jedoch vor allem grünliche Blattbereiche. Für ungewöhnliche Farben oder schwer trennbare Hintergründe ist eine geprüfte Korrekturmaske vorgesehen. Das Verfahren ist keine universell trainierte semantische Blatterkennung.
+Dieses Dokument legt verbindlich fest, unter welchen geometrischen, optischen und zeitlichen Bedingungen Pflanzenbilder in der BioBox aufgenommen werden. Es ist die Grundlage für die Computer-Vision-Pipeline (A-M2), die Gesundheitsbewertung (A-M3) und das Digital-Twin-Modell (A-M4).
 
-## 2 Nachgewiesener Aufnahmeweg
+Die zentrale Anforderung lautet: **Alle Bilder eines Wachstumszyklus müssen untereinander vergleichbar sein.** Eine Flächen- oder Farbmessung ist nur dann als Wachstumsgröße interpretierbar, wenn sich zwischen zwei Aufnahmen ausschließlich die Pflanze geändert hat – nicht die Kameraposition, nicht die Belichtung, nicht der Weißabgleich und nicht die Beleuchtung. Jede in diesem Dokument fixierte Größe dient diesem Ziel.
 
-- Kamera: Camera Module 3 Wide, vom Pi als `imx708_wide` erkannt.
-- Aufnahmegerät: Raspberry Pi 4; die Kamera ist dort angeschlossen.
-- Vorhandener Helfer: `/home/biobox/.local/bin/biobox-photo-test --single`.
-- Der Helfer speichert laut Handover 1920 × 1080 Pixel als JPEG mit Qualität 90.
-- Vollständige Sitzungen liegen unter `/home/biobox/Pictures/BioBox/recent/<Sitzung>/normal.jpg`.
-- Der Sitzungsname enthält den UTC-Aufnahmezeitpunkt. Verzeichnisse mit `.pending-` werden ignoriert.
+Nicht Gegenstand dieses Dokuments sind die Segmentierungsverfahren, die Merkmalsberechnung und die Modellbildung; diese werden in BB-SPEC-CV-001 bzw. BB-SPEC-DT-001 beschrieben.
 
-Mit `python analyse.py` wird eine Aufnahme ausgelöst. Anschließend werden die neuesten verfügbaren Kamera-JPEGs abgeglichen. Bereits vorhandene Bilder werden nicht erneut übertragen. Lokal werden höchstens die neuesten 100 importierten Kamerabilder behalten. Die Bereinigung erfolgt erst nach vollständigem erfolgreichem Download. Andere Dateien und die entfernten Archive werden nicht gelöscht.
+---
 
-Es werden nur JPEGs vom Pi in den lokalen Bilderordner geladen. Die dortigen Kameraprotokolle und JSON-Begleitdateien werden nicht mitkopiert. Das lokal erzeugte `ergebnis.json` ist eine Analyseausgabe und gehört nicht zu diesen Kamera-Begleitdateien.
+## 2. Randbedingungen
 
-Der Zugriff erfolgt über Tailscale und normale Secure Shell (SSH, verschlüsselter Fernzugriff).
+| Größe | Festlegung | Quelle |
+|---|---|---|
+| Referenzpflanze | Basilikum (*Ocimum basilicum*), Einzelpflanze bzw. Topfbestand | Konzept BioBox |
+| Erwartete Bestandshöhe | 50 mm (Start) bis ca. 300 mm (Zyklusende) | Annahme, im Testbetrieb zu prüfen |
+| Aufnahmeort | Obere Wachstumszone der BioBox | Konzept BioBox |
+| Beleuchtung | LED-Grow-Bar an der Decke, dimmbar | Arbeitspaket Grid Tanushi |
+| Umgebungslicht | Fronttüre aus Polycarbonat, transparent → Fremdlichteintrag möglich | Konstruktionsbedingt |
 
-### Stündliche Aufnahme auf dem Pi
+---
 
-Mit `python analyse.py --stundenaufnahme-einrichten` wird nach einer erfolgreichen Testaufnahme ein eigener Zeitplaneintrag beim Pi-Benutzer eingerichtet. Verwendet wird der Dienst cron mit `0 * * * *`, also einer Aufnahme zu jeder vollen Stunde nach der Pi-Uhr. Der Windows-PC muss dafür nicht laufen. Der Pi muss eingeschaltet und cron aktiv sein. Eine ausgeschaltete Kamera kann keine historischen Aufnahmen nachholen.
+## 3. Hardware
 
-Andere Zeitplaneinträge werden erhalten. Vor einer Änderung wird die bisherige Benutzer-Crontab gesichert. Wiederholtes Einrichten erzeugt keinen zweiten eigenen Auftrag. Ein gemeinsamer Kameralock verhindert parallele Aufnahmen durch den neuen Stundenauftrag und den normalen Abruf. Ein blockierter oder fehlerhafter Test schaltet keinen neuen Auftrag ein.
+### 3.1 Abweichung vom Konzeptstand
 
-Mit `python analyse.py --abholen` werden später vorhandene fertige JPEGs abgeglichen und alle lokalen Kamerabilder erneut analysiert. Es wird dabei keine zusätzliche Aufnahme ausgelöst. `python analyse.py` bleibt der Weg für eine sofortige neue Aufnahme mit anschließendem Abgleich. `--stundenaufnahme-status` zeigt den eigenen Zeitplan und den letzten protokollierten Aufnahmeversuch; `--stundenaufnahme-ausschalten` entfernt den eigenen Auftrag und erhält vorhandene Fotos.
+Das Konzeptdokument nennt einen Raspberry Pi 5 als Edge-Rechner. Tatsächlich verfügbar ist ein **Raspberry Pi 4**. Diese Abweichung wird bewusst akzeptiert und wie folgt begründet:
 
-Für die stündliche Ausführung wird auf dem Pi ein kleiner Helfer unter `~/.local/bin/biobox-hourly-capture.py` erzeugt. Protokoll und letzter Aufnahmestatus stehen unter `~/.local/state/BioBox/`. Der Stundenhelfer benötigt keine OpenCV-Installation auf dem Pi. Ein realer erfolgreicher Aufnahmeversuch ist erst nach der Einrichtung am tatsächlichen Gerät bestätigt.
+Für die reine Bilderfassung ist der Pi 4 vollständig ausreichend. Das Camera Module 3 wird über die 15-polige CSI-2-Schnittstelle des Pi 4 direkt unterstützt; Autofokus und manuelle Steuerung aller relevanten Parameter stehen über `libcamera`/`picamera2` zur Verfügung. Der Pi 4 ist gegenüber dem Pi 5 lediglich rechenschwächer, was bei einem Aufnahmeintervall von 30 Minuten irrelevant ist.
 
-## 3 Aufbau und Vergleichbarkeit
+**Daraus folgt jedoch eine Systementscheidung:** Der Pi 4 wird als reines Aufnahme- und Analysegerät eingesetzt. Backend, Datenbank und Dashboard laufen **nicht** auf dem Pi, sondern auf Schulserver oder Notebook. Damit ist auch der im Konzept offen gelassene Punkt „Backend lokal auf Pi oder auf Schulserver" beantwortet.
 
-Die Kamera soll möglichst senkrecht auf eine einzelne Pflanze gerichtet werden. Kamera und Topf sollen während einer Messreihe fest stehen. Halterungen sollen möglichst keine Blätter verdecken. Gleichmäßiges Licht, ein ruhiger matter Hintergrund und ein sichtbares neutrales Referenzfeld erleichtern die Auswertung.
+### 3.2 Komponenten
 
-Die Raumaufnahme der derzeitigen Testpflanze ist nicht mit dem früheren BioBox-Bench-Aufbau gleichzusetzen. Die alten Annahmen zu 373 mm Einbauhöhe werden **nicht als Maßstab für diese Fotos übernommen**. Die tatsächliche Aufnahmehöhe und Blattebene müssen am jeweiligen Aufbau bestimmt werden.
+| Komponente | Auswahl | Anmerkung |
+|---|---|---|
+| Edge-Rechner | Raspberry Pi 4 | OS: Raspberry Pi OS Bookworm oder neuer, 64 bit |
+| Kamera | Raspberry Pi Camera Module 3 **Wide** | Sensor IMX708, 11,9 MP, 4608 × 2592 px |
+| Bildfeld | 102° horizontal / 67° vertikal / 120° diagonal (lt. Datenblatt) | Begründung siehe 3.3 |
+| Blende / Brennweite | f/1.8, f = 4,74 mm | fix, nicht veränderbar |
+| Anschluss | CSI-2 FFC, 15-polig | Kabellänge nach Einbaulage, siehe 9.1 |
+| Speicher | externe USB-SSD oder ≥ 128 GB Karte | Abschätzung siehe 7.3 |
 
-Für einen späteren festen Aufnahmebetrieb sollen Belichtung, Verstärkung, Weißabgleich und Fokus überprüft und möglichst konstant gehalten werden. Ein vorhandenes festes Profil wird hier nicht als bereits eingerichteter Zustand behauptet. Ein geplanter LED-Aufnahmezustand muss vor seiner Nutzung mit der Firmware abgestimmt werden.
+Die NoIR-Variante wird nicht verwendet: Das System arbeitet mit definiertem sichtbarem Licht, und IR-Anteile würden die Farbauswertung (Greenness-Index, Gelbanteil) verfälschen.
 
-## 4 Verarbeitung der Blattmaske
+**Wareneingangsprüfung.** Jede gelieferte Kamera wird vor dem Einbau geprüft:
 
-1. Das Originalfoto wird gelesen und bei vorhandenem gültigem Objektivprofil entzerrt. Die Arbeitskopie ist höchstens 960 Pixel breit.
-2. Blattkerne werden über Grün-Rot- und Blau-Gelb-Komponenten im CIELAB-Farbraum ausgewählt. Ein begrenzter Otsu-Schwellenwert dient als Startwert. Kühle und schwach grüne Halterungen sowie dunkle, wenig grüne Bodenbereiche werden gedämpft.
-3. Nur nahe Randbereiche werden ergänzt. Gelb oder braun gewordenes Gewebe kann innerhalb einer registrierten älteren Blattfläche erhalten werden, wenn es an aktuell erfasstes Blattgewebe grenzt. Die alte Maske wird dabei nicht als aktuelle Messung kopiert.
-4. Kleine eingeschlossene Lücken werden geschlossen. Dünne, weit vom breiten Blattkern entfernte Verbindungen werden abgetrennt. GrabCut prüft die unsicheren Grenzen in einem begrenzten Randband am Original.
-5. Die binäre Maske wird in der Größe des Originalbilds gespeichert: 255 steht für erfasstes Blatt, 0 für ausgeschlossene Bereiche. Die Pixelzahl wird direkt aus dieser Maske bestimmt. Verdeckte Flächen werden nicht ergänzt.
-
-Für jedes lesbare Foto wird eine Kontrollansicht mit dünner Kontur und schwacher Einfärbung erzeugt. Das Foto wird darin höchstens 1500 Pixel breit dargestellt. Die Ansicht enthält keine weiteren Fotoausschnitte. Berührt die Maske den Bild- oder Auswerterand, bleibt die **sichtbare** Fläche bei unverändertem Bildausschnitt zeitlich vergleichbar. Der Strukturteil des Zustandsindex für die gesamte Pflanze wird dabei ausgesetzt. Stängelreste, sehr schmale Blätter und gleichfarbiger Hintergrund bleiben mögliche Grenzfälle.
-
-### Erneute Auswertung alter Bilder
-
-Jeder Analyselauf verarbeitet die gesamte ausgewählte Bildliste erneut. Auch die automatische Referenzmaske wird neu berechnet. Ein SHA-256-Prüfwert der vollständigen Skriptdatei erkennt Änderungen, selbst wenn die Versionsnummer nicht angepasst wurde. Bei einem geänderten Verfahren werden alte Scorehistorien verworfen und die ausgewählten Bilder mit dem neuen Verfahren bewertet.
-
-Bei neu angelegten Referenzen wird das ursprüngliche Referenzbild zusätzlich in `referenz.npz` erhalten. Dadurch kann seine Maske auch nach dem Ausscheiden aus dem 100-Bilder-Fenster neu berechnet werden. Bei alten Referenzen wird das Original nachgeladen, sofern es noch ausgewählt werden kann. Ist nur eine alte verkleinerte Referenz vorhanden, können verlorene Bilddetails nicht zurückgewonnen werden.
-
-Neue Masken, Kontrollbilder, CSV/JSON-Ergebnisse, Grafiken und Referenz werden zunächst getrennt erzeugt und anschließend zusammen übernommen. Ein Schreibfehler führt zur Wiederherstellung der vorherigen Ausgaben. Ist eine Datei in Excel oder einer Vorschau gesperrt, muss sie geschlossen und der Lauf wiederholt werden. Bereits bestätigte manuelle Korrekturmasken und der Maßstab werden erhalten.
-
-### Geprüfte Korrektur für Grenzfälle
-
-```text
-python analyse.py --maske-korrigieren bilder/FOTO.jpg
+```
+rpicam-hello --list-cameras
 ```
 
-Mit der linken Maustaste werden Blattbereiche ergänzt, mit der rechten wird Hintergrund entfernt. `G` führt GrabCut mit den gezeichneten Hinweisen erneut aus. `+` und `-` ändern den Pinsel, `U` macht eine Änderung rückgängig, `R` stellt den Anfangszustand her. Mit Enter wird gespeichert, mit Esc ohne Speichern abgebrochen.
+Ein echtes Camera Module 3 Wide meldet `imx708_wide`. Jede andere Ausgabe bedeutet
+ein falsches Bauteil. Der Bench-Report vom 13.09.2026 wurde mit einem versehentlich
+gelieferten OV5647 (Camera Module v1) durchgeführt — dieser hat Fixfokus und ein
+abweichendes Farbverhalten, was die Messungen dort unbrauchbar für Farbwerte machte.
+Ein Befehl verhindert die Wiederholung.
 
-Alternativ kann eine binäre PNG-Maske mit exakt der Pixelgröße des gegebenenfalls entzerrten Originals übernommen werden:
+### 3.3 Begründung der Wide-Variante
 
-```text
-python analyse.py --maske-korrigieren bilder/FOTO.jpg --korrekturmaske BLATTMASKE.png
+| | Standard (66° h) | **Wide (102° h)** |
+|---|---|---|
+| Bildfeldbreite bei 373 mm | 484 mm | **921 mm** |
+| Auflösung auf der Substratebene | 9,5 px/mm | **5,0 px/mm** |
+| Bildfeldbreite bei 140 mm Bestandshöhe | 302 mm | **575 mm** |
+| Bildfeldbreite bei 250 mm Bestandshöhe | 160 mm | **304 mm** |
+
+Die Entscheidung fällt zugunsten von Wide, obwohl Standard die bessere Auflösung
+und die geringere Verzeichnung bietet. Ausschlaggebend ist die **begrenzte Bauhöhe**:
+Bei einer Einbauhöhe von 373 mm über der Substratebene schrumpft das Bildfeld mit
+wachsender Pflanze, weil der Bestand auf die Kamera zuwächst. Mit der Standard-Optik
+wäre eine ausgewachsene Basilikumpflanze ab etwa 200 mm Bestandshöhe nicht mehr
+vollständig im Bild — und eine Pflanze, die aus dem Bild wächst, beendet die
+Messreihe.
+
+Die Kosten dieser Entscheidung werden bewusst in Kauf genommen und sind zu
+dokumentieren:
+
+1. **Halbierte Auflösung** auf der Substratebene: 5,0 statt 9,5 px/mm. Ein 30 mm
+   breites Blatt wird noch mit rund 150 px abgebildet, was für Flächenmessung
+   ausreichend ist.
+2. **Deutliche Verzeichnung.** Bei 102° horizontalem Bildwinkel ist die tonnenförmige
+   Verzeichnung nicht mehr vernachlässigbar. Eine Entzerrung wird dadurch von einer
+   Option zu einer **Pflicht**, siehe 4.7.
+3. **Gehäusewände im Bild.** Das Bildfeld ist mit 921 mm deutlich breiter als der
+   Innenraum. Der ROI-Zuschnitt nach 4.3 ist damit zwingend, nicht optional.
+
+---
+
+## 4. Geometrie der Bilderfassung
+
+### 4.1 Kameraposition
+
+Die Kamera wird **mittig an der Decke der Wachstumszone** montiert, mit Blickrichtung senkrecht nach unten auf die Pflanzwanne.
+
+Die Montage muss **starr und dauerhaft** sein. Eine nachträgliche Veränderung der Kameraposition während eines Wachstumszyklus macht alle vorher aufgenommenen Bilder unvergleichbar und ist ohne Neustart der Messreihe unzulässig. Ein Verschieben der Kamera ist ein dokumentationspflichtiges Ereignis (siehe 8.2).
+
+Die Einbauhöhe ist im Bench-Report vom 13.09.2026 bestätigt: **Kameraebene Z 815, Substratebene Z 442**, daraus **H = 373 mm**. Der Wert wird nach dem mechanischen Aufbau nachgemessen und auf ±2 mm dokumentiert.
+
+### 4.2 Erfasstes Bildfeld
+
+Bei H = 373 mm und 102° × 67° Bildwinkel ergibt sich rechnerisch:
+
+- Breite ≈ 2 · 373 · tan(51°) ≈ **921 mm**
+- Höhe ≈ 2 · 373 · tan(33,5°) ≈ **494 mm**
+- Auflösung ≈ 4608 px / 921 mm ≈ **5,0 px/mm**
+
+Das Bildfeld ist damit erheblich größer als der Gehäuseinnenraum; Wände sind im Bild sichtbar. Das ist der Preis der Wide-Optik und zugleich ihr Zweck: Die Reserve am Rand stellt sicher, dass die Pflanze über den gesamten Wachstumszyklus im Bild bleibt. Der auszuwertende Bereich wird softwareseitig als ROI zugeschnitten (siehe 4.3).
+
+### 4.3 Region of Interest (ROI)
+
+Die ROI wird durch die vier Referenzmarker aufgespannt (siehe 4.4) und umfasst die Pflanzwanne zuzüglich 30 mm Rand. Die ROI wird **nicht** als feste Pixelkoordinate definiert, sondern in jedem Bild aus den erkannten Markern neu berechnet. Damit bleibt die Auswertung auch bei minimaler mechanischer Setzung des Gehäuses stabil.
+
+### 4.4 Referenzmarker und Maßstab
+
+**Ausführung:** Vier ArUco-Marker (Dictionary `DICT_4X4_50`, IDs 0–3), Kantenlänge **40 mm**, an den vier Ecken des Wannenrandes.
+
+ArUco statt einfachem Maßstabsbalken, weil vier Marker gleichzeitig vier Aufgaben lösen:
+
+1. **Maßstab** – Umrechnung Pixel → mm²
+2. **Perspektivkorrektur** – Homographie auf die Wannenebene (Pipeline-Schritt 4)
+3. **ROI-Definition** – siehe 4.3
+4. **Lageüberwachung** – Verschiebt sich die Kamera, verschieben sich die Markerecken; das ist automatisch detektierbar (siehe 8.2)
+
+**Material:** Matter Druck auf Papier oder Kunststoff, **ohne Glanzlaminat**. Glänzende Oberflächen erzeugen unter der LED Reflexe und werden nicht mehr zuverlässig erkannt. Die Markerhöhe **h_M** über der Wannenoberkante wird gemessen und dokumentiert.
+
+### 4.5 Maßstabskorrektur über die Bestandshöhe
+
+**Dies ist der kritischste Punkt der gesamten Bilderfassung.**
+
+Die Marker liegen auf Wannenhöhe, die Blätter wachsen aber auf die Kamera zu. Bei H = 373 mm und einer Bestandshöhe von 250 mm sinkt der Objektabstand auf 123 mm – auf ein Drittel. Die Pflanze erscheint im Bild dadurch etwa dreifach vergrößert, ohne tatsächlich entsprechend gewachsen zu sein. Der Effekt ist bei der geringen Einbauhöhe **deutlich stärker als ursprünglich angenommen**. Unkorrigiert entsteht dadurch ein scheinbarer Wachstumsverlauf, der zu einem erheblichen Teil reine Perspektive ist.
+
+Korrektur über das Lochkameramodell:
+
+```
+s_M = L_Marker / p_Marker                      [mm/px]  Maßstab in der Markerebene
+s_C = s_M · (H − h_C) / (H − h_M)              [mm/px]  Maßstab in der Bestandsebene
+A   = N_px · s_C²                              [mm²]    projizierte Blattfläche
 ```
 
-Die Korrektur wird an den SHA-256-Inhaltshash der Datei und das Objektivprofil gebunden. Sie wird unter `auswertung/masken_korrektur/` gespeichert und bei der erneuten Analyse genau dieses Fotos verwendet. Eine andere Datei bekommt diese Maske nicht automatisch. Die Prüfung der tatsächlichen Blattgrenzen bleibt auch bei einer manuellen Korrektur erforderlich.
+mit
+`L_Marker` = physische Markerkantenlänge (40 mm),
+`p_Marker` = gemessene Kantenlänge in Pixel,
+`H` = Kamerahöhe über Wannenoberkante,
+`h_M` = Markerhöhe über Wannenoberkante,
+`h_C` = Bestandshöhe (Canopy),
+`N_px` = Anzahl der als Pflanze segmentierten Pixel.
 
-## 5 Pixel und physische Maße
+`h_C` wird bis auf Weiteres **manuell** mit Lineal gemessen (mindestens zweimal pro Woche) und in den Metadaten mitgeführt. Zwischen zwei Messungen wird linear interpoliert. Eine automatische Bestandshöhenerfassung (z. B. seitlicher Maßstab im Bild oder ToF-Sensor) ist ein sinnvolles optionales Ziel, aber kein Muss.
 
-Die Pixelzahl ist die Anzahl weißer Pixel der endgültigen Maske. Der Maßstab `s` wird in Millimetern pro Pixel angegeben:
+Wichtig für die Dokumentation: Da der Maßstab in **jedem** Bild aus den Markern neu bestimmt wird, ist er eine Messgröße und keine Annahme. Ein Nachfokussieren (siehe 5.2) verändert die Abbildung geringfügig, wird durch diese Vorgehensweise aber automatisch mitkorrigiert.
 
-```text
-Blattfläche in cm² = Blattpixel × s² / 100
-Durchmesser in mm  = größte Ausdehnung der maskierten Pixeloberfläche × s
+### 4.6 Entzerrung (Pflichtschritt)
+
+Wegen des großen Bildwinkels muss vor jeder Auswertung eine **Entzerrung** erfolgen.
+Ohne sie wird eine Fläche am Bildrand systematisch anders gemessen als in der
+Bildmitte, und eine seitlich wachsende Pflanze erzeugt einen scheinbaren
+Wachstumsverlauf, der reine Optik ist.
+
+Vorgehen, einmalig bei der Inbetriebnahme:
+
+1. Schachbrettmuster (9 × 6 Felder, bekannte Feldgröße) in 15–20 Lagen im Bildfeld
+   fotografieren, verteilt über Mitte und Ränder.
+2. `cv2.findChessboardCorners` und `cv2.calibrateCamera` liefern Kameramatrix und
+   Verzeichnungskoeffizienten.
+3. Beides in `kamera_kalibrierung.json` ablegen.
+4. Jedes Bild vor der Segmentierung mit `cv2.undistort` entzerren.
+
+Die Kalibrierdaten gelten nur für **diese** Kamera in **dieser** Einstellung. Wird
+die Kamera getauscht oder nachfokussiert, ist neu zu kalibrieren.
+
+### 4.7 Hintergrund
+
+Die Pflanzwanne erhält eine **matte, nicht spiegelnde Einlage in Dunkelgrau oder Mattschwarz**. Der Hintergrund ist der größte Hebel für eine saubere Segmentierung – deutlich größer als jede Verbesserung des Algorithmus.
+
+In PSP 1.5 wird zusätzlich eine **mattblaue** Variante getestet. Blau liegt im HSV-Farbraum weit von Pflanzengrün entfernt und erhält im Gegensatz zu Schwarz die Zeichnung in dunklen Blattpartien. Die endgültige Wahl erfolgt anhand der Segmentierungsgüte an Testbildern.
+
+---
+
+## 5. Optische Aufnahmeparameter
+
+### 5.1 Grundsatz
+
+**Alle Automatiken werden deaktiviert.** Autofokus, Belichtungsautomatik, Weißabgleichsautomatik und HDR reagieren auf die Bildinhalte – also auf die wachsende Pflanze. Eine Automatik, die auf zunehmende Grünfläche mit anderer Belichtung reagiert, macht Farbmetriken über die Zeit wertlos.
+
+### 5.2 Festgelegte Parameter
+
+| Parameter | Einstellung | Begründung |
+|---|---|---|
+| Fokus | `AfMode = Manual`, feste `LensPosition` | Autofokus je Aufnahme ändert Schärfe und Abbildung |
+| Belichtungszeit | fest, `AeEnable = False` | verhindert Helligkeitsdrift über den Zyklus |
+| Analogverstärkung | fest, möglichst niedrig | begrenzt Rauschen |
+| Weißabgleich | `AwbEnable = False`, feste `ColourGains` | Greenness-Index hängt direkt vom Weißabgleich ab |
+| HDR | deaktiviert | nichtlineare Tonwertabbildung, nicht reproduzierbar |
+| Rauschreduktion / Schärfung | minimal und konstant | starke Schärfung erzeugt Kantenartefakte an Blatträndern |
+| Auflösung | 4608 × 2592 px (volle Sensorauflösung) | |
+| Format | JPEG, Qualität 95 | siehe 7.3 |
+
+Die konkreten Zahlenwerte für `LensPosition`, `ExposureTime`, `AnalogueGain` und `ColourGains` werden bei der Inbetriebnahme einmalig ermittelt und in der Datei `capture_profile.json` abgelegt.
+
+Ausgangswert für den Fokus: `LensPosition ≈ 2,7 dpt` (entspricht 1/0,373 m).
+
+### 5.3 Nachfokussieren
+
+Die Schärfentiefe beträgt bei H = 373 mm rechnerisch nur rund 65 mm. Wächst der Bestand um mehr als 100 mm gegenüber der letzten Fokuseinstellung, muss nachfokussiert werden. Jeder solche Eingriff ist ein **Profiländerungsereignis**: Die Version in `capture_profile.json` wird erhöht, das Ereignis wird protokolliert, und die Versionsnummer steht in den Metadaten jedes Bildes.
+
+---
+
+## 6. Beleuchtungsbedingungen bei der Aufnahme
+
+### 6.1 Aufnahme-Lichtprofil
+
+Die LED wird im Normalbetrieb von der DLI-Regelung gesteuert und ist daher zum Aufnahmezeitpunkt in einem **nicht vorhersehbaren Dimmzustand**. Bilder unter wechselnder Beleuchtung sind farbmetrisch nicht vergleichbar.
+
+Deshalb gilt für jede Aufnahme:
+
+1. LED auf definierten festen Wert setzen (Vorgabe: **100 % Duty**)
+2. **60 s** stabilisieren lassen (thermische und elektrische Einschwingzeit der LED)
+3. Bild aufnehmen
+4. LED an die Regelung zurückgeben
+
+Der tatsächliche LED-Zustand zum Aufnahmezeitpunkt wird in den Metadaten mitgeschrieben. Bilder, deren LED-Duty vom Sollwert abweicht, werden verworfen (siehe 8.1).
+
+**Dies ist eine Schnittstellenanforderung an die Firmware** (siehe 9.1).
+
+### 6.2 Fremdlicht
+
+Die transparente Fronttüre lässt Raumlicht eintreten. Der Anteil variiert mit Tageszeit und Raumbeleuchtung und ist eine bekannte, bewusst akzeptierte Fehlerquelle.
+
+Zur Quantifizierung wird einmal täglich ein **Dunkelreferenzbild** aufgenommen: identische Parameter, LED aus. Die mittlere Helligkeit dieses Bildes ist ein direktes Maß für den Fremdlichtanteil und wird im Langzeittest ausgewertet. Übersteigt sie einen im Test festzulegenden Grenzwert, ist eine Abdunkelung der Fronttüre während der Aufnahme nachzurüsten.
+
+### 6.3 Anordnung LED / Kamera
+
+Die LED-Emitter dürfen **nicht direkt im Bildfeld** der Kamera liegen. Die LED-Bars werden beidseitig neben der Kamera angeordnet, sodass der Bestand symmetrisch ausgeleuchtet wird und einseitige Schlagschatten vermieden werden. Die Kamera erhält eine kurze **Blendschutzhaube**. Auch dies ist eine Anforderung an den mechanischen Aufbau.
+
+---
+
+## 7. Zeitplan, Dateien und Speicherung
+
+### 7.1 Aufnahmeintervall
+
+| Aufnahmeart | Zeitpunkt |
+|---|---|
+| Regelaufnahme | alle **30 min** während der Lichtphase (16 h → 32 Bilder/Tag) |
+| Tagesreferenzbild | 10 min nach Lichtbeginn, nach Stabilisierung |
+| Dunkelreferenzbild | 1× täglich, LED aus |
+
+Nachts wird nicht aufgenommen: Blattstellung, Kontrast und Belichtung variieren ohne verwertbaren Zusatznutzen.
+
+### 7.2 Dateinamenskonvention
+
+```
+biobox01_20260930T081500Z_000042.jpg
+biobox01_20260930T081500Z_000042.json
 ```
 
-Der Durchmesser ist die größte Entfernung zwischen äußeren Pixelgrenzen, nicht nur die Breite eines achsenparallelen Rechtecks. Es werden nur erfasste Blattbereiche einbezogen.
+Aufbau: `{device_id}_{ISO8601-UTC}_{laufende Nummer}`. Zeitstempel **immer UTC**, um Sommer-/Winterzeitsprünge in der Zeitreihe zu vermeiden. Bild und Metadatendatei tragen denselben Dateistamm.
 
-### Maßstab mit einer bekannten Strecke
+Ablage: `/data/images/{JJJJ}/{MM}/{TT}/`
 
-Ein Lineal muss bei der Aufnahme auf Höhe der zu messenden Blattebene liegen. Anschließend werden die zwei Endpunkte einer tatsächlich bekannten Strecke markiert:
+### 7.3 Speicherbedarf
 
-```text
-python analyse.py --massstab --referenz-mm 50
+32 Bilder/Tag × ca. 5 MB ≈ **160 MB/Tag**, ca. **4,8 GB/Monat**, über die Projektlaufzeit ca. **30 GB**.
+
+Daraus folgt: Ablage auf externer USB-SSD oder Karte ≥ 128 GB, plus tägliche Sicherung (`rsync`) auf Notebook oder Schulserver. **Nur die Metadaten und Analyseergebnisse gehen in die PostgreSQL-Datenbank, nicht die Bilddateien selbst**; die Datenbank speichert lediglich den `storage_path` und die SHA-256-Prüfsumme.
+
+### 7.4 Metadaten-Sidecar
+
+Jedes Bild erhält eine gleichnamige JSON-Datei:
+
+```json
+{
+  "device_id": "biobox-01",
+  "captured_at": "2026-09-30T08:15:00Z",
+  "sequence": 42,
+  "capture_profile_version": "1.0.0",
+  "image_type": "regular",
+  "camera": {
+    "model": "imx708",
+    "resolution": [4608, 2592],
+    "lens_position": 1.8,
+    "exposure_time_us": 8000,
+    "analogue_gain": 1.0,
+    "colour_gains": [1.85, 1.62],
+    "hdr": false
+  },
+  "light": {
+    "led_duty_pct": 100,
+    "stabilisation_s": 60,
+    "photoperiod_state": "day"
+  },
+  "geometry": {
+    "camera_height_mm": 550.0,
+    "marker_dict": "DICT_4X4_50",
+    "marker_length_mm": 40.0,
+    "marker_height_mm": 12.0,
+    "canopy_height_mm": 85.0,
+    "canopy_height_source": "manual"
+  },
+  "environment": {
+    "air_temp_c": 24.6,
+    "air_humidity_pct": 61.2,
+    "soil_moisture_pct": 43.8,
+    "soil_temp_c": 22.1,
+    "light_lux": 21450
+  },
+  "checksum_sha256": "..."
+}
 ```
 
-Dies löst eine neue Aufnahme aus. `50` ist nur ein Beispiel für eine wirklich gemessene Strecke. Für ein vorhandenes Foto wird `--massstab-bild bilder/FOTO.jpg --referenz-mm 50` verwendet. Der gespeicherte Maßstab wird nur für eine passende registrierte Kameraansicht und dasselbe Objektivprofil wiederverwendet.
+Der Block `environment` wird zum Aufnahmezeitpunkt aus der jüngsten Telemetrie übernommen. **Er ist keine Nebensache:** Das Digital-Twin-Modell braucht Bildmerkmale und Umweltbedingungen als zusammengehöriges Paar. Fehlt diese Zuordnung, ist der Datensatz für A-M4 nur eingeschränkt brauchbar.
 
-Eine unveränderte Ansicht beweist keine unveränderte Blatthöhe. Nach einer Änderung von Kamera- oder Blattebene muss neu gemessen werden. Blätter auf verschiedenen Höhen sowie geneigte Blätter werden mit einer einzelnen ebenen Referenz nur näherungsweise physisch vermessen. Ohne verifizierten Maßstab bleiben cm² und mm `NULL`; Pixelwerte bleiben verfügbar.
+---
 
-Die automatische Marker-Alternative verwendet vier ArUco-Referenzmarker mit IDs 0–3 und bekannter Kantenlänge. Dafür müssen auch Kamera-, Marker- und Blatthöhe bekannt sein. Fehlende Marker verhindern nicht die Pixel- oder Farbauswertung.
+## 8. Qualitätssicherung
 
-## 6 Objektivkalibrierung
+### 8.1 Automatische Prüfkriterien je Bild
 
-Die Wide-Optik kann besonders am Rand geometrische Verzerrungen verursachen. Für genauere physische Flächenmessungen wird eine passende Objektivkalibrierung benötigt. Dazu werden mehrere Schachbrettaufnahmen über das Bildfeld verteilt aufgenommen. Das konfigurierte Muster enthält 9 × 6 innere Ecken, also 10 × 7 Felder; die tatsächliche Feldgröße muss zu `FELD_MM` passen.
+| Kriterium | Prüfung | Bei Verletzung |
+|---|---|---|
+| Schärfe | Varianz des Laplace-Filters über der ROI ≥ Schwellwert | verwerfen |
+| Belichtung | Anteil geklippter Pixel (Grünkanal > 250) unter Grenzwert | verwerfen |
+| Helligkeit | Mittelwert innerhalb ± x % des Tagesreferenzbildes | markieren |
+| Marker | alle vier Marker erkannt | verwerfen |
+| Kameralage | Markerecken innerhalb ± 3 px zur Referenzaufnahme | **Alarm**, siehe 8.2 |
+| LED-Zustand | `led_duty_pct` entspricht Sollwert | verwerfen |
+| Profilversion | entspricht aktueller Version | markieren |
 
-```text
-python analyse.py --kalibrieren kalibrierbilder
-```
+Die Schwellwerte werden in PSP 1.8 empirisch bestimmt. Verworfene Bilder werden **nicht gelöscht**, sondern nach `/data/images/rejected/` verschoben und protokolliert – die Ausschussrate ist selbst eine auswertbare Kennzahl für die Dokumentation.
 
-Die erzeugte `kamera_kalibrierung.json` enthält Kameramatrix, Verzerrung und Kalibrier-Bildgröße. Für eine andere Auflösung desselben Seitenverhältnisses wird die Matrix skaliert. Ein anderer Zuschnitt oder ein altes Profil ohne Bildgröße wird nicht stillschweigend als passend angenommen. Nach Kamera-, Objektiv- oder Profilwechsel muss die Messreihe überprüft werden.
+### 8.2 Dokumentationspflichtige Ereignisse
 
-## 7 Licht und Gesundheitsvergleich
+Kameraverschiebung, Nachfokussieren, Parameteränderung, Markerwechsel, Hintergrundwechsel, Umtopfen. Jedes dieser Ereignisse wird mit Zeitstempel, Grund und neuer Profilversion in einem Ereignisprotokoll festgehalten. Ohne dieses Protokoll ist ein Sprung im Flächenverlauf später nicht mehr von echtem Pflanzenverhalten zu unterscheiden.
 
-Der Gesundheitsvergleich verwendet eine separate lichtkorrigierte Arbeitskopie. Die Korrektur wird aus passenden Hintergrundpixeln derselben Ansicht geschätzt, nicht aus den Blattfarben. Linearer Helligkeits- und Kanaldrift sowie geeignete langsame Lichtverläufe können dadurch ausgeglichen werden. Die Rohfarbwerte im Export werden nicht überschrieben.
+### 8.3 Abnahmekriterien Meilenstein A-M1
 
-Nur überlappende Blattbereiche werden verglichen. Ausgebrannte oder zu dunkle Pixel werden in beiden Vergleichsbildern gemeinsam ausgeschlossen. Wenn zu wenig geeignetes Gewebe oder Hintergrund übrig bleibt, wird kein neuer Gesundheitswert ausgegeben. Ein dunkler schwarzer Hintergrund ohne messbare Referenz kann für einen verlässlichen Lichtabgleich unzureichend sein. Ein kleines mattes neutrales Referenzfeld hilft bei der Trennung von Licht- und Pflanzenänderungen.
+Das Bilderfassungssystem gilt als abgenommen, wenn:
 
-## 8 Schnittstellen und Grenzen
+1. über 72 h ununterbrochen automatisch aufgenommen wurde,
+2. die Ausschussrate unter 5 % liegt,
+3. in allen gültigen Bildern alle vier Marker erkannt wurden,
+4. die aus den Markern berechnete Maßstabsgröße über 72 h um weniger als 1 % streut,
+5. jedes Bild eine vollständige, valide Metadatendatei besitzt.
 
-Der im JSON ausgegebene relative Bildpfad wird aus dem Sitzungsnamen abgeleitet, beispielsweise `recent/20261020T160551Z-bByql4/normal.jpg`. Die Auflösung archivierter Dateien muss bei der späteren Plattformintegration mit den tatsächlichen Serverpfaden abgeglichen werden. UTC-Zeitpunkt und Dateihash werden im JSON-Export mitgegeben. Geräteschlüssel und HTTP-Endpunkt müssen mit Edona abgeglichen werden; durch das Analyseskript werden keine Datensätze an einen unbekannten Endpunkt versendet.
+Kriterium 4 ist der eigentliche Nachweis: Es belegt, dass der Aufbau geometrisch stabil ist.
 
-Eine neue Pflanzenart benötigt keinen fest vorgeschriebenen Grünton, aber eine eigene Messreihe mit eigener Referenz. Alte und neue Pflanzen dürfen nicht gemeinsam als Wachstumsverlauf bewertet werden. Beim Pflanzenwechsel werden die Eingabebilder getrennt und die Referenz für die tatsächlich ausgewählte neue Bildserie gebildet.
+---
 
-Die aktuelle Prüfung umfasst ein vorhandenes Originalfoto und kontrollierte Bildveränderungen. Daraus wird keine universelle Segmentierungsgenauigkeit für andere Pflanzen oder jede Aufnahme abgeleitet. Eine belastbare Flächengenauigkeit muss an Originalbildern mit unabhängig geprüften Blattmasken und passendem Maßstab bestimmt werden.
+## 9. Schnittstellen
 
-## 9 Grundlagen
+### 9.1 Anforderungen an Grid Tanushi (Hardware)
 
-- Projektdatei `Atida-Handover.md`, Stand 20.10.2026, für Aufnahme- und Archivpfade.
-- OpenCV, GrabCut: https://docs.opencv.org/4.x/d8/d83/tutorial_py_grabcut.html
-- BB-SPEC-HEALTH-001 und BB-REF-MERKMALE-001 in der zu diesem Stand gehörenden Version.
+| Nr. | Anforderung |
+|---|---|
+| H-1 | Starrer, mittiger Kameramontagepunkt an der Decke der Wachstumszone, Blickrichtung senkrecht nach unten |
+| H-2 | Einbauhöhe H nach Aufbau messen und dokumentieren (±2 mm) |
+| H-3 | LED-Bars beidseitig neben der Kamera, keine Emitter im Bildfeld |
+| H-4 | Platz für Blendschutzhaube (ca. 20 mm) |
+| H-5 | CSI-Kabelführung Kamera → Pi; Kabellänge nach Einbaulage (Standardkabel 200 mm ggf. zu kurz), getrennt von LED- und PWM-Leitungen führen |
+| H-6 | 5 V / 3 A Versorgung für den Raspberry Pi 4 auf der 5-V-Schiene |
+| H-7 | Firmware: Kommando „Aufnahme-Lichtprofil" – LED auf festen Duty setzen, halten, freigeben |
+| H-8 | Firmware: LED-Ist-Duty und aktuelle Sensorwerte auf Abruf für die Metadaten |
+| H-9 | Wannenrand als Montagefläche für vier Marker, matte Wanneneinlage |
 
-- Debian, cron-Zeitpläne: https://manpages.debian.org/trixie/cron/crontab.5.en.html
+**Zeitkritisch:** H-1 bis H-4 und H-9 müssen vor dem Aufbau der Wachstumszone geklärt sein (Grid: G1, September/Oktober).
+
+### 9.2 Anforderungen an Edona Peraj (Plattform)
+
+| Nr. | Anforderung |
+|---|---|
+| E-1 | Endpunkt `POST /api/v1/images/metadata` gemäß Tabelle `images` |
+| E-2 | Feldnamen und Datentypen für `image_measurements` einfrieren |
+| E-3 | Übernahme von `capture_profile_version` und `canopy_height_mm` in das Datenmodell (im Konzeptentwurf noch nicht enthalten) |
+| E-4 | Konvention für `storage_path` gemeinsam festlegen |
+
+---
+
+## 10. Offene Punkte
+
+| Nr. | Punkt | Zu klären bis |
+|---|---|---|
+| O-1 | Endgültige Kamerahöhe H – erst nach mechanischem Aufbau messbar | Meilenstein B |
+| O-2 | Hintergrundfarbe: Dunkelgrau oder Mattblau – Entscheidung nach Segmentierungstest | PSP 1.5 |
+| O-3 | Schwellwerte der Qualitätsprüfung – empirisch | PSP 1.8 |
+| O-4 | Verfahren zur Bestandshöhenerfassung – vorerst manuell | laufend |
+| O-5 | Notwendigkeit einer Abdunkelung der Fronttüre – abhängig von Dunkelreferenzmessung | Langzeittest |

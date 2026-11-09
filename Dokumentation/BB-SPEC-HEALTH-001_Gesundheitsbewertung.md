@@ -1,104 +1,249 @@
-# Gesundheitsbewertung BioBox
+# Spezifikation Gesundheitsbewertung BioBox
 
-| Feld | Stand |
+| | |
 |---|---|
-| Dokument-ID | BB-SPEC-HEALTH-001 |
-| Version | 1.3 |
-| Datum | 04.11.2026 |
-| Autorin | Atida Ashta |
-| Implementierung | analyse.py 4.3.0 |
-| Scoring-Version | 4.0.0 |
-| Status | Technischer relativer Zustandsindex; keine biologisch validierte Diagnose |
+| **Dokument-ID** | BB-SPEC-HEALTH-001 |
+| **Version** | 0.2 (Entwurf) |
+| **Datum** | 13.09.2026 |
+| **Autorin** | Atida Ashta |
+| **Arbeitspaket** | 3. Gesundheitsbewertungssystem, PSP 3.1–3.8 |
+| **Meilenstein** | A-M3 |
+| **Vorgänger** | BB-SPEC-IMG-001 (Bildaufnahme) |
+| **Status** | Entwurf – Kennlinien noch nicht an realen Pflanzen kalibriert |
+| **Änderung 0.2** | Skala von 0–10 auf **0–100** umgestellt (Abgleich mit Bench-Report Grid Tanushi, 13.09.2026) |
 
-## 1 Aussage des Wertes
+---
 
-Der Wert von 0 bis 100 beschreibt sichtbare Veränderungen gegenüber einer früheren Aufnahme **derselben Pflanze**. 100 bedeutet eine geringe Abweichung der untersuchten Merkmale von der Referenz, nicht den Nachweis einer gesunden Pflanze. Auch eine bereits geschädigte Referenz kann zunächst 100 Punkte ergeben.
+## 1. Zweck
 
-Ein fester dunkler Grünton für Basilikum wird nicht als Sollzustand verwendet. Helle oder panaschierte Blätter, also Blätter mit unterschiedlich gefärbten Bereichen, werden gegen ihren eigenen Ausgangszustand verglichen. Aufnahmen verschiedener Pflanzen dürfen nicht zu einer gemeinsamen Bewertung zusammengefasst werden.
+Dieses Dokument legt fest, wie aus den Bildmerkmalen ein **Gesundheitswert von 0 bis 10** für die Basilikumpflanze in der BioBox berechnet wird. Es beschreibt die Eingangsgrößen, die Bewertungsregeln, die Zustandskategorien und die Warnmeldungen.
 
-Der Index enthält Hinweise auf Farb- und Strukturänderungen. Er bestimmt keinen Chlorophyllgehalt und keine Ursache wie Nährstoffmangel, Krankheit oder Wurzelschaden. Die Kategoriebezeichnungen sind technische Bereiche dieses Index.
+Der Gesundheitswert ist ausdrücklich **kein biologisch-medizinischer Absolutwert**, sondern ein technischer Zustandsindex für Anzeige, Alarmierung und als Eingangsgröße für das Digital-Twin-Modell (A-M4). Diese Einordnung ist bewusst gewählt: Eine Kamera misst Farbe, nicht Pflanzengesundheit. Der Index ist ein reproduzierbarer Indikator, dessen Aussagekraft in Abschnitt 9 offen benannt wird.
 
-## 2 Feste Referenz
+---
 
-Die erste brauchbare Aufnahme einer ausgewählten Messreihe wird als Referenz gespeichert. Verwendet wird `auswertung/referenz.npz`. Bilddaten, Blattmaske, Aufnahmezeitpunkt, Dateihash, Bildgröße, Geometrie, Versionsinformationen und die begrenzte Scorehistorie werden erhalten. Die Referenz bleibt damit verfügbar, wenn das erste Foto aus dem lokalen 100-Bilder-Fenster fällt.
+## 2. Grundsatzentscheidung: Bewertung gegen den eigenen Referenzzustand
 
-Es müssen nicht erst drei oder zehn Bilder gesammelt werden. Die automatische Referenz bleibt zunächst als `vorlaeufige_referenz` gekennzeichnet; die Berechnung wird dadurch nicht blockiert. Nach Sichtprüfung kann `REFERENZ_FREIGEGEBEN` auf `True` gesetzt werden. Eine solche Freigabe bestätigt die Referenzwahl, keine biologische Diagnose.
+Die zentrale Entwurfsentscheidung lautet: **Die Pflanze wird gegen ihren eigenen früheren Zustand bewertet, nicht gegen absolute Farbsollwerte.**
 
-Die automatische Referenzmaske wird bei jedem Analyselauf neu berechnet. Bei einer geänderten Skriptdatei, Pipeline- oder Scoring-Version werden veraltete automatische Masken aktualisiert und alte Scorehistorien verworfen. Der ursprüngliche Referenzzeitpunkt bleibt erhalten. Neue Referenzdateien enthalten auch das Originalbild; bei alten Profilen wird es aus der Bildauswahl ergänzt, sofern verfügbar. Manuell geprüfte Masken werden geschützt. Bei einem Wechsel der Pflanze oder eines unpassenden Aufnahmeprofils muss eine passende neue Messreihe gewählt werden. `--neue-referenz` bildet die Referenz aus den tatsächlich ausgewählten Eingabebildern neu und entfernt keine alten Pflanzenbilder aus dem Eingabeordner.
+Ein absoluter Ansatz („gesundes Basilikum hat Hue = 40, Sättigung = 170") wäre einfacher, aber fachlich nicht haltbar. Die gemessenen Farbwerte hängen ab von:
 
-## 3 Vergleich von Kamera, Licht und Blattgewebe
+- dem gewählten Weißabgleich der Kamera (in BB-SPEC-IMG-001 bewusst fest, aber willkürlich eingestellt),
+- dem Spektrum der verwendeten LED,
+- der Basilikumsorte,
+- der Belichtungseinstellung.
 
-1. Verteilte Merkmale des Hintergrunds werden verwendet, um die Aufnahme an der Referenz auszurichten. Fehlen genug automatisch zugeordnete Merkmale, können übereinstimmende Kanten in mehreren Hintergrundbereichen eine unveränderte Ansicht bestätigen. Bei nicht bestätigter oder deutlich veränderter Ansicht entfällt der Index. Bei kleinen Maßstabs- oder Winkeländerungen kann ein Farbvergleich möglich sein, während der Strukturvergleich ausfällt.
-2. Aus nicht überbelichteten Hintergrundpaaren wird eine robuste Abbildung für Helligkeit und Weißabgleich geschätzt. Ein linearer Ansatz wird gegen eine Kurve und einen langsamen räumlichen Gradienten geprüft. Dafür werden getrennte Prüfwerte verwendet. Auch regionale Restfehler werden geprüft. Blattbereiche werden ausgeschlossen und die Korrektur wird nach der Segmentierung nochmals bestimmt.
-3. Nur die Überlappung der beiden Blattmasken wird für die Farbe bewertet. Der äußere Maskenrand wird um ein Arbeitspixel verkleinert. Die gemeinsame Fläche muss mindestens 60 % der kleineren und 35 % der größeren erodierten Maske abdecken. Beide Bilder werden an denselben Positionen geprüft. Sind weniger als 65 % der gemeinsamen Blattfläche oder weniger als 50 geeignete Arbeitspixel nutzbar, entfällt der Score. Gesättigte und sehr dunkle Pixel werden nicht rekonstruiert.
+Ein auf einem Aufbau kalibrierter Absolutwert wäre auf einem anderen Aufbau wertlos. Der relative Ansatz umgeht das: Weißabgleich, LED und Belichtung sind über den gesamten Zyklus fixiert, also kürzen sich ihre Einflüsse aus dem Vergleich heraus.
 
-Die Blattfarben werden nicht an einen Sollzustand angepasst. Die Rohwerte in der Ergebnistabelle bleiben lichtabhängig. Eine ungleichmäßige Beleuchtung, die nur auf die Blätter fällt, kann trotz Hintergrundabgleich zu Fehlern führen. Für die Aufnahme wird deshalb ein gleichmäßiges Licht mit möglichst konstanten Kameraeinstellungen empfohlen. Ein mattes, neutrales Referenzfeld außerhalb der Blattfläche kann bei der späteren Validierung helfen.
+Die Randbedingung, die das überhaupt möglich macht, ist die Aufnahmesituation: **alle Bilder zeigen dieselbe Pflanze unter identischen, fixierten Bedingungen.** Genau deshalb ist ein Vergleich mit der eigenen Vorgeschichte zulässig.
 
-## 4 Teilbewertungen
+**Bekannte Schwäche des Ansatzes:** Ist die Pflanze bereits in der Referenzphase krank, wird dieser Zustand als „gesund" definiert. Eine schleichende Verschlechterung ab dem ersten Tag wird dann nicht erkannt. Gegenmaßnahme: Die Referenzphase wird zusätzlich manuell per Sichtprüfung der Kontrollbilder freigegeben (siehe 4).
 
-| Feld | Eingang | Gewicht im Farbteil |
-|---|---|---:|
-| `score_gruen` | Farbverteilung (42 %), Verlust des normierten Grünanteils (26 %), lokale Abweichung in Lab (32 %) | 0,30 |
-| `score_gelb` | Zusätzliche Gelb-/Warmfärbung an gleichen Blattpositionen; Braun bleibt enthalten | 0,20 |
-| `score_braun` | Zusätzliche dunkle Warmfärbung mit Verschiebung in Richtung Rot; reine Abdunkelung allein reicht nicht | 0,25 |
-| `score_saettigung` | Logarithmische Änderung der mittleren Sättigung | 0,15 |
-| `score_farbton` | Kreisförmige Farbtonänderung und Abstand der Lab-Farbkomponenten | 0,10 |
+---
 
-Lab bezeichnet den Farbraum der Internationalen Beleuchtungskommission (CIE). Für die lokale Farbänderung wird die Helligkeitskomponente L* nicht als Stress gewertet. Aus den Farbkomponenten a* und b* wird pro gemeinsamem Blattpixel der Abstand berechnet. Kleine Abweichungen werden gedämpft; stärkere Abweichungen werden über die gemeinsam sichtbare Fläche gemittelt. So gehen lokale Flecken in die Bewertung ein, auch wenn sie die mittlere Farbe des ganzen Blatts kaum ändern. Die Farb- und Warnschwellen sind technische Startwerte.
+## 3. Eingangsgrößen
 
-Für alle Teilbewertungen gilt mit nichtnegativem Abstand d und Halbwert h:
+Alle Eingangsgrößen stammen aus der Computer-Vision-Pipeline (A-M2) und liegen je Aufnahme in `ergebnisse.csv` vor.
 
-```text
-Teilscore = 100 × exp(−ln(2) × (d / h)²)
+| Merkmal | Bedeutung | Verwendung |
+|---|---|---|
+| `gruenindex` | G / (R+G+B) über allen Pflanzenpixeln | Chlorophyllgehalt |
+| `mittel_s` | mittlere HSV-Sättigung | Farbkraft, Vitalität |
+| `mittel_h` | mittlerer HSV-Farbton | Verschiebung des Grüntons |
+| `gelbanteil_pct` | Anteil gelber Pixel an der Pflanzenfläche | Chlorose |
+| `braunanteil_pct` | Anteil brauner Pixel an der Pflanzenfläche | Nekrose |
+| `brauchbar` | Qualitätsprüfung bestanden | Filter |
+| `blattflaeche_cm2` | projizierte Blattfläche | Wachstumsstillstand |
+| `stunden_seit_start` | Zeitachse | Trend, Stillstand |
+
+Nicht bewertet werden `pflanzen_pixel` und `bedeckungsgrad_pct` als Gesundheitsgrößen: Eine wachsende Pflanze wird zwangsläufig größer, Größe ist also kein Gesundheitssignal. Wachstum geht ausschließlich über die **Rate** ein (siehe 8).
+
+---
+
+## 4. Referenzphase
+
+Die Referenz wird aus den **ersten 10 als brauchbar eingestuften Aufnahmen** gebildet. Verwendet wird jeweils der **Median**, nicht der Mittelwert, weil der Median gegen einzelne Ausreißer unempfindlich ist.
+
+Referenzgrößen: `gruenindex`, `mittel_s`, `mittel_h`, `gelbanteil_pct`, `braunanteil_pct`.
+
+Bedingungen:
+
+1. Mindestens 3 brauchbare Bilder, sonst erfolgt keine Bewertung (Kategorie `keine_referenz`).
+2. Die Kontrollbilder der Referenzphase werden **manuell gesichtet und freigegeben**. Das Datum der Freigabe wird protokolliert.
+3. Die Referenz wird bei jedem Programmlauf neu aus denselben ersten Bildern gebildet und ist damit reproduzierbar.
+4. Ein Eingriff nach BB-SPEC-IMG-001 Abschnitt 8.2 (Kamera verschoben, nachfokussiert, Hintergrund gewechselt) macht die bisherige Referenz **ungültig**. Die Messreihe beginnt in diesem Fall neu.
+
+---
+
+## 5. Teilscores und Kennlinien
+
+Jeder Teilscore läuft von 0 bis 100 und ist eine **lineare Kennlinie** zwischen einem Wert für 100 Punkte und einem Wert für 0 Punkte. Linear und nicht z. B. sigmoid, weil jeder Zwischenwert von Hand nachrechenbar sein soll — eine Anforderung an die Verteidigbarkeit der Arbeit.
+
+| Teilscore | Eingangsgröße | 100 Punkte bei | 0 Punkte bei |
+|---|---|---|---|
+| `score_gruen` | `gruenindex` / Referenz | ≥ 1,00 | ≤ 0,85 |
+| `score_saettigung` | `mittel_s` / Referenz | ≥ 0,95 | ≤ 0,70 |
+| `score_gelb` | `gelbanteil_pct` − Referenz | ≤ 0 Prozentpunkte | ≥ 25 Prozentpunkte |
+| `score_braun` | `braunanteil_pct` − Referenz | ≤ 0 Prozentpunkte | ≥ 10 Prozentpunkte |
+| `score_farbton` | \|`mittel_h` − Referenz\| | ≤ 2 | ≥ 12 |
+
+**Begründung der Bandbreiten:**
+
+Der Braunbereich ist mit 10 Prozentpunkten enger gefasst als der Gelbbereich mit 25. Vergilbung unterer Blätter ist bei Basilikum teilweise normale Alterung und reversibel; braunes Gewebe ist abgestorben und wächst nicht zurück. Gleicher Flächenanteil bedeutet also nicht gleiche Schwere, und die Kennlinie bildet das ab.
+
+Sättigung darf bis 0,95 des Referenzwerts fallen, ohne Punktverlust — kleine Schwankungen sind normal. Unter 0,70 ist die Farbkraft so weit eingebrochen, dass ein deutlicher Stresszustand vorliegt.
+
+---
+
+## 6. Gewichtung und Gesamtscore
+
+```
+gesundheit_roh = 0,30 · score_gruen
+               + 0,25 · score_gelb
+               + 0,20 · score_braun
+               + 0,15 · score_saettigung
+               + 0,10 · score_farbton
 ```
 
-Wo angegeben, wird vor der Berechnung eine Toleranz abgezogen. Innerhalb der Toleranz werden 100 Punkte erreicht. Beispiele: Der zusätzliche Gelb-/Warmanteil hat eine Toleranz von 0,4 und einen Halbwert von 8 Prozentpunkten; für Braun sind es 0,3 und 4,5 Prozentpunkte. Die Teilwerte sind technische Ähnlichkeitswerte und keine Wahrscheinlichkeiten.
+Summe der Gewichte = 1,0, Ergebnis daher wieder 0 bis 100.
 
-## 5 Struktur und Rohscore
+**Zur Skala:** Ursprünglich war 0–10 vorgesehen. Auf 0–100 umgestellt, weil der
+Bench-Harness von Grid Tanushi (13.09.2026) bereits einen `healthScore` auf
+0–100 ausgibt. Zwei Skalen für dieselbe Größe im selben Projekt wären eine
+sichere Fehlerquelle, spätestens beim Eintrag in die Datenbank.
 
-Struktur wird mit 15 % einbezogen, wenn die Ansicht vergleichbar ist und weder die aktuelle Maske noch die Referenz den Aufnahme- oder Auswerterand berührt. Die Farbgewichte werden dafür insgesamt auf 85 % skaliert. Andernfalls wird ausschließlich Farbe bewertet.
+**Begründung:** Der Grünindex erhält das höchste Gewicht, weil er direkt mit dem Chlorophyllgehalt und damit der Photosyntheseleistung zusammenhängt. Gelb und Braun folgen als konkrete Schadbilder. Sättigung und Farbton sind unspezifischer und wirken eher unterstützend; sie erhalten deshalb weniger Gewicht, werden aber nicht weggelassen, weil sie früher reagieren als die Flächenanteile.
 
-Bei der Struktur zählt vor allem der Verlust sichtbarer Blattfläche. Bis 3,5 % Flächenverlust werden toleriert. Die Kompaktheit wird nur ergänzend berücksichtigt und verändert ohne Flächenverlust den Strukturwert nicht. Ein hinzugewachsenes Blatt wird dadurch nicht automatisch als Schaden gewertet.
+Die Gewichte sind **Startwerte**, keine Naturkonstanten. Sie sind in der Implementierung als eine Konstante zusammengefasst und werden im Testbetrieb (PSP 3.8) anhand realer Pflanzenzustände nachjustiert. Jede Änderung ist zu protokollieren.
 
-Der Rohwert besteht zu 65 % aus dem gewichteten arithmetischen und zu 35 % aus dem gewichteten geometrischen Mittel der Teilwerte. Für das geometrische Mittel wird jeder Teilwert intern mindestens mit 0,01 angesetzt. So wirkt ein deutlich schlechter Teilwert sichtbar auf den Gesamtwert, ohne den Index allein auf null zu setzen.
+---
 
-## 6 Zeitliche Darstellung
+## 7. Glättung und Kategorien
 
-`gesundheit_roh` ist die Bewertung der einzelnen Aufnahme. `gesundheit` wird zeitabhängig exponentiell geglättet. Der neue Anteil wird mit `1 - exp(-Zeitabstand / 2 Stunden)` bestimmt und auf 0,25 bis 1 begrenzt. Damit werden größere Zeitabstände stärker berücksichtigt. Über einen Wechsel zwischen reinem Farbvergleich und Vergleich mit Struktur wird nicht geglättet.
+### 7.1 Glättung
 
-Für den 24-Stunden-Trend wird ein gültiger Vergleich desselben Modus zwischen 22 und 26 Stunden Abstand gesucht. Verwendet wird die Aufnahme mit dem kleinsten Abstand zu 24 Stunden. Fehlt sie, bleibt `gesundheit_trend_24h` leer. Die Einheit sind Scorepunkte, keine Prozentänderung.
+Der Anzeigewert `gesundheit` ist der **gleitende Median der letzten 5 Rohscores**, nicht der Rohwert selbst. Grund: Ein einzelnes schlecht belichtetes oder verwackeltes Bild darf keinen Alarm auslösen.
 
-| Bereich | Ausgabekategorie |
-|---|---|
-| ab 85 | `sehr gut` |
-| ab 70 und unter 85 | `gut` |
-| ab 50 und unter 70 | `beobachten` |
-| ab 30 und unter 50 | `auffaellig` |
-| unter 30 | `kritisch` |
-| keine gültige Bewertung | `keine_daten` |
+Das Fenster ist in **Bildern** definiert, nicht in Stunden. Bei dem in BB-SPEC-IMG-001 festgelegten Intervall von 30 Minuten entsprechen 5 Bilder etwa 2,5 Stunden — eine sinnvolle Verzögerung. **Wird das Aufnahmeintervall geändert, muss dieser Wert mit angepasst werden**, sonst verzögert die Glättung die Erkennung um Tage statt Stunden.
 
-Die Worte „sehr gut“ und „kritisch“ beziehen sich auf diesen relativen Index. Eine Pflanzenart oder Erkrankung wird damit nicht bestimmt.
+### 7.2 Kategorien
 
-## 7 Meldungen
+| Score | Kategorie | Bedeutung |
+|---|---|---|
+| 85 – 100 | sehr gut | keine Abweichung vom Referenzzustand |
+| 70 – 85 | gut | geringe Abweichung, kein Handlungsbedarf |
+| 50 – 70 | beobachten | erkennbare Abweichung, Ursache prüfen |
+| 30 – 50 | auffällig | deutliche Verschlechterung, Eingriff erwägen |
+| 0 – 30 | kritisch | massive Abweichung, sofortige Prüfung |
 
-Mögliche beobachtete Veränderungen werden als `farbveraenderung`, `gelbanteil_gestiegen`, `braunanteil_gestiegen`, `saettigung_veraendert` oder `sichtbare_blattflaeche_gesunken` ausgegeben. Mehrere Werte werden mit Semikolon getrennt. Diese Namen ersetzen die früheren diagnostisch klingenden Warnungen im alten Entwurf.
+### 7.3 Trend
 
-Lichtprobleme stehen bei den Qualitätsmerkmalen und im Gesundheitsstatus, beispielsweise `licht_hintergrund_unzureichend`, `lichtkorrektur_nicht_stabil` oder `lichtvergleich_zu_wenig_blattgewebe`. Eine erfolgreiche Korrektur wird als Metadatum im JSON dokumentiert und nicht als Pflanzenkrankheit gemeldet.
+Zusätzlich wird `gesundheit_trend_24h` als Differenz zum Wert vor 24 Stunden ausgegeben. Für die Beurteilung ist die **Richtung oft aussagekräftiger als der Absolutwert**: Ein Score von 70 mit fallender Tendenz ist bedenklicher als ein stabiler Score von 60.
 
-## 8 Ausgabe und Datenbank
+---
 
-CSV und JSON werden aus denselben gerundeten Datensätzen erzeugt. JSON enthält echte Zahlen, boolesche Werte und `null`. Die CSV dient der Kontrolle mit Tabellenprogrammen. Sie wird gemeinsam mit Masken, Kontrollbildern, JSON und Diagrammen ersetzt. Bei einem Schreibfehler bleibt die vorherige zusammengehörige Ausgabe erhalten; eine gesperrte Excel-Datei muss vor einem erneuten Lauf geschlossen werden. Bei unbrauchbaren Bildern oder fehlender Vergleichbarkeit bleiben Scorefelder leer; es wird kein alter Wert als neuer Wert übernommen.
+## 8. Warnmeldungen
 
-Die Gesundheitsdaten werden unter `health_assessment` ausgegeben, getrennt von `image_measurements`. `health_status` und `scoring_version` gehören zur Erklärung des Wertes. Die genaue HTTP-Anbindung und die Datenbank-IDs müssen mit Edona abgestimmt werden. Die konkreten Messfelder und Einheiten werden im Merkmalsverzeichnis beschrieben.
+Neben dem Zahlenwert wird je Aufnahme eine Textspalte `gesundheitswarnung` gesetzt. Eine Zahl allein sagt nicht, *was* das Problem ist.
 
-## 9 Technische Prüfung und Grenzen
+| Warnung | Auslöser | Typische Ursache |
+|---|---|---|
+| `vergilbung` | Gelbanteil ≥ 8 Prozentpunkte über Referenz | Stickstoffmangel, Staunässe, Lichtmangel |
+| `nekrose` | Braunanteil ≥ 3 Prozentpunkte über Referenz | Verbrennung, Krankheit, abgestorbenes Gewebe |
+| `chlorose` | Grünindex ≤ 93 % der Referenz | Nährstoffmangel, Wurzelprobleme |
+| `entfaerbung` | Sättigung ≤ 88 % der Referenz | Welke, allgemeiner Stress |
+| `wachstumsstillstand` | keine Flächenzunahme über 48 h | Wasser-, Licht- oder Nährstoffmangel |
 
-Geprüft wurden ein echtes BioBox-Foto, Varianten desselben Fotos mit simulierter Lichtänderung und künstlich eingefärbte Blattstellen. Zusätzlich wurde eine künstliche Pflanzenszene mit bekannten Blattgrenzen für die Masken-, Farb-, Flächen- und Zeitreihentests verwendet. Das Verfahren wurde auf Wachstum ohne Verfärbung, Gelb- und Braunfärbung, schlechte Belichtung, geänderte Kameraansicht und fehlende Messwerte getestet.
+Die Zuordnung der Ursachen ist ausdrücklich **hinweisend, nicht diagnostisch**. Das System stellt fest, dass sich etwas verändert hat; die Ursache muss der Betrachter beurteilen.
 
-Ein stabiler Index bei den getesteten Lichtvarianten bedeutet keine vollständige Lichtunabhängigkeit. Ebenso sind die künstlichen Verfärbungen kein Nachweis von Pflanzenkrankheiten. Für eine fachliche Abnahme werden weitere unveränderte Originalaufnahmen derselben Pflanze unter dokumentierten Bedingungen und eine überprüfte Referenz benötigt.
+`wachstumsstillstand` ist die einzige nicht farbbasierte Warnung. Sie ist aufgenommen, weil eine Pflanze in Stillstand gehen kann, ohne die Farbe zu ändern — dieser Fall bliebe rein farbbasiert unentdeckt.
 
-## 10 Grundlagen
+---
 
-- BB-SPEC-IMG-001 und BB-REF-MERKMALE-001, aktueller gemeinsamer Stand.
-- OpenCV, GrabCut: https://docs.opencv.org/4.x/d8/d83/tutorial_py_grabcut.html
-- OpenCV, Histogrammvergleich: https://docs.opencv.org/4.x/d8/dc8/tutorial_histogram_comparison.html
+## 9. Grenzen des Verfahrens
+
+Diese Abschnitte gehören in die Dokumentation, weil sie in der Verteidigung ohnehin gefragt werden.
+
+**9.1 Die Segmentierung versagt genau dann, wenn die Pflanze krank ist.**
+Im Test mit simulierter Vergilbung zerfiel die Maske ab einem Gelbanteil von etwa 60 % in Teilflächen und die Aufnahmen wurden als `zersplittert` verworfen. Ursache: Die Segmentierung beruht auf Excess Green (2G − R − B). Verliert die Pflanze ihr Grün, verliert der Index sein Trennmerkmal. Das ist eine grundsätzliche Eigenschaft des Verfahrens, kein Programmierfehler. Konsequenz: Bei sehr starker Vergilbung wird der letzte gültige Score fortgeschrieben, statt fälschlich Werte zu berechnen. Für schwere Schadfälle ist die Aussagekraft dadurch begrenzt.
+
+**9.2 Nur die Oberseite wird bewertet.**
+Die Top-Down-Kamera sieht die oberste Blattschicht. Vergilbung beginnt bei Basilikum typischerweise an den **unteren** Blättern und wird daher spät erkannt.
+
+**9.3 Der Index ersetzt keine Sichtprüfung.**
+Schädlinge, Mehltau und Wurzelprobleme sind aus einem Farbmittelwert nicht ableitbar.
+
+**9.4 Die Referenz ist nur so gut wie die Pflanze zu Beginn.**
+Siehe Abschnitt 2.
+
+**9.5 Die Farbwerte hängen vom Spektrum der Beleuchtung ab.**
+Der Bench-Report vom 13.09.2026 hat unter unkontrolliertem Tageslicht ein
+Grundrauschen von rund 3 Punkten `healthScore` über 12 Minuten gemessen, bei
+völlig unveränderter Pflanze. Ursache war die Belichtungsautomatik in Verbindung
+mit wechselndem Licht. Für die BioBox ist das weitgehend konstruktiv ausgeschlossen,
+weil BB-SPEC-IMG-001 Belichtung, Weißabgleich und LED-Zustand für jede Aufnahme
+festschreibt. Offen bleibt der Einfluss des LED-Spektrums selbst, siehe H-6.
+
+**9.6 Die Kennlinien sind noch nicht an realen Pflanzen kalibriert.**
+Alle Zahlenwerte in Abschnitt 5 und 8 sind begründete Startwerte aus Tests mit simulierten Bildern. Die Kalibrierung ist Gegenstand von PSP 3.8.
+
+---
+
+## 10. Validierung (PSP 3.8)
+
+**10.1 Funktionstest mit simulierten Verläufen**
+20 Bilder derselben Pflanze, ab Bild 11 künstlich zunehmend vergilbt.
+Erwartung: konstant 10 in der Referenzphase, danach monoton fallend, Warnungen in der Reihenfolge Vergilbung → Chlorose → Nekrose.
+*Ergebnis: bestätigt. Score fiel von 100 auf 21; Warnungen erschienen in der erwarteten Reihenfolge.*
+
+**10.2 Nullprobe**
+Gesunde Pflanze über 7 Tage ohne Eingriff.
+Abnahmekriterium: Score bleibt in der Kategorie `sehr gut`, keine Fehlalarme.
+
+**10.3 Provokationstest**
+Eine Pflanze wird kontrolliert unter Stress gesetzt (z. B. 5 Tage ohne Bewässerung). Der Zeitpunkt der ersten Warnung wird mit der ersten visuellen Auffälligkeit für einen menschlichen Betrachter verglichen.
+Kernfrage: Erkennt das System den Stress **früher** als das bloße Auge? Genau darin liegt der Nutzen des Systems.
+
+**10.4 Abgleich mit unabhängiger Einschätzung**
+Mindestens 20 Aufnahmen werden von einer Person unabhängig auf einer Skala von 1 bis 10 beurteilt. Die Skala der manuellen Beurteilung wird dabei linear auf 0–100 gestreckt. Verglichen wird die Rangkorrelation zwischen manueller Beurteilung und berechnetem Score.
+Abnahmekriterium: Rangkorrelation ≥ 0,7.
+
+**10.5 Robustheitstest**
+Bewusst schlechte Bilder (unscharf, überbelichtet, Marker verdeckt) werden eingespeist. Abnahmekriterium: Diese Bilder gehen nicht in die Bewertung ein, und die Glättung verhindert einen Score-Sprung.
+
+---
+
+## 11. Schnittstelle zur Webplattform (PSP 3.7)
+
+Anforderung an Edona Peraj: Ergänzung der Tabelle `image_measurements` um folgende Felder. Im Konzeptentwurf ist bisher nur `stress_score` vorgesehen; das reicht für die Darstellung nicht aus.
+
+```sql
+health_score          NUMERIC(5,1),   -- geglaetteter Wert 0..100
+health_score_raw      NUMERIC(5,1),   -- ungeglaetteter Wert
+health_category       TEXT,           -- sehr gut | gut | beobachten | auffaellig | kritisch
+health_trend_24h      NUMERIC(5,1),
+health_warnings       TEXT,           -- semikolongetrennt
+score_green           NUMERIC(5,1),
+score_yellow          NUMERIC(5,1),
+score_brown           NUMERIC(5,1),
+score_saturation      NUMERIC(5,1),
+score_hue             NUMERIC(5,1),
+scoring_version       TEXT NOT NULL   -- Version der Gewichte und Kennlinien
+```
+
+`scoring_version` ist verpflichtend: Werden Gewichte oder Kennlinien angepasst, sind alte und neue Scores nicht mehr vergleichbar. Ohne dieses Feld ist später nicht rekonstruierbar, welche Regel einen gespeicherten Wert erzeugt hat.
+
+Vorschlag für die Darstellung im Dashboard: Gesamtscore als Zahl mit Kategoriefarbe, darunter die fünf Teilscores als Balken. Der Nutzen liegt in der Aufschlüsselung — ein Wert von 60 mit `score_braun` = 20 bedeutet etwas völlig anderes als 60 mit `score_farbton` = 20.
+
+---
+
+## 12. Offene Punkte
+
+| Nr. | Punkt | Zu klären bis |
+|---|---|---|
+| H-1 | Kalibrierung aller Kennlinien an realer Pflanze | PSP 3.8 |
+| H-2 | Gewichtung nach Provokationstest überprüfen | PSP 3.8 |
+| H-3 | Glättungsfenster an tatsächliche Aufnahmerate anpassen | nach Inbetriebnahme |
+| H-4 | Umgang mit sehr starker Vergilbung (siehe 9.1) | offen |
+| H-5 | Erfassung unterer Blattetagen (Seitenkamera?) — optionales Ziel A-O1 | offen |
+| H-6 | Verhalten der Farbmetriken unter rot/blau-lastigem LED-Spektrum; ggf. Graukarte im Bildfeld | vor M2 |

@@ -18,6 +18,9 @@ Maske pruefen/korrigieren: python analyse.py --maske-korrigieren bilder/FOTO.jpg
 Import einer geprueften Originalmaske: zusaetzlich --korrekturmaske MASKE.png
 
 Jeder Lauf berechnet alle ausgewaehlten Bilder erneut, auch alte Aufnahmen.
+Fotoabruf und lokale Auswertung sind unabhaengig: Auch bei einem SSH-Fehler
+werden alle bereits im Bilderordner vorhandenen Fotos erneut ausgewertet.
+Nach dem Abruf wird der Ordner neu eingelesen, auch fuer selbst ergaenzte Fotos.
 Masken, Kontrollbilder, CSV/JSON und Grafiken werden gemeinsam ersetzt.
 Bei gesperrten Ausgabedateien bleibt die vorherige komplette Auswertung erhalten.
 Ein Skript-Hash verhindert alte automatische Referenzmasken nach Codeaenderungen.
@@ -105,7 +108,7 @@ CHROMA_MIN = 4            # a*-Mindestabstand von Grau; darunter keine Pflanze
 RATE_MIN_MINUTEN = 30    # Kurzer Vergleich; hohe Schwankung moeglich
 RATE_STABIL_STUNDEN = 12  # Wenn verfuegbar, laengeren Abstand bevorzugen
 SCORING_VERSION = "4.0.0"
-ANALYSE_VERSION = "4.4.0"
+ANALYSE_VERSION = "4.4.1"
 PIPELINE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 ENDUNGEN = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")
 CSV_DEZIMALKOMMA = True
@@ -283,7 +286,7 @@ def pi_bilder_holen(neue_aufnahme=False):
     return [BILDER_ORDNER / f"biobox_{s}.jpg" for s in auswahl]
 
 def vorhandene_bilder(ordner):
-    """Alle lesbaren Bilddateien eines Ordners, zeitlich sortiert."""
+    """Alle Bilddateien eines Ordners; Lesbarkeit und Aufnahmezeit prueft die Analyse."""
     ordner = Path(ordner)
     if not ordner.is_dir():
         return []
@@ -2524,30 +2527,40 @@ def main():
         parser.error("--referenz-mm und --punkte gehoeren zu --massstab-bild")
     cv2.setNumThreads(2)
     lokal = args.lokal or args.ordner
-    if lokal:
-        ziel = Path(lokal).expanduser().resolve()
+    # 1. Der Pi-Abruf aktualisiert nur den lokalen Bildbestand. Sein Erfolg
+    # entscheidet nicht darueber, ob vorhandene Bilder ausgewertet werden.
+    if not lokal:
+        abruf_ok = True
+        try:
+            pi_bilder_holen(neue_aufnahme=False)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, tarfile.TarError) as fehler:
+            abruf_ok = False
+            print(f"Fotoabruf fehlgeschlagen: {fehler}", flush=True)
+        if args.nur_bild:
+            return 0 if abruf_ok else 1
+        if not abruf_ok:
+            print("Der Pi-Abruf wird uebersprungen; die lokale Auswertung startet trotzdem.", flush=True)
+
+    # 2. Immer frisch aus dem lokalen Ordner lesen, unabhaengig vom Abruf.
+    # Dadurch werden auch manuell hinzugefuegte und aeltere Bilder erfasst.
+    ziel = Path(lokal).expanduser().resolve() if lokal else BILDER_ORDNER.expanduser().resolve()
+    ausgabe = args.ausgabe or ((ziel.parent.parent if ziel.is_file() else ziel.parent)/"auswertung")
+    try:
         if ziel.is_file():
             pfade = [ziel]
         elif ziel.is_dir():
             pfade = vorhandene_bilder(ziel)
-        else:
+        elif lokal:
             parser.error(f"Pfad nicht gefunden: {ziel}")
-        ausgabe = args.ausgabe or ((ziel.parent.parent if ziel.is_file() else ziel.parent)/"auswertung")
-    else:
-        try:
-            pfade = pi_bilder_holen(neue_aufnahme=False)
-        except (OSError, RuntimeError, subprocess.SubprocessError, tarfile.TarError) as fehler:
-            # Kein stiller Rueckfall auf alte Fotos: sonst scheinen neue
-            # Stundenaufnahmen verarbeitet worden zu sein, obwohl der Abruf scheiterte.
-            print(f"Fotoabruf fehlgeschlagen: {fehler}")
-            print("Keine Analyse mit veralteten lokalen Fotos gestartet. Bestehende Auswertung bleibt erhalten.")
-            return 1
-        if args.nur_bild:
-            return 0
-        ausgabe = args.ausgabe or BILDER_ORDNER.parent/"auswertung"
-    if not pfade:
-        print("Keine Bilder gefunden. Keine vorhandene Auswertung geloescht.")
+        else:
+            pfade = []
+    except OSError as fehler:
+        print(f"Lokaler Bilderordner konnte nicht eingelesen werden: {fehler}")
         return 1
+    if not pfade:
+        print(f"Keine Bilder gefunden in: {ziel}. Vorhandene Auswertung bleibt erhalten.")
+        return 1
+    print(f"Lokale Auswertung: {len(pfade)} Bilder aus {ziel}; alle Ausgaben werden neu berechnet.", flush=True)
     try:
         analysieren(pfade, ausgabe, args.mm_pro_pixel, args.einzelbilder, args.neue_referenz)
     except (OSError, ValueError) as fehler:
