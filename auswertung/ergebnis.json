@@ -1,0 +1,1273 @@
+[
+  {
+    "device_id": null,
+    "image": {
+      "file_name": "basil03_20250116T120005Z.png",
+      "captured_at": "2025-01-16T12:00:05Z",
+      "storage_path": null,
+      "checksum_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830"
+    },
+    "image_measurements": {
+      "plant_pixels": 97229,
+      "leaf_area_cm2": null,
+      "diameter_mm": null,
+      "compactness": 0.083,
+      "growth_rate_cm2_per_day": null,
+      "growth_rate_pct_per_day": null,
+      "mean_r": 140.1,
+      "mean_g": 162.1,
+      "mean_b": 78.4,
+      "mean_hue": 38.4,
+      "mean_saturation": 141.3,
+      "greenness_index": 0.4413,
+      "yellow_fraction_pct": 35.91,
+      "brown_fraction_pct": 0.0,
+      "mm_per_px": null,
+      "scale_source": "nicht_kalibriert",
+      "sharpness": 1547.5,
+      "noise": 1.07,
+      "image_brightness": 166.1,
+      "largest_component_pct": 100.0,
+      "color_hex": "#8ca24e",
+      "pipeline_version": "4.8.1",
+      "overexposed_pct": 3.15,
+      "quality_flags": "",
+      "usable": true
+    },
+    "health_assessment": {
+      "health_status": "referenzfoto_start_der_ansicht",
+      "scoring_version": "4.1.0",
+      "health_score": null,
+      "health_score_raw": null,
+      "health_category": "keine_daten",
+      "health_trend_24h": null,
+      "health_warnings": "",
+      "score_green": null,
+      "score_yellow": null,
+      "score_brown": null,
+      "score_saturation": null,
+      "score_hue": null
+    },
+    "analysis": {
+      "version": "4.8.1",
+      "health_status": "referenzfoto_start_der_ansicht",
+      "pipeline_sha256": "f3cfdf92f102041c66c2c34f52f14b9caf2d172826b4d4802e2bd8652af58444",
+      "series_id": "pflanze-01",
+      "image_size": [
+        2000,
+        1010
+      ],
+      "camera_transform": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "twin_view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "twin_camera_transform": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "lens_profile_sha256": null,
+      "mask_clipped": false,
+      "capture_time_source": "name",
+      "hours_since_start": 0.0,
+      "view_number": 1,
+      "mask_source": "automatisch",
+      "illumination": {
+        "method": "referenz",
+        "corrected": false,
+        "background_error": null,
+        "excluded_leaf_pct": null,
+        "common_leaf_pct": null,
+        "verified_color_region_pct": null
+      },
+      "measurement_mode": "pixels",
+      "scale_status": "nicht_kalibriert",
+      "lens_corrected": false,
+      "reference_file": "basil03_20250116T120005Z.png",
+      "reference_captured_at": "2025-01-16T12:00:05Z",
+      "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "reference_approved": false,
+      "is_reference": true,
+      "health_comparison_mode": null,
+      "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "growth_reference_file": null,
+      "growth_interval_hours": null,
+      "growth_comparison_mode": null,
+      "pixel_measurement": {
+        "leaf_coverage_pct": 4.813,
+        "visible_pixel_change_per_day": null,
+        "reference_file": null
+      },
+      "missing_values": {
+        "storage_path": "externer_import_noch_keinem_serverpfad_zugeordnet",
+        "leaf_area_cm2": "nicht_kalibriert",
+        "diameter_mm": "nicht_kalibriert",
+        "mm_per_px": "nicht_kalibriert",
+        "growth_rate_cm2_per_day": "keine_fruehere_vergleichsaufnahme",
+        "growth_rate_pct_per_day": "keine_fruehere_vergleichsaufnahme",
+        "blattpixel_aenderung_pro_tag": "kein_frueheres_brauchbares_bild_gleicher_aufloesung_mit_mindestabstand",
+        "health_trend_24h": "kein_gueltiger_score_vor_24_stunden_plusminus_2h",
+        "health_score": "referenzfoto_start_der_ansicht",
+        "health_score_raw": "referenzfoto_start_der_ansicht",
+        "score_green": "referenzfoto_start_der_ansicht",
+        "score_yellow": "referenzfoto_start_der_ansicht",
+        "score_brown": "referenzfoto_start_der_ansicht",
+        "score_saturation": "referenzfoto_start_der_ansicht",
+        "score_hue": "referenzfoto_start_der_ansicht"
+      }
+    }
+  },
+  {
+    "device_id": null,
+    "image": {
+      "file_name": "basil03_20250119T120005Z.png",
+      "captured_at": "2025-01-19T12:00:05Z",
+      "storage_path": null,
+      "checksum_sha256": "2a07ef2b66e5f13712a7edfa8fc9b8e95f2b381e99f866a0dbf95bcfe9f40e8e"
+    },
+    "image_measurements": {
+      "plant_pixels": 76768,
+      "leaf_area_cm2": null,
+      "diameter_mm": null,
+      "compactness": 0.0296,
+      "growth_rate_cm2_per_day": null,
+      "growth_rate_pct_per_day": -6.949,
+      "mean_r": 77.5,
+      "mean_g": 91.7,
+      "mean_b": 40.8,
+      "mean_hue": 38.8,
+      "mean_saturation": 156.6,
+      "greenness_index": 0.4605,
+      "yellow_fraction_pct": 28.49,
+      "brown_fraction_pct": 0.0,
+      "mm_per_px": null,
+      "scale_source": "nicht_kalibriert",
+      "sharpness": 1704.0,
+      "noise": 1.8,
+      "image_brightness": 104.7,
+      "largest_component_pct": 90.0,
+      "color_hex": "#4d5c29",
+      "pipeline_version": "4.8.1",
+      "overexposed_pct": 0.0,
+      "quality_flags": "",
+      "usable": true
+    },
+    "health_assessment": {
+      "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche",
+      "scoring_version": "4.1.0",
+      "health_score": 77.0,
+      "health_score_raw": 77.0,
+      "health_category": "gut",
+      "health_trend_24h": null,
+      "health_warnings": "farbveraenderung",
+      "score_green": 56.7,
+      "score_yellow": 99.8,
+      "score_brown": null,
+      "score_saturation": 83.3,
+      "score_hue": 88.6
+    },
+    "analysis": {
+      "version": "4.8.1",
+      "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche",
+      "pipeline_sha256": "f3cfdf92f102041c66c2c34f52f14b9caf2d172826b4d4802e2bd8652af58444",
+      "series_id": "pflanze-01",
+      "image_size": [
+        2000,
+        1010
+      ],
+      "camera_transform": [
+        [
+          0.998758037799323,
+          -0.0005506261279535941,
+          1.9907126789657479
+        ],
+        [
+          0.0005506261279535941,
+          0.998758037799323,
+          1.3373282408980232
+        ]
+      ],
+      "twin_view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "twin_camera_transform": [
+        [
+          0.998758037799323,
+          -0.0005506261279535941,
+          1.9907126789657479
+        ],
+        [
+          0.0005506261279535941,
+          0.998758037799323,
+          1.3373282408980232
+        ]
+      ],
+      "lens_profile_sha256": null,
+      "mask_clipped": false,
+      "capture_time_source": "name",
+      "hours_since_start": 72.0,
+      "view_number": 1,
+      "mask_source": "automatisch",
+      "illumination": {
+        "method": "chromatik_teilflaeche",
+        "corrected": true,
+        "background_error": 12.089,
+        "excluded_leaf_pct": 4.85,
+        "common_leaf_pct": 64.69,
+        "verified_color_region_pct": 100.0
+      },
+      "measurement_mode": "pixels",
+      "scale_status": "nicht_kalibriert",
+      "lens_corrected": false,
+      "reference_file": "basil03_20250116T120005Z.png",
+      "reference_captured_at": "2025-01-16T12:00:05Z",
+      "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "reference_approved": false,
+      "is_reference": false,
+      "health_comparison_mode": "farbverhaeltnis_teilflaeche",
+      "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "growth_reference_file": "basil03_20250116T120005Z.png",
+      "growth_interval_hours": 72.0,
+      "growth_comparison_mode": "berechnet",
+      "pixel_measurement": {
+        "leaf_coverage_pct": 3.8,
+        "visible_pixel_change_per_day": -6820.3,
+        "reference_file": "basil03_20250116T120005Z.png"
+      },
+      "missing_values": {
+        "storage_path": "externer_import_noch_keinem_serverpfad_zugeordnet",
+        "leaf_area_cm2": "nicht_kalibriert",
+        "diameter_mm": "nicht_kalibriert",
+        "mm_per_px": "nicht_kalibriert",
+        "growth_rate_cm2_per_day": "kein_gemeinsamer_massstab_fuer_beide_aufnahmen",
+        "health_trend_24h": "kein_gueltiger_score_vor_24_stunden_plusminus_2h",
+        "score_brown": "brauntoene_ohne_bestaetigte_helligkeit_nicht_bewertet"
+      }
+    }
+  },
+  {
+    "device_id": null,
+    "image": {
+      "file_name": "basil03_20250121T120005Z.png",
+      "captured_at": "2025-01-21T12:00:05Z",
+      "storage_path": null,
+      "checksum_sha256": "004d54671484f6b2578afd77af06b224938a78620831f430974f3553f9289692"
+    },
+    "image_measurements": {
+      "plant_pixels": 94502,
+      "leaf_area_cm2": null,
+      "diameter_mm": null,
+      "compactness": 0.0318,
+      "growth_rate_cm2_per_day": null,
+      "growth_rate_pct_per_day": 11.596,
+      "mean_r": 81.2,
+      "mean_g": 95.6,
+      "mean_b": 42.1,
+      "mean_hue": 38.4,
+      "mean_saturation": 158.9,
+      "greenness_index": 0.4616,
+      "yellow_fraction_pct": 32.79,
+      "brown_fraction_pct": 0.0,
+      "mm_per_px": null,
+      "scale_source": "nicht_kalibriert",
+      "sharpness": 1759.5,
+      "noise": 1.86,
+      "image_brightness": 104.8,
+      "largest_component_pct": 96.1,
+      "color_hex": "#51602a",
+      "pipeline_version": "4.8.1",
+      "overexposed_pct": 0.0,
+      "quality_flags": "gesundheit_ueber_blattfarbverteilung",
+      "usable": true
+    },
+    "health_assessment": {
+      "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche;blattfarbverteilung",
+      "scoring_version": "4.1.0",
+      "health_score": 91.9,
+      "health_score_raw": 91.9,
+      "health_category": "sehr gut",
+      "health_trend_24h": null,
+      "health_warnings": "",
+      "score_green": 85.5,
+      "score_yellow": 100.0,
+      "score_brown": null,
+      "score_saturation": 92.7,
+      "score_hue": 94.2
+    },
+    "analysis": {
+      "version": "4.8.1",
+      "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche;blattfarbverteilung",
+      "pipeline_sha256": "f3cfdf92f102041c66c2c34f52f14b9caf2d172826b4d4802e2bd8652af58444",
+      "series_id": "pflanze-01",
+      "image_size": [
+        2000,
+        1010
+      ],
+      "camera_transform": [
+        [
+          0.9983877072954125,
+          0.00022122590707821196,
+          1.590113628810925
+        ],
+        [
+          -0.00022122590707821196,
+          0.9983877072954125,
+          0.7773836635622488
+        ]
+      ],
+      "twin_view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "twin_camera_transform": [
+        [
+          0.9983877072954125,
+          0.00022122590707821196,
+          1.590113628810925
+        ],
+        [
+          -0.00022122590707821196,
+          0.9983877072954125,
+          0.7773836635622488
+        ]
+      ],
+      "lens_profile_sha256": null,
+      "mask_clipped": false,
+      "capture_time_source": "name",
+      "hours_since_start": 120.0,
+      "view_number": 1,
+      "mask_source": "automatisch",
+      "illumination": {
+        "method": "chromatik_teilflaeche",
+        "corrected": true,
+        "background_error": 8.411,
+        "excluded_leaf_pct": 3.25,
+        "common_leaf_pct": 45.58,
+        "verified_color_region_pct": 100.0
+      },
+      "measurement_mode": "pixels",
+      "scale_status": "nicht_kalibriert",
+      "lens_corrected": false,
+      "reference_file": "basil03_20250116T120005Z.png",
+      "reference_captured_at": "2025-01-16T12:00:05Z",
+      "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "reference_approved": false,
+      "is_reference": false,
+      "health_comparison_mode": "blattverteilung_chromatik",
+      "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "growth_reference_file": "basil03_20250119T120005Z.png",
+      "growth_interval_hours": 48.0,
+      "growth_comparison_mode": "berechnet",
+      "pixel_measurement": {
+        "leaf_coverage_pct": 4.678,
+        "visible_pixel_change_per_day": 8867.0,
+        "reference_file": "basil03_20250119T120005Z.png"
+      },
+      "missing_values": {
+        "storage_path": "externer_import_noch_keinem_serverpfad_zugeordnet",
+        "leaf_area_cm2": "nicht_kalibriert",
+        "diameter_mm": "nicht_kalibriert",
+        "mm_per_px": "nicht_kalibriert",
+        "growth_rate_cm2_per_day": "kein_gemeinsamer_massstab_fuer_beide_aufnahmen",
+        "health_trend_24h": "kein_gueltiger_score_vor_24_stunden_plusminus_2h",
+        "score_brown": "brauntoene_ohne_bestaetigte_helligkeit_nicht_bewertet"
+      }
+    }
+  },
+  {
+    "device_id": null,
+    "image": {
+      "file_name": "basil03_20250124T120005Z.png",
+      "captured_at": "2025-01-24T12:00:05Z",
+      "storage_path": null,
+      "checksum_sha256": "7be57305a18bc882561c0bfb85f460cd4ac4766baea41100b8e8c29189ceda8d"
+    },
+    "image_measurements": {
+      "plant_pixels": 146151,
+      "leaf_area_cm2": null,
+      "diameter_mm": null,
+      "compactness": 0.019,
+      "growth_rate_cm2_per_day": null,
+      "growth_rate_pct_per_day": null,
+      "mean_r": 85.4,
+      "mean_g": 99.9,
+      "mean_b": 45.5,
+      "mean_hue": 38.5,
+      "mean_saturation": 156.4,
+      "greenness_index": 0.4595,
+      "yellow_fraction_pct": 35.43,
+      "brown_fraction_pct": 0.0,
+      "mm_per_px": null,
+      "scale_source": "nicht_kalibriert",
+      "sharpness": 1800.3,
+      "noise": 1.98,
+      "image_brightness": 108.7,
+      "largest_component_pct": 85.7,
+      "color_hex": "#55642e",
+      "pipeline_version": "4.8.1",
+      "overexposed_pct": 0.0,
+      "quality_flags": "gesundheit_ueber_blattfarbverteilung;flaechensprung_pruefen",
+      "usable": true
+    },
+    "health_assessment": {
+      "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche;blattfarbverteilung",
+      "scoring_version": "4.1.0",
+      "health_score": 92.3,
+      "health_score_raw": 92.3,
+      "health_category": "sehr gut",
+      "health_trend_24h": null,
+      "health_warnings": "",
+      "score_green": 84.9,
+      "score_yellow": 100.0,
+      "score_brown": null,
+      "score_saturation": 95.0,
+      "score_hue": 95.1
+    },
+    "analysis": {
+      "version": "4.8.1",
+      "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche;blattfarbverteilung",
+      "pipeline_sha256": "f3cfdf92f102041c66c2c34f52f14b9caf2d172826b4d4802e2bd8652af58444",
+      "series_id": "pflanze-01",
+      "image_size": [
+        2000,
+        1010
+      ],
+      "camera_transform": [
+        [
+          1.0002569333154232,
+          -0.000447678816173431,
+          2.188877004772971
+        ],
+        [
+          0.000447678816173431,
+          1.0002569333154232,
+          -1.946753514391351
+        ]
+      ],
+      "twin_view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "twin_camera_transform": [
+        [
+          1.0002569333154232,
+          -0.000447678816173431,
+          2.188877004772971
+        ],
+        [
+          0.000447678816173431,
+          1.0002569333154232,
+          -1.946753514391351
+        ]
+      ],
+      "lens_profile_sha256": null,
+      "mask_clipped": false,
+      "capture_time_source": "name",
+      "hours_since_start": 192.0,
+      "view_number": 1,
+      "mask_source": "automatisch",
+      "illumination": {
+        "method": "chromatik_teilflaeche",
+        "corrected": true,
+        "background_error": 5.665,
+        "excluded_leaf_pct": 3.37,
+        "common_leaf_pct": 53.43,
+        "verified_color_region_pct": 99.24
+      },
+      "measurement_mode": "pixels",
+      "scale_status": "nicht_kalibriert",
+      "lens_corrected": false,
+      "reference_file": "basil03_20250116T120005Z.png",
+      "reference_captured_at": "2025-01-16T12:00:05Z",
+      "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "reference_approved": false,
+      "is_reference": false,
+      "health_comparison_mode": "blattverteilung_chromatik",
+      "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "growth_reference_file": null,
+      "growth_interval_hours": null,
+      "growth_comparison_mode": null,
+      "pixel_measurement": {
+        "leaf_coverage_pct": 7.235,
+        "visible_pixel_change_per_day": 17216.3,
+        "reference_file": "basil03_20250121T120005Z.png"
+      },
+      "missing_values": {
+        "storage_path": "externer_import_noch_keinem_serverpfad_zugeordnet",
+        "leaf_area_cm2": "nicht_kalibriert",
+        "diameter_mm": "nicht_kalibriert",
+        "mm_per_px": "nicht_kalibriert",
+        "growth_rate_cm2_per_day": "flaechensprung_pruefen",
+        "growth_rate_pct_per_day": "flaechensprung_pruefen",
+        "health_trend_24h": "kein_gueltiger_score_vor_24_stunden_plusminus_2h",
+        "score_brown": "brauntoene_ohne_bestaetigte_helligkeit_nicht_bewertet"
+      }
+    }
+  },
+  {
+    "device_id": null,
+    "image": {
+      "file_name": "basil03_20250126T120004Z.png",
+      "captured_at": "2025-01-26T12:00:04Z",
+      "storage_path": null,
+      "checksum_sha256": "13a934a73d4abab58087d1860dc5a83c01dc3f30c5a4d78fb45d6c15c081f888"
+    },
+    "image_measurements": {
+      "plant_pixels": 205232,
+      "leaf_area_cm2": null,
+      "diameter_mm": null,
+      "compactness": 0.0536,
+      "growth_rate_cm2_per_day": null,
+      "growth_rate_pct_per_day": 20.268,
+      "mean_r": 121.7,
+      "mean_g": 141.0,
+      "mean_b": 67.4,
+      "mean_hue": 38.5,
+      "mean_saturation": 145.9,
+      "greenness_index": 0.4479,
+      "yellow_fraction_pct": 39.46,
+      "brown_fraction_pct": 0.0,
+      "mm_per_px": null,
+      "scale_source": "nicht_kalibriert",
+      "sharpness": 1026.6,
+      "noise": 0.76,
+      "image_brightness": 150.0,
+      "largest_component_pct": 96.6,
+      "color_hex": "#7a8d43",
+      "pipeline_version": "4.8.1",
+      "overexposed_pct": 0.0,
+      "quality_flags": "",
+      "usable": true
+    },
+    "health_assessment": {
+      "health_status": "vorlaeufige_referenz",
+      "scoring_version": "4.1.0",
+      "health_score": 86.4,
+      "health_score_raw": 86.4,
+      "health_category": "sehr gut",
+      "health_trend_24h": null,
+      "health_warnings": "farbveraenderung",
+      "score_green": 65.0,
+      "score_yellow": 83.1,
+      "score_brown": 100.0,
+      "score_saturation": 100.0,
+      "score_hue": 83.7
+    },
+    "analysis": {
+      "version": "4.8.1",
+      "health_status": "vorlaeufige_referenz",
+      "pipeline_sha256": "f3cfdf92f102041c66c2c34f52f14b9caf2d172826b4d4802e2bd8652af58444",
+      "series_id": "pflanze-01",
+      "image_size": [
+        2000,
+        1010
+      ],
+      "camera_transform": [
+        [
+          0.9998581387526339,
+          -0.00027634760376303157,
+          1.5755428114759122
+        ],
+        [
+          0.00027634760376303157,
+          0.9998581387526339,
+          -1.8301923943632692
+        ]
+      ],
+      "twin_view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "twin_camera_transform": [
+        [
+          0.9998581387526339,
+          -0.00027634760376303157,
+          1.5755428114759122
+        ],
+        [
+          0.00027634760376303157,
+          0.9998581387526339,
+          -1.8301923943632692
+        ]
+      ],
+      "lens_profile_sha256": null,
+      "mask_clipped": false,
+      "capture_time_source": "name",
+      "hours_since_start": 239.9997,
+      "view_number": 1,
+      "mask_source": "automatisch",
+      "illumination": {
+        "method": "gradient",
+        "corrected": true,
+        "background_error": 2.78,
+        "excluded_leaf_pct": 3.68,
+        "common_leaf_pct": 95.65,
+        "verified_color_region_pct": null
+      },
+      "measurement_mode": "pixels",
+      "scale_status": "nicht_kalibriert",
+      "lens_corrected": false,
+      "reference_file": "basil03_20250116T120005Z.png",
+      "reference_captured_at": "2025-01-16T12:00:05Z",
+      "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "reference_approved": false,
+      "is_reference": false,
+      "health_comparison_mode": "farbe_und_struktur",
+      "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "growth_reference_file": "basil03_20250124T120005Z.png",
+      "growth_interval_hours": 48.0,
+      "growth_comparison_mode": "berechnet",
+      "pixel_measurement": {
+        "leaf_coverage_pct": 10.16,
+        "visible_pixel_change_per_day": 29540.7,
+        "reference_file": "basil03_20250124T120005Z.png"
+      },
+      "missing_values": {
+        "storage_path": "externer_import_noch_keinem_serverpfad_zugeordnet",
+        "leaf_area_cm2": "nicht_kalibriert",
+        "diameter_mm": "nicht_kalibriert",
+        "mm_per_px": "nicht_kalibriert",
+        "growth_rate_cm2_per_day": "kein_gemeinsamer_massstab_fuer_beide_aufnahmen",
+        "health_trend_24h": "kein_gueltiger_score_vor_24_stunden_plusminus_2h"
+      }
+    }
+  },
+  {
+    "device_id": null,
+    "image": {
+      "file_name": "basil03_20250129T120003Z.png",
+      "captured_at": "2025-01-29T12:00:03Z",
+      "storage_path": null,
+      "checksum_sha256": "b961171f496abe81fdb4d2cb52f1b33f9311fdd2649c05c0f24ea13f15822b04"
+    },
+    "image_measurements": {
+      "plant_pixels": 135025,
+      "leaf_area_cm2": null,
+      "diameter_mm": null,
+      "compactness": 0.0108,
+      "growth_rate_cm2_per_day": null,
+      "growth_rate_pct_per_day": -11.454,
+      "mean_r": 77.7,
+      "mean_g": 91.5,
+      "mean_b": 40.2,
+      "mean_hue": 38.5,
+      "mean_saturation": 158.6,
+      "greenness_index": 0.4605,
+      "yellow_fraction_pct": 34.2,
+      "brown_fraction_pct": 0.0,
+      "mm_per_px": null,
+      "scale_source": "nicht_kalibriert",
+      "sharpness": 1778.4,
+      "noise": 2.13,
+      "image_brightness": 103.6,
+      "largest_component_pct": 85.1,
+      "color_hex": "#4e5b28",
+      "pipeline_version": "4.8.1",
+      "overexposed_pct": 0.0,
+      "quality_flags": "zu_wenig_bestaetigte_farbteilflaeche",
+      "usable": true
+    },
+    "health_assessment": {
+      "health_status": "zu_wenig_bestaetigte_farbteilflaeche",
+      "scoring_version": "4.1.0",
+      "health_score": null,
+      "health_score_raw": null,
+      "health_category": "keine_daten",
+      "health_trend_24h": null,
+      "health_warnings": "",
+      "score_green": null,
+      "score_yellow": null,
+      "score_brown": null,
+      "score_saturation": null,
+      "score_hue": null
+    },
+    "analysis": {
+      "version": "4.8.1",
+      "health_status": "zu_wenig_bestaetigte_farbteilflaeche",
+      "pipeline_sha256": "f3cfdf92f102041c66c2c34f52f14b9caf2d172826b4d4802e2bd8652af58444",
+      "series_id": "pflanze-01",
+      "image_size": [
+        2000,
+        1010
+      ],
+      "camera_transform": [
+        [
+          1.0010324643525652,
+          -0.000630452345861363,
+          2.259583101531605
+        ],
+        [
+          0.000630452345861363,
+          1.0010324643525652,
+          -2.939989549322061
+        ]
+      ],
+      "twin_view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "twin_camera_transform": [
+        [
+          1.0010324643525652,
+          -0.000630452345861363,
+          2.259583101531605
+        ],
+        [
+          0.000630452345861363,
+          1.0010324643525652,
+          -2.939989549322061
+        ]
+      ],
+      "lens_profile_sha256": null,
+      "mask_clipped": false,
+      "capture_time_source": "name",
+      "hours_since_start": 311.9994,
+      "view_number": 1,
+      "mask_source": "automatisch",
+      "illumination": {
+        "method": "chromatik_teilflaeche",
+        "corrected": true,
+        "background_error": 8.715,
+        "excluded_leaf_pct": null,
+        "common_leaf_pct": 19.47,
+        "verified_color_region_pct": 32.94
+      },
+      "measurement_mode": "pixels",
+      "scale_status": "nicht_kalibriert",
+      "lens_corrected": false,
+      "reference_file": "basil03_20250116T120005Z.png",
+      "reference_captured_at": "2025-01-16T12:00:05Z",
+      "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "reference_approved": false,
+      "is_reference": false,
+      "health_comparison_mode": null,
+      "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "growth_reference_file": "basil03_20250126T120004Z.png",
+      "growth_interval_hours": 72.0,
+      "growth_comparison_mode": "berechnet",
+      "pixel_measurement": {
+        "leaf_coverage_pct": 6.684,
+        "visible_pixel_change_per_day": -23402.4,
+        "reference_file": "basil03_20250126T120004Z.png"
+      },
+      "missing_values": {
+        "storage_path": "externer_import_noch_keinem_serverpfad_zugeordnet",
+        "leaf_area_cm2": "nicht_kalibriert",
+        "diameter_mm": "nicht_kalibriert",
+        "mm_per_px": "nicht_kalibriert",
+        "growth_rate_cm2_per_day": "kein_gemeinsamer_massstab_fuer_beide_aufnahmen",
+        "health_trend_24h": "kein_gueltiger_score_vor_24_stunden_plusminus_2h",
+        "health_score": "zu_wenig_bestaetigte_farbteilflaeche",
+        "health_score_raw": "zu_wenig_bestaetigte_farbteilflaeche",
+        "score_green": "zu_wenig_bestaetigte_farbteilflaeche",
+        "score_yellow": "zu_wenig_bestaetigte_farbteilflaeche",
+        "score_brown": "zu_wenig_bestaetigte_farbteilflaeche",
+        "score_saturation": "zu_wenig_bestaetigte_farbteilflaeche",
+        "score_hue": "zu_wenig_bestaetigte_farbteilflaeche"
+      }
+    }
+  },
+  {
+    "device_id": null,
+    "image": {
+      "file_name": "basil03_20250131T120005Z.png",
+      "captured_at": "2025-01-31T12:00:05Z",
+      "storage_path": null,
+      "checksum_sha256": "56ea8197c246a0f42adc0715a1482ae7ad3a412ec5d09b6d9eaa3d90b897f963"
+    },
+    "image_measurements": {
+      "plant_pixels": 249678,
+      "leaf_area_cm2": null,
+      "diameter_mm": null,
+      "compactness": 0.034,
+      "growth_rate_cm2_per_day": null,
+      "growth_rate_pct_per_day": null,
+      "mean_r": 130.3,
+      "mean_g": 150.2,
+      "mean_b": 76.5,
+      "mean_hue": 38.6,
+      "mean_saturation": 138.9,
+      "greenness_index": 0.4412,
+      "yellow_fraction_pct": 33.07,
+      "brown_fraction_pct": 0.0,
+      "mm_per_px": null,
+      "scale_source": "nicht_kalibriert",
+      "sharpness": 1803.7,
+      "noise": 1.57,
+      "image_brightness": 159.0,
+      "largest_component_pct": 95.7,
+      "color_hex": "#82964d",
+      "pipeline_version": "4.8.1",
+      "overexposed_pct": 5.33,
+      "quality_flags": "flaechensprung_pruefen",
+      "usable": true
+    },
+    "health_assessment": {
+      "health_status": "vorlaeufige_referenz",
+      "scoring_version": "4.1.0",
+      "health_score": 84.4,
+      "health_score_raw": 84.4,
+      "health_category": "gut",
+      "health_trend_24h": null,
+      "health_warnings": "farbveraenderung",
+      "score_green": 61.1,
+      "score_yellow": 80.7,
+      "score_brown": 100.0,
+      "score_saturation": 100.0,
+      "score_hue": 78.6
+    },
+    "analysis": {
+      "version": "4.8.1",
+      "health_status": "vorlaeufige_referenz",
+      "pipeline_sha256": "f3cfdf92f102041c66c2c34f52f14b9caf2d172826b4d4802e2bd8652af58444",
+      "series_id": "pflanze-01",
+      "image_size": [
+        2000,
+        1010
+      ],
+      "camera_transform": [
+        [
+          0.9983364287156002,
+          0.0007131591056117007,
+          1.305095933086326
+        ],
+        [
+          -0.0007131591056117007,
+          0.9983364287156002,
+          0.031400754825094544
+        ]
+      ],
+      "twin_view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "twin_camera_transform": [
+        [
+          0.9983364287156002,
+          0.0007131591056117007,
+          1.305095933086326
+        ],
+        [
+          -0.0007131591056117007,
+          0.9983364287156002,
+          0.031400754825094544
+        ]
+      ],
+      "lens_profile_sha256": null,
+      "mask_clipped": false,
+      "capture_time_source": "name",
+      "hours_since_start": 360.0,
+      "view_number": 1,
+      "mask_source": "automatisch",
+      "illumination": {
+        "method": "linear",
+        "corrected": true,
+        "background_error": 3.204,
+        "excluded_leaf_pct": 7.47,
+        "common_leaf_pct": 91.93,
+        "verified_color_region_pct": null
+      },
+      "measurement_mode": "pixels",
+      "scale_status": "nicht_kalibriert",
+      "lens_corrected": false,
+      "reference_file": "basil03_20250116T120005Z.png",
+      "reference_captured_at": "2025-01-16T12:00:05Z",
+      "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "reference_approved": false,
+      "is_reference": false,
+      "health_comparison_mode": "farbe_und_struktur",
+      "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "growth_reference_file": null,
+      "growth_interval_hours": null,
+      "growth_comparison_mode": null,
+      "pixel_measurement": {
+        "leaf_coverage_pct": 12.36,
+        "visible_pixel_change_per_day": 57325.8,
+        "reference_file": "basil03_20250129T120003Z.png"
+      },
+      "missing_values": {
+        "storage_path": "externer_import_noch_keinem_serverpfad_zugeordnet",
+        "leaf_area_cm2": "nicht_kalibriert",
+        "diameter_mm": "nicht_kalibriert",
+        "mm_per_px": "nicht_kalibriert",
+        "growth_rate_cm2_per_day": "flaechensprung_pruefen",
+        "growth_rate_pct_per_day": "flaechensprung_pruefen",
+        "health_trend_24h": "kein_gueltiger_score_vor_24_stunden_plusminus_2h"
+      }
+    }
+  },
+  {
+    "device_id": null,
+    "image": {
+      "file_name": "basil03_20250203T120005Z.png",
+      "captured_at": "2025-02-03T12:00:05Z",
+      "storage_path": null,
+      "checksum_sha256": "06f0817580f262dbc732da89bb8839ccde8486bfe6460f198eae31f4cfc13fb3"
+    },
+    "image_measurements": {
+      "plant_pixels": 268515,
+      "leaf_area_cm2": null,
+      "diameter_mm": null,
+      "compactness": 0.0382,
+      "growth_rate_cm2_per_day": null,
+      "growth_rate_pct_per_day": 2.402,
+      "mean_r": 123.0,
+      "mean_g": 140.9,
+      "mean_b": 76.6,
+      "mean_hue": 39.0,
+      "mean_saturation": 131.3,
+      "greenness_index": 0.4346,
+      "yellow_fraction_pct": 33.92,
+      "brown_fraction_pct": 0.01,
+      "mm_per_px": null,
+      "scale_source": "nicht_kalibriert",
+      "sharpness": 1164.8,
+      "noise": 0.94,
+      "image_brightness": 147.1,
+      "largest_component_pct": 97.6,
+      "color_hex": "#7b8d4d",
+      "pipeline_version": "4.8.1",
+      "overexposed_pct": 0.0,
+      "quality_flags": "gesundheit_ueber_blattfarbverteilung",
+      "usable": true
+    },
+    "health_assessment": {
+      "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
+      "scoring_version": "4.1.0",
+      "health_score": 74.7,
+      "health_score_raw": 74.7,
+      "health_category": "gut",
+      "health_trend_24h": null,
+      "health_warnings": "farbveraenderung",
+      "score_green": 45.1,
+      "score_yellow": 88.6,
+      "score_brown": 100.0,
+      "score_saturation": 77.6,
+      "score_hue": 81.0
+    },
+    "analysis": {
+      "version": "4.8.1",
+      "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
+      "pipeline_sha256": "f3cfdf92f102041c66c2c34f52f14b9caf2d172826b4d4802e2bd8652af58444",
+      "series_id": "pflanze-01",
+      "image_size": [
+        2000,
+        1010
+      ],
+      "camera_transform": [
+        [
+          0.9999171749844977,
+          0.0009928890092105239,
+          -0.20754376877810865
+        ],
+        [
+          -0.0009928890092105239,
+          0.9999171749844977,
+          -2.348916080068084
+        ]
+      ],
+      "twin_view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "twin_camera_transform": [
+        [
+          0.9999171749844977,
+          0.0009928890092105239,
+          -0.20754376877810865
+        ],
+        [
+          -0.0009928890092105239,
+          0.9999171749844977,
+          -2.348916080068084
+        ]
+      ],
+      "lens_profile_sha256": null,
+      "mask_clipped": false,
+      "capture_time_source": "name",
+      "hours_since_start": 432.0,
+      "view_number": 1,
+      "mask_source": "automatisch",
+      "illumination": {
+        "method": "gradient",
+        "corrected": true,
+        "background_error": 3.023,
+        "excluded_leaf_pct": 3.36,
+        "common_leaf_pct": 93.92,
+        "verified_color_region_pct": null
+      },
+      "measurement_mode": "pixels",
+      "scale_status": "nicht_kalibriert",
+      "lens_corrected": false,
+      "reference_file": "basil03_20250116T120005Z.png",
+      "reference_captured_at": "2025-01-16T12:00:05Z",
+      "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "reference_approved": false,
+      "is_reference": false,
+      "health_comparison_mode": "blattverteilung_normiert",
+      "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "growth_reference_file": "basil03_20250131T120005Z.png",
+      "growth_interval_hours": 72.0,
+      "growth_comparison_mode": "berechnet",
+      "pixel_measurement": {
+        "leaf_coverage_pct": 13.293,
+        "visible_pixel_change_per_day": 6279.0,
+        "reference_file": "basil03_20250131T120005Z.png"
+      },
+      "missing_values": {
+        "storage_path": "externer_import_noch_keinem_serverpfad_zugeordnet",
+        "leaf_area_cm2": "nicht_kalibriert",
+        "diameter_mm": "nicht_kalibriert",
+        "mm_per_px": "nicht_kalibriert",
+        "growth_rate_cm2_per_day": "kein_gemeinsamer_massstab_fuer_beide_aufnahmen",
+        "health_trend_24h": "kein_gueltiger_score_vor_24_stunden_plusminus_2h"
+      }
+    }
+  },
+  {
+    "device_id": null,
+    "image": {
+      "file_name": "basil03_20250205T120005Z.png",
+      "captured_at": "2025-02-05T12:00:05Z",
+      "storage_path": null,
+      "checksum_sha256": "7a465dcc58cb198348aac38dd56317ba6107f9e45ef945357e25accc43c1c5bf"
+    },
+    "image_measurements": {
+      "plant_pixels": 309244,
+      "leaf_area_cm2": null,
+      "diameter_mm": null,
+      "compactness": 0.0349,
+      "growth_rate_cm2_per_day": null,
+      "growth_rate_pct_per_day": 7.469,
+      "mean_r": 129.4,
+      "mean_g": 149.4,
+      "mean_b": 71.6,
+      "mean_hue": 38.4,
+      "mean_saturation": 146.4,
+      "greenness_index": 0.4482,
+      "yellow_fraction_pct": 42.38,
+      "brown_fraction_pct": 0.01,
+      "mm_per_px": null,
+      "scale_source": "nicht_kalibriert",
+      "sharpness": 992.5,
+      "noise": 0.93,
+      "image_brightness": 151.1,
+      "largest_component_pct": 94.1,
+      "color_hex": "#819548",
+      "pipeline_version": "4.8.1",
+      "overexposed_pct": 0.05,
+      "quality_flags": "gesundheit_ueber_blattfarbverteilung",
+      "usable": true
+    },
+    "health_assessment": {
+      "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
+      "scoring_version": "4.1.0",
+      "health_score": 96.6,
+      "health_score_raw": 96.6,
+      "health_category": "sehr gut",
+      "health_trend_24h": null,
+      "health_warnings": "",
+      "score_green": 89.0,
+      "score_yellow": 99.6,
+      "score_brown": 100.0,
+      "score_saturation": 100.0,
+      "score_hue": 100.0
+    },
+    "analysis": {
+      "version": "4.8.1",
+      "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
+      "pipeline_sha256": "f3cfdf92f102041c66c2c34f52f14b9caf2d172826b4d4802e2bd8652af58444",
+      "series_id": "pflanze-01",
+      "image_size": [
+        2000,
+        1010
+      ],
+      "camera_transform": [
+        [
+          1.0009170733162154,
+          0.0020576873851727634,
+          -1.6177741894856985
+        ],
+        [
+          -0.0020576873851727634,
+          1.0009170733162154,
+          -3.078591267472483
+        ]
+      ],
+      "twin_view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "twin_camera_transform": [
+        [
+          1.0009170733162154,
+          0.0020576873851727634,
+          -1.6177741894856985
+        ],
+        [
+          -0.0020576873851727634,
+          1.0009170733162154,
+          -3.078591267472483
+        ]
+      ],
+      "lens_profile_sha256": null,
+      "mask_clipped": false,
+      "capture_time_source": "name",
+      "hours_since_start": 480.0,
+      "view_number": 1,
+      "mask_source": "automatisch",
+      "illumination": {
+        "method": "linear",
+        "corrected": true,
+        "background_error": 4.032,
+        "excluded_leaf_pct": 3.23,
+        "common_leaf_pct": 95.48,
+        "verified_color_region_pct": null
+      },
+      "measurement_mode": "pixels",
+      "scale_status": "nicht_kalibriert",
+      "lens_corrected": false,
+      "reference_file": "basil03_20250116T120005Z.png",
+      "reference_captured_at": "2025-01-16T12:00:05Z",
+      "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "reference_approved": false,
+      "is_reference": false,
+      "health_comparison_mode": "blattverteilung_normiert",
+      "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "growth_reference_file": "basil03_20250203T120005Z.png",
+      "growth_interval_hours": 48.0,
+      "growth_comparison_mode": "berechnet",
+      "pixel_measurement": {
+        "leaf_coverage_pct": 15.309,
+        "visible_pixel_change_per_day": 20364.5,
+        "reference_file": "basil03_20250203T120005Z.png"
+      },
+      "missing_values": {
+        "storage_path": "externer_import_noch_keinem_serverpfad_zugeordnet",
+        "leaf_area_cm2": "nicht_kalibriert",
+        "diameter_mm": "nicht_kalibriert",
+        "mm_per_px": "nicht_kalibriert",
+        "growth_rate_cm2_per_day": "kein_gemeinsamer_massstab_fuer_beide_aufnahmen",
+        "health_trend_24h": "kein_gueltiger_score_vor_24_stunden_plusminus_2h"
+      }
+    }
+  },
+  {
+    "device_id": null,
+    "image": {
+      "file_name": "basil03_20250208T120005Z.png",
+      "captured_at": "2025-02-08T12:00:05Z",
+      "storage_path": null,
+      "checksum_sha256": "0f5987f83bee5dc7ee1e7d0ec70d71935c49f96aee109f128923bc3ddcaa3756"
+    },
+    "image_measurements": {
+      "plant_pixels": 324503,
+      "leaf_area_cm2": null,
+      "diameter_mm": null,
+      "compactness": 0.033,
+      "growth_rate_cm2_per_day": null,
+      "growth_rate_pct_per_day": 1.743,
+      "mean_r": 127.7,
+      "mean_g": 147.1,
+      "mean_b": 80.0,
+      "mean_hue": 39.4,
+      "mean_saturation": 130.6,
+      "greenness_index": 0.4353,
+      "yellow_fraction_pct": 29.05,
+      "brown_fraction_pct": 0.02,
+      "mm_per_px": null,
+      "scale_source": "nicht_kalibriert",
+      "sharpness": 971.5,
+      "noise": 0.95,
+      "image_brightness": 147.7,
+      "largest_component_pct": 97.3,
+      "color_hex": "#809350",
+      "pipeline_version": "4.8.1",
+      "overexposed_pct": 0.02,
+      "quality_flags": "gesundheit_ueber_blattfarbverteilung",
+      "usable": true
+    },
+    "health_assessment": {
+      "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
+      "scoring_version": "4.1.0",
+      "health_score": 77.3,
+      "health_score_raw": 77.3,
+      "health_category": "gut",
+      "health_trend_24h": null,
+      "health_warnings": "farbveraenderung",
+      "score_green": 47.9,
+      "score_yellow": 91.4,
+      "score_brown": 100.0,
+      "score_saturation": 81.1,
+      "score_hue": 86.5
+    },
+    "analysis": {
+      "version": "4.8.1",
+      "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
+      "pipeline_sha256": "f3cfdf92f102041c66c2c34f52f14b9caf2d172826b4d4802e2bd8652af58444",
+      "series_id": "pflanze-01",
+      "image_size": [
+        2000,
+        1010
+      ],
+      "camera_transform": [
+        [
+          0.9995173370425854,
+          0.00047324934135743003,
+          1.4799401310954237
+        ],
+        [
+          -0.00047324934135743003,
+          0.9995173370425854,
+          -1.859775059376264
+        ]
+      ],
+      "twin_view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "twin_camera_transform": [
+        [
+          0.9995173370425854,
+          0.00047324934135743003,
+          1.4799401310954237
+        ],
+        [
+          -0.00047324934135743003,
+          0.9995173370425854,
+          -1.859775059376264
+        ]
+      ],
+      "lens_profile_sha256": null,
+      "mask_clipped": false,
+      "capture_time_source": "name",
+      "hours_since_start": 552.0,
+      "view_number": 1,
+      "mask_source": "automatisch",
+      "illumination": {
+        "method": "gradient",
+        "corrected": true,
+        "background_error": 3.151,
+        "excluded_leaf_pct": 3.0,
+        "common_leaf_pct": 96.03,
+        "verified_color_region_pct": null
+      },
+      "measurement_mode": "pixels",
+      "scale_status": "nicht_kalibriert",
+      "lens_corrected": false,
+      "reference_file": "basil03_20250116T120005Z.png",
+      "reference_captured_at": "2025-01-16T12:00:05Z",
+      "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "reference_approved": false,
+      "is_reference": false,
+      "health_comparison_mode": "blattverteilung_normiert",
+      "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
+      "growth_reference_file": "basil03_20250205T120005Z.png",
+      "growth_interval_hours": 72.0,
+      "growth_comparison_mode": "berechnet",
+      "pixel_measurement": {
+        "leaf_coverage_pct": 16.065,
+        "visible_pixel_change_per_day": 5086.3,
+        "reference_file": "basil03_20250205T120005Z.png"
+      },
+      "missing_values": {
+        "storage_path": "externer_import_noch_keinem_serverpfad_zugeordnet",
+        "leaf_area_cm2": "nicht_kalibriert",
+        "diameter_mm": "nicht_kalibriert",
+        "mm_per_px": "nicht_kalibriert",
+        "growth_rate_cm2_per_day": "kein_gemeinsamer_massstab_fuer_beide_aufnahmen",
+        "health_trend_24h": "kein_gueltiger_score_vor_24_stunden_plusminus_2h"
+      }
+    }
+  }
+]

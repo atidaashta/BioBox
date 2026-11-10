@@ -1,7 +1,8 @@
 """BioBox: Kamera, Blattmaske, Messwerte, relativer Zustandsindex und 5 Grafiken.
 
 Installation: python -m pip install opencv-contrib-python numpy matplotlib
-Normal:       python analyse.py (vorhandene Stundenfotos abholen und analysieren)
+Normal:       python analyse.py (Fotos abholen, analysieren und 3D-Ansicht öffnen)
+Ohne Browser: python analyse.py --ohne-browser (z. B. fuer automatische Laeufe)
 Nur lokal:    python analyse.py --lokal bilder
 Pi-Stundenplan einrichten: python analyse.py --stundenaufnahme-einrichten
 Vorhandene Pi-Fotos holen: python analyse.py --abholen
@@ -22,6 +23,24 @@ Fotoabruf und lokale Auswertung sind unabhaengig: Auch bei einem SSH-Fehler
 werden alle bereits im Bilderordner vorhandenen Fotos erneut ausgewertet.
 Nach dem Abruf wird der Ordner neu eingelesen, auch fuer selbst ergaenzte Fotos.
 Masken, Kontrollbilder, CSV/JSON und Grafiken werden gemeinsam ersetzt.
+CSV und JSON behalten die Messwerte nicht mehr vorhandener Bilder dauerhaft.
+Vorhandene Fotos werden neu ausgewertet und ohne doppelte Eintraege aktualisiert.
+Die 100-Bilder-Grenze betrifft Kamera-JPEGs, nicht die Ergebnishistorie.
+Grafiken zeigen auch die gespeicherten Werte; alte Bilddateien werden nicht kopiert.
+Digital Twin: auswertung/digital_twin.json und grafiken/06_digital_twin.png.
+Persoenliche 3D-Ansicht: auswertung/digital_twin_3d.html (lokal, auch offline).
+Vorhandenes JSON ansehen: python analyse.py --3d
+Anderes JSON ansehen: python analyse.py --3d-aus-json auswertung/ergebnis.json
+Neue Analyse und Browser: python analyse.py --lokal bilder --3d
+Der Prototyp beobachtet den Zustand und schaetzt die sichtbare Blattflaeche
+24 Stunden nach der letzten Aufnahme. Mindestbasis: 6 vergleichbare Fotos
+ueber 24 Stunden. Ohne geeignete Daten wird der Grund angegeben.
+Historische Modelltests und erst spaeter gepruefte echte Prognosen bleiben getrennt.
+Die 3D-Ansicht ist eine schematische, drehbare Modellpflanze. Hoehe,
+Blattpositionen und Tiefe werden nicht aus einem einzelnen Foto rekonstruiert.
+Pflegevorschlaege sind Pruef- und Planungshilfen. Ihre Wachstumswirkung
+kann als eigene Annahme simuliert werden; sie ist noch nicht gelernt.
+Szenarien aendern keine Messwerte und sind keine ausgegebenen Modellprognosen.
 Bei gesperrten Ausgabedateien bleibt die vorherige komplette Auswertung erhalten.
 Ein Skript-Hash verhindert alte automatische Referenzmasken nach Codeaenderungen.
 Eine ausfuehrbare Datei; gesundheit.py und grafiken.py werden nicht importiert.
@@ -48,6 +67,9 @@ Belichtung, Weissabgleich und langsame Lichtgradienten werden ausschliesslich
 am registrierten Hintergrund korrigiert. Blattfarben werden NICHT an eine
 Sollfarbe angepasst. Der Index vergleicht nur gemeinsame, ausreichend
 belichtete Blattpixel. Bei fehlender Vergleichbarkeit gibt es keinen Score.
+Bei stark gewachsenen oder neu angeordneten Blaettern werden nach bestaetigtem
+Lichtabgleich die getrennten Blattfarbverteilungen verglichen. Ohne ausreichende
+gepruefte Blattflaeche entsteht weiterhin kein erfundener Score.
 Die CSV-Farben bleiben Rohwerte.
 
 API: Die Messfeldnamen orientieren sich an BB-DB-HEALTH-001. Die endgueltige
@@ -61,7 +83,9 @@ OpenCV: docs.opencv.org/4.x/d7/d1b/group__imgproc__misc.html (Otsu)
 """
 
 import argparse
+import base64
 import contextlib
+import copy
 import csv
 import hashlib
 import json
@@ -74,6 +98,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import webbrowser
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -107,8 +132,19 @@ ARBEITSBREITE = 960
 CHROMA_MIN = 4            # a*-Mindestabstand von Grau; darunter keine Pflanze
 RATE_MIN_MINUTEN = 30    # Kurzer Vergleich; hohe Schwankung moeglich
 RATE_STABIL_STUNDEN = 12  # Wenn verfuegbar, laengeren Abstand bevorzugen
-SCORING_VERSION = "4.0.0"
-ANALYSE_VERSION = "4.4.1"
+SCORING_VERSION = "4.1.0"
+ANALYSE_VERSION = "4.8.1"
+TWIN_3D_VERSION = "0.2.0"
+TWIN_3D_DATEI = "digital_twin_3d.html"
+TWIN_VERSION = "0.1.0"
+TWIN_HORIZONT_STUNDEN = 24
+TWIN_FENSTER_STUNDEN = 72
+TWIN_MIN_AUFNAHMEN = 6
+TWIN_MIN_SPANNE_STUNDEN = 24
+TWIN_MAX_LUECKE_STUNDEN = 6
+TWIN_MAX_ALTER_STUNDEN = 3
+TWIN_ZIEL_TOLERANZ_MINUTEN = 40
+TWIN_GRAFIK = "06_digital_twin.png"
 PIPELINE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 ENDUNGEN = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")
 CSV_DEZIMALKOMMA = True
@@ -1472,8 +1508,70 @@ def licht_abgleichen(arbeit, maske, ref_bild=None, ref_maske=None, chroma_erlaub
     return normal,[],info
 
 
+def blattverteilung_vergleichen(arbeit, maske, korrigiert, ref_bild, ref_maske, info):
+    """Neue Blaetter zulassen, ohne Hintergrund oder Belichtung als Schaden zu werten.
+
+    Voraussetzung ist die bereits registrierte Kameraansicht und eine auf
+    Hintergrundpaaren verifizierte Licht-/Chromatikkorrektur. Verglichen werden
+    die getrennten Blattfarbverteilungen, keine erfundenen Pixelpaare.
+    """
+    kern = cv2.erode(maske, _kern(3)) > 0
+    alt_kern = cv2.erode(ref_maske, _kern(3)) > 0
+    counts = [int(np.count_nonzero(kern)), int(np.count_nonzero(alt_kern))]
+    if min(counts) < 100:
+        return None, ["zu_wenig_blattflaeche_fuer_verteilungsvergleich"]
+    chromatisch = info.get("modell") == "chromatik_teilflaeche"
+    if chromatisch:
+        zone = info.get("_lichtzone")
+        if zone is None or zone.shape != maske.shape:
+            return None, ["lichtvergleich_nicht_verifiziert"]
+        anteile = [np.count_nonzero(kern & (zone > 0))/counts[0],
+                   np.count_nonzero(alt_kern & (zone > 0))/counts[1]]
+        info["chromatisch_gepruefte_blattflaeche_pct"] = round(100*min(anteile), 2)
+        if min(anteile) < .65:
+            return None, ["zu_wenig_bestaetigte_farbteilflaeche"]
+        kern &= zone > 0
+        alt_kern &= zone > 0
+    elif info.get("modell") not in ("linear", "kurve", "gradient", "identisch"):
+        return None, ["lichtvergleich_nicht_verifiziert"]
+    # Unwiederbringlich geclippte / schwarze Blattpixel je Foto ausschliessen.
+    # Neue Blattpositionen duerfen nicht am damaligen Hintergrund scheitern.
+    for bild, auswahl in ((arbeit, kern), (ref_bild, alt_kern)):
+        schlecht = (np.any(bild >= 254, axis=2) | (np.max(bild, axis=2) < 12))
+        schlecht = cv2.dilate(schlecht.astype(np.uint8), _kern(3)) > 0
+        auswahl[schlecht] = False
+    behalten = [int(np.count_nonzero(kern)), int(np.count_nonzero(alt_kern))]
+    anteil = min(behalten[0]/counts[0], behalten[1]/counts[1])
+    info["blattpixel_ausgeschlossen_pct"] = round(100*(1-anteil), 2)
+    if min(behalten) < 100 or anteil < .65:
+        return None, ["lichtvergleich_zu_wenig_blattgewebe"]
+    jetzt_bild = korrigiert
+    vorher_bild = farbe_ohne_helligkeit(ref_bild) if chromatisch else ref_bild
+    cur = farbmerkmale(jetzt_bild, kern.astype(np.uint8)*255)
+    alt = farbmerkmale(vorher_bild, alt_kern.astype(np.uint8)*255)
+    def lab_pixel(bild, auswahl):
+        pixel = bild[auswahl].reshape(-1, 1, 3).astype(np.float32)/255
+        return cv2.cvtColor(pixel, cv2.COLOR_BGR2LAB).reshape(-1, 3)
+    jetzt, vorher = lab_pixel(jetzt_bild, kern), lab_pixel(vorher_bild, alt_kern)
+    quantile = np.linspace(.02, .98, 49)
+    # Quantile brauchen weder dieselbe Blattposition noch gleich viele Pixel.
+    delta = np.quantile(jetzt[:, 1:], quantile, axis=0)-np.quantile(vorher[:, 1:], quantile, axis=0)
+    cur["_lokal_farb_pp"] = 100*float(np.clip((np.linalg.norm(delta, axis=1)-4)/17, 0, 1).mean())
+    def warmwerte(lab):
+        l, a, b = lab.T
+        gelb = np.clip((a+18)/22, 0, 1)*np.clip((b-9)/23, 0, 1)
+        braun = np.clip((a+8)/18, 0, 1)*np.clip((b-3)/14, 0, 1)*np.clip((64-l)/35, 0, 1)
+        return (gelb if chromatisch else np.maximum(gelb, braun), braun)
+    warm, braun = warmwerte(jetzt)
+    warm_alt, braun_alt = warmwerte(vorher)
+    cur["_warm_delta"] = 100*max(0., float(warm.mean()-warm_alt.mean()))
+    cur["_braun_delta"] = 100*max(0., float(braun.mean()-braun_alt.mean()))
+    cur.update(_vergleich_basis=alt, _chromatisch=chromatisch, _blattverteilung=True)
+    return cur, ["gesundheit_ueber_blattfarbverteilung"]
+
+
 def gesundheitsmerkmale(arbeit, maske, ref_bild=None, ref_maske=None, abgleich=None):
-    """Nur dieselben sichtbaren Blattbereiche in beiden Bildern vergleichen."""
+    """Gemeinsames Blattgewebe; bei Wachstum verifizierte Farbverteilungen."""
     korrigiert, flags, info = abgleich if abgleich is not None else licht_abgleichen(arbeit,maske,ref_bild,ref_maske)
     if korrigiert is None or ref_bild is None or ref_maske is None:
         return None, flags or ["lichtvergleich_nicht_verifiziert"]
@@ -1486,7 +1584,8 @@ def gesundheitsmerkmale(arbeit, maske, ref_bild=None, ref_maske=None, abgleich=N
     anteil = n/max(1,min(n_cur,n_ref))
     info["gemeinsame_blattflaeche_pct"] = round(100*anteil,2)
     if n < 50 or anteil < .60 or n < .35*max(n_cur,n_ref):
-        return None, flags + ["zu_wenig_gemeinsames_blattgewebe"]
+        cur, pruefung = blattverteilung_vergleichen(arbeit, maske, korrigiert, ref_bild, ref_maske, info)
+        return cur, flags+pruefung
     # Vor der Korrektur gesaettigte bzw. zu dunkle Pixel sind nicht wiederherstellbar.
     schlecht = (np.any(arbeit >= 254,axis=2) | (np.max(arbeit,axis=2) < 12)
                 | np.any(ref_bild >= 254,axis=2) | (np.max(ref_bild,axis=2) < 12))
@@ -1563,7 +1662,7 @@ def bewerten(z, merkmale_gesund, ref, struktur_erlaubt=True):
     z["score_farbton"] = stetiger_score(max(0.,max(hue_delta,lab_delta/2)-.7),HALBWERTE["farbton"])
     gewicht_summe = sum(GEWICHTE[k] for k in GEWICHTE if z["score_"+k] is not None)
     teile = [(GEWICHTE[k]/gewicht_summe,z["score_"+k]) for k in GEWICHTE if z["score_"+k] is not None]
-    struktur_erlaubt = struktur_erlaubt and not chromatisch
+    struktur_erlaubt = struktur_erlaubt and not chromatisch and not cur.get("_blattverteilung", False)
     flaechenverlust = max(0., 1-z["pflanzen_pixel"]/max(1,ref["meta"]["pflanzen_pixel"]))
     z["_struktur_score"] = None
     if struktur_erlaubt:
@@ -1589,6 +1688,9 @@ def bewerten(z, merkmale_gesund, ref, struktur_erlaubt=True):
         z["gesundheit_status"] += ";farbverhaeltnis_teilflaeche"
     elif not struktur_erlaubt:
         z["gesundheit_status"] += ";nur_farbvergleich"
+    if cur.get("_blattverteilung"):
+        z["_score_modus"] = "blattverteilung_chromatik" if chromatisch else "blattverteilung_normiert"
+        z["gesundheit_status"] += ";blattfarbverteilung"
     warnungen = []
     if lokal >= 7 or hist_abstand > .25 or hue_delta > 10:
         warnungen.append("farbveraenderung")
@@ -1802,7 +1904,237 @@ def json_sicher(wert):
     return wert
 
 
+def historienzeit(wert):
+    """Nur gespeicherte Aufnahmezeiten mit Zeitzone als Zeitachse verwenden."""
+    if not wert:
+        return None
+    try:
+        zeit = datetime.fromisoformat(str(wert).replace("Z", "+00:00"))
+        return zeit.astimezone(timezone.utc) if zeit.tzinfo is not None else None
+    except (ValueError, OverflowError):
+        return None
+
+
+def historienwert(feld, wert):
+    """CSV-Dezimalkomma lesen, ohne gemessene Nullen als fehlend zu behandeln."""
+    if wert is None or (isinstance(wert, str) and wert.strip().lower() in ("null", "none", "nan")):
+        return None
+    if feld == "brauchbar":
+        if isinstance(wert, bool):
+            return wert
+        text = str(wert).strip().lower()
+        if text in ("true", "1"):
+            return True
+        if text in ("false", "0"):
+            return False
+        if text == "":
+            return None
+        raise ValueError(f"Ungueltiger boolescher Historienwert: {wert!r}")
+    if feld in RUNDUNG or feld in ("pflanzen_pixel", "ansicht"):
+        if wert == "":
+            return None
+        if isinstance(wert, bool):
+            raise ValueError(f"Ungueltiger Zahlenwert in {feld}: {wert!r}")
+        zahl = float(str(wert).strip().replace(",", "."))
+        if not math.isfinite(zahl):
+            raise ValueError(f"Nicht endlicher Historienwert in {feld}")
+        if feld in ("pflanzen_pixel", "ansicht"):
+            if not zahl.is_integer():
+                raise ValueError(f"Keine Ganzzahl in {feld}: {wert!r}")
+            return int(zahl)
+        return zahl
+    if not isinstance(wert, str):
+        raise ValueError(f"Ungueltiger Textwert in {feld}: {wert!r}")
+    return None if feld == "captured_at" and not wert else wert
+
+
+def historienzeile(satz):
+    """Gespeicherten API-Datensatz fuer CSV und Diagramme zuruecklesen."""
+    if not isinstance(satz, dict) or not isinstance(satz.get("image"), dict):
+        raise ValueError("Ungueltiger Bilddatensatz in ergebnis.json")
+    for bereich in ("image_measurements", "health_assessment", "analysis"):
+        if bereich in satz and not isinstance(satz[bereich], dict):
+            raise ValueError(f"Ungueltiger Bereich {bereich} in ergebnis.json")
+    z = {feld: None for feld in SPALTEN}
+    bild, info = satz["image"], satz.get("analysis", {})
+    z.update(bild=bild.get("file_name"), captured_at=bild.get("captured_at"),
+             zeitquelle=info.get("capture_time_source"), stunden_seit_start=info.get("hours_since_start"),
+             ansicht=info.get("view_number"), gesundheit_referenzfoto=info.get("reference_file"),
+             wachstum_vergleichsfoto=info.get("growth_reference_file"),
+             wachstum_abstand_stunden=info.get("growth_interval_hours"))
+    for bereich, zuordnung in (("image_measurements", API_MESSFELDER), ("health_assessment", API_GESUNDHEIT)):
+        for de, en in zuordnung.items():
+            z[de] = satz.get(bereich, {}).get(en)
+    pixel = info.get("pixel_measurement", {})
+    if not isinstance(pixel, dict):
+        raise ValueError("Ungueltige Pixelmetadaten in ergebnis.json")
+    z.update(blattanteil_im_bild_pct=pixel.get("leaf_coverage_pct"),
+             blattpixel_aenderung_pro_tag=pixel.get("visible_pixel_change_per_day"),
+             pixel_vergleichsfoto=pixel.get("reference_file"))
+    z = {feld: historienwert(feld, wert) for feld, wert in z.items()}
+    z["_historie_export"] = copy.deepcopy(satz)
+    z["_csv_zusatz"] = copy.deepcopy(info.get("legacy_csv_fields", {}))
+    if not isinstance(z["_csv_zusatz"], dict):
+        raise ValueError("Ungueltige historische CSV-Zusatzfelder")
+    return z
+
+
+def historie_vorbereiten(z):
+    """Urspruengliche Herkunft behalten; alte Bilder dafuer nicht benoetigen."""
+    if not isinstance(z.get("bild"), str) or not z["bild"].strip():
+        raise ValueError("Historischer Datensatz ohne Bilddateinamen")
+    z["_zeit"] = historienzeit(z.get("captured_at"))
+    z["_historisch"] = True
+    gespeichert = z.pop("_historie_export", None)
+    if gespeichert is None:
+        gespeichert = api_datensatz(z)
+        # Nur die CSV ist vorhanden: Herkunft nicht als aktuelle Messung ausgeben.
+        gespeichert["device_id"] = None
+        gespeichert["analysis"].update(pipeline_sha256=None, mask_source=None, lens_corrected=None)
+    info = gespeichert.setdefault("analysis", {})
+    z["_sha256"] = gespeichert.get("image", {}).get("checksum_sha256")
+    z["_ist_referenz"] = bool(info.get("is_reference") or z.get("gesundheit_status") == "referenzfoto_start_der_ansicht")
+    z["_score_modus"] = info.get("health_comparison_mode")
+    if z["_score_modus"] is None:
+        status = z.get("gesundheit_status") or ""
+        if "farbverhaeltnis_teilflaeche" in status:
+            z["_score_modus"] = "farbverhaeltnis_teilflaeche"
+        elif "nur_farbvergleich" in status:
+            z["_score_modus"] = "nur_farbe"
+    fehlt = info.get("missing_values", {})
+    if not isinstance(fehlt, dict):
+        raise ValueError("Ungueltige missing_values in ergebnis.json")
+    z["_rate_status"] = (info.get("growth_comparison_mode")
+                         or ("berechnet_historisch" if z.get("wachstumsrate_pct_pro_tag") is not None else None)
+                         or fehlt.get("growth_rate_pct_per_day") or "historischer_vergleich_nicht_gespeichert")
+    gespeichert.setdefault("image", {}).update(file_name=z["bild"], captured_at=z.get("captured_at"))
+    for bereich, zuordnung in (("image_measurements", API_MESSFELDER), ("health_assessment", API_GESUNDHEIT)):
+        gespeichert.setdefault(bereich, {}).update({en: z.get(de) for de, en in zuordnung.items()})
+        for de, en in zuordnung.items():
+            if z.get(de) is not None:
+                fehlt.pop(en, None)
+            else:
+                fehlt.setdefault(en, "historischer_wert_nicht_gespeichert")
+    info.update(version=z.get("pipeline_version"), health_status=z.get("gesundheit_status"),
+                capture_time_source=z.get("zeitquelle"), hours_since_start=z.get("stunden_seit_start"),
+                view_number=z.get("ansicht"), is_reference=z["_ist_referenz"],
+                health_comparison_mode=z["_score_modus"], reference_file=z.get("gesundheit_referenzfoto"),
+                growth_reference_file=z.get("wachstum_vergleichsfoto"),
+                growth_interval_hours=z.get("wachstum_abstand_stunden"), missing_values=fehlt)
+    info.setdefault("pixel_measurement", {}).update(leaf_coverage_pct=z.get("blattanteil_im_bild_pct"),
+              visible_pixel_change_per_day=z.get("blattpixel_aenderung_pro_tag"), reference_file=z.get("pixel_vergleichsfoto"))
+    if z.get("_csv_zusatz"):
+        info["legacy_csv_fields"] = copy.deepcopy(z["_csv_zusatz"])
+    z["_ansicht_id"] = info.get("view_id")
+    z["_historie_export"] = gespeichert
+    return z
+
+
+def ergebnishistorie_laden(ausgabe):
+    """Bestehende Werte vor jedem Ersetzen vollstaendig lesen und pruefen."""
+    json_pfad, csv_pfad = Path(ausgabe)/"ergebnis.json", Path(ausgabe)/"ergebnis.csv"
+    saetze, zeilen = [], []
+    try:
+        if json_pfad.is_file():
+            def ungueltig(wert):
+                raise ValueError(f"Ungueltige JSON-Zahl: {wert}")
+            saetze = json.loads(json_pfad.read_text(encoding="utf-8-sig"), parse_constant=ungueltig)
+            if not isinstance(saetze, list):
+                raise ValueError("ergebnis.json enthaelt keine Datensatzliste")
+        json_zeilen = [historienzeile(satz) for satz in saetze]
+        benutzt = set()
+        json_index = {}
+        for i, z in enumerate(json_zeilen):
+            key = (z["bild"], historienzeit(z["captured_at"]) or z["captured_at"])
+            json_index.setdefault(key, []).append(i)
+        if csv_pfad.is_file() and csv_pfad.stat().st_size:
+            with csv_pfad.open(encoding="utf-8-sig", newline="") as datei:
+                kopf = datei.readline(); datei.seek(0)
+                delimiter = ";" if ";" in kopf else "\t" if "\t" in kopf else ","
+                reader = csv.DictReader(datei, delimiter=delimiter, strict=True)
+                spalten = reader.fieldnames or []
+                if "bild" not in spalten or len(set(spalten)) != len(spalten) or "" in spalten:
+                    raise ValueError("ergebnis.csv hat keinen eindeutigen gueltigen Spaltenkopf")
+                for nummer, roh in enumerate(reader, 2):
+                    if None in roh or any(wert is None for wert in roh.values()):
+                        raise ValueError(f"Unvollstaendige CSV-Zeile {nummer}")
+                    name, zeit = roh.get("bild"), historienwert("captured_at", roh.get("captured_at"))
+                    kandidaten = json_index.get((name, historienzeit(zeit) or zeit), [])
+                    if kandidaten:
+                        index = kandidaten.pop(0); benutzt.add(index)
+                        z = json_zeilen[index]
+                    else:
+                        z = {feld: None for feld in SPALTEN}
+                    for feld in SPALTEN:
+                        if feld in roh:
+                            z[feld] = historienwert(feld, roh[feld])
+                    z.setdefault("_csv_zusatz", {}).update({k: v for k, v in roh.items() if k not in SPALTEN})
+                    zeilen.append(z)
+        zeilen.extend(z for i, z in enumerate(json_zeilen) if i not in benutzt)
+        return [historie_vorbereiten(z) for z in zeilen]
+    except (OSError, ValueError, TypeError, csv.Error) as fehler:
+        raise ValueError(f"Ergebnishistorie nicht sicher lesbar: {fehler}. Bestehende Dateien bleiben erhalten.") from fehler
+
+
+def ergebnishistorie_verbinden(historie, aktuell):
+    """Je Foto aktualisieren; Messungen ohne lokales Original unveraendert behalten."""
+    ergebnis, nach_name = [], {}
+    for z in [*historie, *aktuell]:
+        kandidaten = nach_name.setdefault(z["bild"], [])
+        sha = z.get("_sha256")
+        identisch = [i for i in kandidaten if sha and ergebnis[i].get("_sha256") == sha]
+        if not identisch:
+            identisch = [i for i in kandidaten if not (sha and ergebnis[i].get("_sha256"))
+                         and ((z.get("_zeit") or z.get("captured_at")) ==
+                              (ergebnis[i].get("_zeit") or ergebnis[i].get("captured_at"))
+                              or not ergebnis[i].get("captured_at"))]
+            if z.get("_historisch") and not sha and not z.get("captured_at"):
+                # Ohne Zeit/Pruefsumme koennen gleichnamige alte Zeilen
+                # unterschiedliche Aufnahmen sein. Nur exakte Duplikate falten.
+                identisch = [i for i in identisch if all(z.get(k) == ergebnis[i].get(k) for k in SPALTEN)]
+        if (not identisch and not z.get("_historisch") and len(kandidaten) == 1
+                and z.get("gesundheit_status") in ("datei_nicht_lesbar", "analysefehler")):
+            alt = ergebnis[kandidaten[0]]
+            if alt.get("brauchbar") and alt.get("captured_at") == z.get("captured_at"):
+                print(f"{z['bild']}: aktuelle Datei nicht auswertbar; bisherige Messung bleibt erhalten.")
+                continue
+        if len(identisch) == 1:
+            index = identisch[0]
+            if (not z.get("_historisch") and ergebnis[index].get("brauchbar")
+                    and z.get("gesundheit_status") in ("datei_nicht_lesbar", "analysefehler")):
+                print(f"{z['bild']}: aktuelle Datei nicht auswertbar; bisherige Messung bleibt erhalten.")
+            else:
+                # Echte Zusatzspalten alter CSV-Versionen nicht beim Update verlieren.
+                zusatz = dict(ergebnis[index].get("_csv_zusatz", {}))
+                zusatz.update(z.get("_csv_zusatz", {}))
+                if zusatz:
+                    z["_csv_zusatz"] = zusatz
+                ergebnis[index] = z
+        else:
+            kandidaten.append(len(ergebnis)); ergebnis.append(z)
+    ergebnis.sort(key=lambda z: (z.get("_zeit") or datetime.max.replace(tzinfo=timezone.utc),
+                                z["bild"], z.get("_sha256") or ""))
+    # Referenz- oder Verfahrenswechsel im Diagramm nicht zu einer Kurve verbinden.
+    gruppen = {}
+    for z in ergebnis:
+        info = z.get("_historie_export", {}).get("analysis", {})
+        referenz = z.get("_referenz_meta", {})
+        uid = z.get("_ansicht_id") or info.get("reference_sha256") or z.get("gesundheit_referenzfoto")
+        if uid is not None:
+            key = (uid, referenz.get("captured_at") or info.get("reference_captured_at"),
+                   z.get("pipeline_version"), z.get("scoring_version"))
+            z["_diagramm_gruppe"] = gruppen.setdefault(key, len(gruppen)+1)
+        elif z.get("gesundheit") is not None or z.get("wachstumsrate_pct_pro_tag") is not None:
+            key = ("unbekannt", z["bild"], z.get("captured_at"))
+            z["_diagramm_gruppe"] = gruppen.setdefault(key, len(gruppen)+1)
+        else:
+            z["_diagramm_gruppe"] = None
+    return ergebnis
+
+
 def api_datensatz(z, ref=None):
+    if z.get("_historie_export") is not None:
+        return copy.deepcopy(z["_historie_export"])
     messung = {eng: z.get(de) for de, eng in API_MESSFELDER.items()}
     gesundheit = {eng: z.get(de) for de, eng in API_GESUNDHEIT.items()}
     fehlt = {}
@@ -1838,7 +2170,7 @@ def api_datensatz(z, ref=None):
     for feld, wert in gesundheit.items():
         if wert is None and feld not in fehlt:
             fehlt[feld] = z["gesundheit_status"]
-    if z.get("_score_modus")=="farbverhaeltnis_teilflaeche":
+    if z.get("_score_modus") in ("farbverhaeltnis_teilflaeche", "blattverteilung_chromatik"):
         fehlt["score_brown"] = "brauntoene_ohne_bestaetigte_helligkeit_nicht_bewertet"
     for feld, wert in messung.items():
         if wert is None and feld not in fehlt:
@@ -1848,8 +2180,18 @@ def api_datensatz(z, ref=None):
                   "storage_path": storage_path, "checksum_sha256": z.get("_sha256")},
         "image_measurements": messung, "health_assessment": gesundheit,
         "analysis": {"version": ANALYSE_VERSION, "health_status": z["gesundheit_status"],
+                     **({"legacy_csv_fields": z["_csv_zusatz"]} if z.get("_csv_zusatz") else {}),
                      "pipeline_sha256": PIPELINE_SHA256,
+                     "series_id": MESSREIHE,
+                     "image_size": list(z["_bildform"]) if z.get("_bildform") is not None else None,
+                     "camera_transform": z.get("_pose").tolist() if z.get("_pose") is not None else None,
+                     "twin_view_id": z.get("_twin_ansicht_id"),
+                     "twin_camera_transform": z.get("_twin_pose").tolist() if z.get("_twin_pose") is not None else None,
+                     "lens_profile_sha256": z.get("_objektiv_hash"),
+                     "mask_clipped": z.get("_beschnitten"),
                      "capture_time_source":z.get("zeitquelle"),
+                     "hours_since_start":z.get("stunden_seit_start"),
+                     "view_number":z.get("ansicht"),
                      "mask_source": z.get("_maskenquelle","automatisch"),
                      "illumination": {"method": z.get("_lichtinfo",{}).get("modell"),
                                       "corrected": z.get("_lichtinfo",{}).get("korrigiert",False),
@@ -1877,12 +2219,14 @@ def api_datensatz(z, ref=None):
 
 
 def ergebnisse_speichern(zeilen, ref, ausgabe):
-    # CSV ist eine Kontrollansicht. Die API-Zahlen werden nie ueber CSV gelesen.
+    # Neue Werte aus der Analyse, historische Herkunft aus der bestehenden Ausgabe.
     inhalt = [api_datensatz(z, ref) for z in zeilen]
     # Jede leere Zelle bekommt in der CSV einen nachlesbaren Grund, damit
     # NULL nicht mit "Messwert war null" verwechselt wird.
     rueck = {e: d for d, e in {**API_MESSFELDER, **API_GESUNDHEIT}.items()}
     for z, satz in zip(zeilen, inhalt):
+        if z.get("_historisch") and z.get("fehlende_werte") is not None:
+            continue
         gruende = {}
         for feld, grund in satz["analysis"]["missing_values"].items():
             gruende.setdefault(grund, []).append(rueck.get(feld, feld))
@@ -1895,13 +2239,14 @@ def ergebnisse_speichern(zeilen, ref, ausgabe):
         json.dump(inhalt, datei, ensure_ascii=False, indent=2, allow_nan=False)
     json_tmp.replace(ausgabe/"ergebnis.json")
     csv_tmp = ausgabe/".ergebnis.csv.tmp"
+    spalten = SPALTEN + list(dict.fromkeys(k for z in zeilen for k in z.get("_csv_zusatz", {}) if k not in SPALTEN))
     with csv_tmp.open("w", encoding="utf-8-sig", newline="") as datei:
-        writer = csv.DictWriter(datei, fieldnames=SPALTEN, delimiter=";", extrasaction="raise")
+        writer = csv.DictWriter(datei, fieldnames=spalten, delimiter=";", extrasaction="raise")
         writer.writeheader()
         for z in zeilen:
             daten = {}
-            for k in SPALTEN:
-                v = json_sicher(z.get(k))
+            for k in spalten:
+                v = json_sicher(z.get(k) if k in SPALTEN else z.get("_csv_zusatz", {}).get(k))
                 if v is None:
                     daten[k] = "NULL"
                 elif isinstance(v, bool):
@@ -1918,6 +2263,421 @@ def ergebnisse_speichern(zeilen, ref, ausgabe):
         print("CSV gesperrt: ergebnis.csv in Excel schliessen und erneut ausfuehren. Die neue Auswertung wird nicht uebernommen.")
         return False
     return True
+
+
+def twin_ansichten_verbinden(historie, aktuell):
+    """Dieselbe Kamerageometrie ueber das rollende 100-Bilder-Fenster erhalten.
+
+    Identische, erneut ausgewertete Fotos verbinden alte und neue Koordinaten.
+    Es werden nur Transformationszahlen erhalten, keine alten Bilddateien.
+    """
+    alt = {(z["bild"], z.get("_sha256")): z for z in historie if z.get("_sha256")}
+    gruppen = {}
+    for z in aktuell:
+        if z.get("_ansicht_id") is not None and z.get("_pose") is not None:
+            gruppen.setdefault(z["_ansicht_id"], []).append(z)
+    for uid, zeilen in gruppen.items():
+        basis = np.eye(3)
+        identitaet = uid
+        for z in zeilen:
+            vorher = alt.get((z["bild"], z.get("_sha256")))
+            if vorher is None:
+                continue
+            info = vorher.get("_historie_export", {}).get("analysis", {})
+            pose = info.get("twin_camera_transform")
+            if pose is None:
+                pose = info.get("camera_transform")
+            alte_id = info.get("twin_view_id") or info.get("view_id")
+            if (not alte_id or pose is None or info.get("series_id") != MESSREIHE
+                    or info.get("pipeline_sha256") != PIPELINE_SHA256
+                    or info.get("image_size") != list(z.get("_bildform", ()))
+                    or info.get("lens_profile_sha256") != z.get("_objektiv_hash")):
+                continue
+            matrix = np.asarray(pose, dtype=float)
+            if matrix.shape != (2, 3) or not np.isfinite(matrix).all():
+                continue
+            neu = np.vstack((z["_pose"], [0., 0., 1.]))
+            try:
+                basis = np.linalg.solve(neu, np.vstack((matrix, [0., 0., 1.])))
+            except np.linalg.LinAlgError:
+                continue
+            identitaet = alte_id
+            break
+        for z in zeilen:
+            z["_twin_ansicht_id"] = identitaet
+            z["_twin_pose"] = (np.vstack((z["_pose"], [0., 0., 1.]))@basis)[:2]
+
+
+def twin_historie_laden(ausgabe):
+    """Einmal ausgegebene Prognosen erhalten, statt sie nachtraeglich zu verbessern."""
+    pfad = Path(ausgabe)/"digital_twin.json"
+    if not pfad.exists():
+        return []
+    try:
+        daten = json.loads(pfad.read_text(encoding="utf-8-sig"))
+        historie = daten["forecast_history"]
+        if not isinstance(historie, list):
+            raise ValueError("forecast_history ist keine Liste")
+        ids = set()
+        for eintrag in historie:
+            if not isinstance(eintrag, dict) or not isinstance(eintrag.get("forecast_id"), str):
+                raise ValueError("Prognose ohne eindeutige Kennung")
+            if eintrag["forecast_id"] in ids:
+                raise ValueError("Doppelte Prognosekennung")
+            ids.add(eintrag["forecast_id"])
+            if any(historienzeit(eintrag.get(k)) is None for k in ("created_at", "as_of", "target_at")):
+                raise ValueError("Prognose ohne UTC-Zeitbezug")
+            for feld in ("predicted_px", "source_px"):
+                wert = eintrag.get(feld)
+                if isinstance(wert, bool) or not isinstance(wert, (float, int)) or not math.isfinite(wert) or wert <= 0:
+                    raise ValueError(f"Ungueltiger Prognosewert in {feld}")
+            if not isinstance(eintrag.get("comparison_group"), str):
+                raise ValueError("Vergleichsgruppe fehlt")
+            if eintrag.get("evaluation") is not None and not isinstance(eintrag["evaluation"], dict):
+                raise ValueError("Ungueltige Prognosepruefung")
+        return historie
+    except (OSError, ValueError, TypeError, KeyError) as fehler:
+        raise ValueError(f"Digital-Twin-Historie nicht sicher lesbar: {fehler}. Vorhandene Ausgabe bleibt erhalten.") from fehler
+
+
+def twin_messpunkt(z):
+    """Nur belegbar vergleichbare Blattpixel derselben Pflanze verwenden."""
+    zeit = z.get("_zeit") or historienzeit(z.get("captured_at"))
+    if zeit is None:
+        return None, "aufnahmezeit_fehlt"
+    if not z.get("brauchbar") or not z.get("pflanzen_pixel"):
+        return None, "bild_nicht_brauchbar"
+    if "flaechensprung_pruefen" in (z.get("auffaelligkeit") or ""):
+        return None, "flaechensprung_pruefen"
+    info = api_datensatz(z)["analysis"]
+    if info.get("series_id") != MESSREIHE:
+        return None, "messreihe_nicht_bestaetigt"
+    form = info.get("image_size")
+    pose = info.get("twin_camera_transform")
+    if pose is None:
+        pose = info.get("camera_transform")
+    uid = info.get("twin_view_id") or info.get("view_id")
+    if not isinstance(form, (list, tuple)) or len(form) != 2 or not all(isinstance(n, int) and n > 0 for n in form):
+        return None, "bildgroesse_nicht_gespeichert"
+    if not uid or not info.get("pipeline_sha256") or pose is None:
+        return None, "kameraansicht_nicht_bestaetigt"
+    matrix = np.asarray(pose, dtype=float)
+    if matrix.shape != (2, 3) or not np.isfinite(matrix).all():
+        return None, "kamerageometrie_ungueltig"
+    scale = float(np.hypot(*matrix[:, 0]))
+    winkel = abs(math.degrees(math.atan2(matrix[1, 0], matrix[0, 0])))
+    verschiebung = float(np.linalg.norm(matrix[:, 2]))
+    # Der erste Prototyp setzt eine weitgehend feste Kamera voraus.
+    if abs(scale-1) > .005 or winkel > .5 or verschiebung > max(2., .003*min(ARBEITSBREITE, form[1])):
+        return None, "kamera_fuer_prognose_nicht_fest_genug"
+    if info.get("mask_clipped") and verschiebung > 1.:
+        return None, "beschnittener_bildausschnitt_verschoben"
+    flaeche = float(z["pflanzen_pixel"])
+    maximal = form[0]*form[1]
+    if not math.isfinite(flaeche) or not 0 < flaeche <= maximal:
+        return None, "blattpixel_ungueltig"
+    gruppe = {"series_id": MESSREIHE, "view_id": uid, "image_size": list(form),
+              "pipeline_sha256": info["pipeline_sha256"], "lens": info.get("lens_profile_sha256")}
+    key = hashlib.sha256(json.dumps(gruppe, sort_keys=True).encode("utf-8")).hexdigest()
+    return {"time": zeit, "pixels": flaeche, "max_pixels": maximal, "group": key,
+            "file_name": z["bild"], "checksum_sha256": z.get("_sha256"),
+            "pipeline_sha256": info["pipeline_sha256"]}, None
+
+
+def twin_fit(punkte):
+    """Eine Gerade ueber reale Zeitabstaende; Mindestbasis sind technische Startwerte."""
+    if len(punkte) < TWIN_MIN_AUFNAHMEN:
+        return None, "zu_wenige_vergleichbare_aufnahmen"
+    span = (punkte[-1]["time"]-punkte[0]["time"]).total_seconds()/3600
+    if span < TWIN_MIN_SPANNE_STUNDEN:
+        return None, "zeitreihe_kuerzer_als_24_stunden"
+    luecke = max((b["time"]-a["time"]).total_seconds()/3600 for a, b in zip(punkte, punkte[1:]))
+    if luecke > TWIN_MAX_LUECKE_STUNDEN:
+        return None, "zu_grosse_luecke_in_der_zeitreihe"
+    x = np.array([(p["time"]-punkte[-1]["time"]).total_seconds()/3600 for p in punkte])
+    y = np.array([p["pixels"] for p in punkte])
+    steigung, start = np.linalg.lstsq(np.column_stack((x, np.ones(len(x)))), y, rcond=None)[0]
+    return {"slope_px_per_hour": float(steigung), "intercept_px": float(start),
+            "points": len(punkte), "span_hours": round(span, 3),
+            "fit_mae_px": float(np.mean(np.abs(y-(steigung*x+start))))}, None
+
+
+def twin_ruecktest(punkte):
+    """Vergangenheit trainieren, spaetere Messung testen; kein zufaelliger Datensplit."""
+    fehler_linear, fehler_basis = [], []
+    toleranz = timedelta(minutes=TWIN_ZIEL_TOLERANZ_MINUTEN)
+    for i, ursprung in enumerate(punkte):
+        frueher = [p for p in punkte[:i+1] if p["time"] >= ursprung["time"]-timedelta(hours=TWIN_FENSTER_STUNDEN)]
+        modell, _ = twin_fit(frueher)
+        if modell is None:
+            continue
+        ziel = ursprung["time"]+timedelta(hours=TWIN_HORIZONT_STUNDEN)
+        spaeter = [p for p in punkte[i+1:] if abs(p["time"]-ziel) <= toleranz]
+        if not spaeter:
+            continue
+        echt = min(spaeter, key=lambda p: abs(p["time"]-ziel))
+        # Auf denselben tatsaechlichen Messzeitpunkt vorhersagen.
+        h = (echt["time"]-ursprung["time"]).total_seconds()/3600
+        vorhersage = modell["intercept_px"]+modell["slope_px_per_hour"]*h
+        if not 0 < vorhersage <= ursprung["max_pixels"]:
+            continue
+        fehler_linear.append(abs(vorhersage-echt["pixels"]))
+        fehler_basis.append(abs(ursprung["pixels"]-echt["pixels"]))
+    return {"method": "rolling_origin", "horizon_hours": TWIN_HORIZONT_STUNDEN,
+            "target_tolerance_minutes": TWIN_ZIEL_TOLERANZ_MINUTEN, "comparisons": len(fehler_linear),
+            "linear_mae_px": float(np.mean(fehler_linear)) if fehler_linear else None,
+            "last_value_mae_px": float(np.mean(fehler_basis)) if fehler_basis else None,
+            "status": "historischer_methodenvergleich" if len(fehler_linear) >= 3 else "noch_zu_wenige_zukunftsvergleiche"}
+
+
+def twin_prognosen_pruefen(historie, punkte, jetzt):
+    """Ausgegebene Werte unveraendert an spaeter aufgenommenen Fotos pruefen."""
+    for eintrag in historie:
+        if eintrag.get("evaluation") is not None or eintrag.get("kind") != "issued_forecast":
+            continue
+        ziel = historienzeit(eintrag["target_at"])
+        erstellt = historienzeit(eintrag["created_at"])
+        ursprung = historienzeit(eintrag["as_of"])
+        if erstellt >= ziel or jetzt < ziel:
+            continue  # Spaet erzeugte Rueckrechnungen sind keine echten Prognosen.
+        toleranz = timedelta(minutes=eintrag.get("target_tolerance_minutes", TWIN_ZIEL_TOLERANZ_MINUTEN))
+        kandidaten = [p for p in punkte if p["group"] == eintrag["comparison_group"]
+                      and erstellt < p["time"] <= jetzt and ursprung < p["time"]
+                      and abs(p["time"]-ziel) <= toleranz]
+        if not kandidaten:
+            continue
+        echt = min(kandidaten, key=lambda p: abs(p["time"]-ziel))
+        if abs(echt["time"]-ziel) > timedelta(minutes=1) and jetzt < ziel+toleranz:
+            continue  # Erst das Zielfenster abwarten, wenn noch kein zeitnahes Foto vorliegt.
+        eintrag["evaluation"] = {"checked_at": iso(jetzt), "observed_at": iso(echt["time"]),
+                    "file_name": echt["file_name"], "checksum_sha256": echt["checksum_sha256"],
+                    "observed_px": echt["pixels"], "absolute_error_px": abs(eintrag["predicted_px"]-echt["pixels"]),
+                    "last_value_error_px": abs(eintrag["source_px"]-echt["pixels"]),
+                    "time_difference_minutes": (echt["time"]-ziel).total_seconds()/60}
+
+
+def digital_twin(zeilen, historie=None, einzelbilder=False, jetzt=None):
+    """Beobachtender Digital-Twin-Prototyp; keine biologische oder 3D-Rekonstruktion."""
+    jetzt = jetzt or datetime.now(timezone.utc)
+    if jetzt.tzinfo is None:
+        raise ValueError("Digital Twin braucht eine Auswertungszeit mit Zeitzone")
+    jetzt = jetzt.astimezone(timezone.utc)
+    log = copy.deepcopy(historie or [])
+    daten = {"version": TWIN_VERSION, "series_id": MESSREIHE, "generated_at": iso(jetzt),
+             "pipeline_version": ANALYSE_VERSION, "scope": "visible_leaf_area_pixels",
+             "status": "keine_verlaessliche_aufnahmezeit", "state": None, "forecast": None,
+             "training": {"points": 0, "span_hours": 0, "min_points": TWIN_MIN_AUFNAHMEN,
+                          "min_span_hours": TWIN_MIN_SPANNE_STUNDEN, "window_hours": TWIN_FENSTER_STUNDEN},
+             "validation": None, "online_validation": None, "forecast_history": log,
+             "limitations": ["Technischer Prototyp; keine biologisch validierte Wachstumsprognose.",
+                             "Sichtbare Blattflaeche kann sich auch durch Blattstellung oder Maskenfehler aendern.",
+                             "Die lokale 3D-Ansicht ist schematisch; Pflanzenhoehe und Tiefe sind nicht vermessen.",
+                             "Pflegewirkungen sind ohne zugeordnete Sensor- und Aktionszeitreihen nicht gelernt."]}
+    punkte, ausgeschlossen = [], {}
+    if einzelbilder:
+        daten["status"] = "einzelbilder_ohne_gemeinsamen_twin"
+        return daten
+    zeitlich = sorted((z for z in zeilen if z.get("_zeit") or historienzeit(z.get("captured_at"))),
+                      key=lambda z: z.get("_zeit") or historienzeit(z["captured_at"]))
+    for z in zeilen:
+        punkt, grund = twin_messpunkt(z)
+        if punkt is not None:
+            punkte.append(punkt)
+        else:
+            ausgeschlossen[grund] = ausgeschlossen.get(grund, 0)+1
+    daten["training"]["excluded_images"] = ausgeschlossen
+    twin_prognosen_pruefen(log, punkte, jetzt)
+    daten["online_validation"] = {"comparisons": 0, "mae_px": None, "last_value_mae_px": None}
+    if not zeitlich:
+        return daten
+    letzte = zeitlich[-1]
+    zeit = letzte.get("_zeit") or historienzeit(letzte["captured_at"])
+    alter = (jetzt-zeit).total_seconds()/3600
+    daten["state"] = {"observed_at": iso(zeit), "file_name": letzte["bild"],
+             "leaf_pixels": letzte.get("pflanzen_pixel"), "health_score": letzte.get("gesundheit"),
+             "health_status": letzte.get("gesundheit_status"), "usable": bool(letzte.get("brauchbar")),
+             "quality_flags": letzte.get("auffaelligkeit"), "age_hours": round(alter, 3),
+             "fresh": bool(0 <= alter <= TWIN_MAX_ALTER_STUNDEN)}
+    if zeit > jetzt:
+        daten["status"] = "aufnahmezeit_liegt_in_der_zukunft"
+        return daten
+    aktuell, grund = twin_messpunkt(letzte)
+    if aktuell is None:
+        daten["status"] = grund
+        return daten
+    geprueft = [p["evaluation"] for p in log if p.get("kind") == "issued_forecast"
+                and p.get("series_id") == MESSREIHE and p.get("model_version") == TWIN_VERSION
+                and p.get("comparison_group") == aktuell["group"] and p.get("evaluation") is not None]
+    daten["online_validation"] = {"comparisons": len(geprueft),
+             "mae_px": float(np.mean([p["absolute_error_px"] for p in geprueft])) if geprueft else None,
+             "last_value_mae_px": float(np.mean([p["last_value_error_px"] for p in geprueft])) if geprueft else None}
+    # Verschiedene Aufnahmen mit gleichem Zeitstempel zaehlen nur einmal.
+    je_zeit = {p["time"]: p for p in punkte if p["group"] == aktuell["group"]
+               and zeit-timedelta(hours=TWIN_FENSTER_STUNDEN) <= p["time"] <= zeit}
+    je_zeit[zeit] = aktuell
+    reihe = [je_zeit[t] for t in sorted(je_zeit)]
+    span = (reihe[-1]["time"]-reihe[0]["time"]).total_seconds()/3600 if reihe else 0
+    daten["training"].update(points=len(reihe), span_hours=round(span, 3), comparison_group=aktuell["group"],
+                             first_at=iso(reihe[0]["time"]) if reihe else None, last_at=iso(zeit))
+    modell, grund = twin_fit(reihe)
+    if modell is None:
+        daten["status"] = grund
+        return daten
+    test = twin_ruecktest(reihe)
+    daten["validation"] = test
+    ziel = zeit+timedelta(hours=TWIN_HORIZONT_STUNDEN)
+    wert = modell["intercept_px"]+modell["slope_px_per_hour"]*TWIN_HORIZONT_STUNDEN
+    name, auswahl = "linear_trend", "vorlaeufiger_linearer_startwert"
+    if test["comparisons"] >= 3 and test["last_value_mae_px"] <= test["linear_mae_px"]:
+        name, auswahl = "last_value", "letzter_messwert_im_ruecktest_mindestens_gleich_gut"
+    if not 0 < wert <= aktuell["max_pixels"]:
+        name, auswahl = "last_value", "linearer_wert_ausserhalb_der_bildflaeche"
+    if name == "last_value":
+        wert = aktuell["pixels"]
+    live = bool(0 <= alter <= TWIN_MAX_ALTER_STUNDEN and jetzt < ziel)
+    daten["status"] = "prognose_vorlaeufig" if live else "historische_projektion_daten_veraltet"
+    daten["forecast"] = {"as_of": iso(zeit), "target_at": iso(ziel), "horizon_hours": TWIN_HORIZONT_STUNDEN,
+             "predicted_px": round(float(wert), 2), "source_px": aktuell["pixels"], "model": name,
+             "model_selection": auswahl, "is_current": live, "biologically_validated": False,
+             "fit": modell, "comparison_group": aktuell["group"]}
+    kennung = {"model_version": TWIN_VERSION, "source": aktuell["checksum_sha256"],
+                   "as_of": iso(zeit), "target_at": iso(ziel), "group": aktuell["group"]}
+    forecast_id = hashlib.sha256(json.dumps(kennung, sort_keys=True).encode("utf-8")).hexdigest()
+    vorhanden = next((p for p in log if p["forecast_id"] == forecast_id), None)
+    if vorhanden is not None:
+        # Neu angekommene alte Bilder duerfen eine ausgegebene Prognose nicht aendern.
+        for feld in ("predicted_px", "source_px", "model", "model_selection", "fit"):
+            daten["forecast"][feld] = copy.deepcopy(vorhanden.get(feld))
+        daten["forecast"].update(forecast_id=forecast_id, issued_at=vorhanden["created_at"])
+    elif live:
+        log.append({"forecast_id": forecast_id, "kind": "issued_forecast", "created_at": iso(jetzt),
+                     "series_id": MESSREIHE, "model_version": TWIN_VERSION, "model": name,
+                     "model_selection": auswahl, "fit": copy.deepcopy(modell),
+                     "as_of": iso(zeit), "target_at": iso(ziel), "predicted_px": round(float(wert), 2),
+                     "source_px": aktuell["pixels"], "source_file": aktuell["file_name"],
+                     "source_checksum_sha256": aktuell["checksum_sha256"], "comparison_group": aktuell["group"],
+                     "target_tolerance_minutes": TWIN_ZIEL_TOLERANZ_MINUTEN,
+                     "evaluation": None})
+        daten["forecast"].update(forecast_id=forecast_id, issued_at=iso(jetzt))
+    return json_sicher(daten)
+
+
+def twin_speichern(daten, zeilen, ausgabe):
+    """Messung und Prognose getrennt anzeigen; alte Prognosen im JSON erhalten."""
+    tmp = ausgabe/".digital_twin.json.tmp"
+    tmp.write_text(json.dumps(daten, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+    tmp.replace(ausgabe/"digital_twin.json")
+    ordner = ausgabe/"grafiken"; ordner.mkdir(exist_ok=True)
+    fig, ax = plt.subplots(figsize=(11, 5.6))
+    ax.set_title("06 | Digital Twin · sichtbare Blattfläche und 24-h-Prognose", loc="left", fontweight="semibold")
+    gruppe = daten["training"].get("comparison_group")
+    reihe = []
+    for z in zeilen:
+        p, _ = twin_messpunkt(z)
+        if p is not None and p["group"] == gruppe:
+            reihe.append(p)
+    reihe.sort(key=lambda p: p["time"])
+    if reihe:
+        reihe = [p for p in reihe if p["time"] >= reihe[-1]["time"]-timedelta(hours=TWIN_FENSTER_STUNDEN)]
+        ax.plot([p["time"] for p in reihe], [p["pixels"] for p in reihe], "o-", ms=3,
+                color="#32816c", label="Gemessene Blattpixel")
+    forecast = daten.get("forecast")
+    if forecast:
+        start, ziel = historienzeit(forecast["as_of"]), historienzeit(forecast["target_at"])
+        label = "Prognose (vorläufig)" if forecast["is_current"] else "Projektion ab alter Aufnahme"
+        ax.plot([start, ziel], [forecast["source_px"], forecast["predicted_px"]], "--D", ms=5,
+                color="#76548b", label=label)
+        ax.axvline(start, color="#9aa9a6", lw=1, ls=":")
+    if not reihe:
+        ax.text(.5, .56, "Noch keine ausreichende vergleichbare Zeitreihe.", transform=ax.transAxes,
+                ha="center", color="#62737b", fontsize=12)
+        if not forecast:
+            ax.set_xticks([]); ax.set_yticks([])
+    if reihe or forecast:
+        locator = mdates.AutoDateLocator(minticks=3, maxticks=7)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=timezone.utc))
+        ax.legend(loc="best")
+    ax.set_xlabel("Aufnahmezeit / Prognosezeit (UTC)"); ax.set_ylabel("Sichtbare Blattfläche [Pixel]")
+    ax.grid(alpha=.16)
+    zustand = daten["status"].replace("_", " ")
+    fig.text(.015, .055, f"Status: {zustand} | Datenbasis: {daten['training']['points']} Aufnahmen, "
+             f"{daten['training']['span_hours']:.1f} h", fontsize=9, color="#62737b")
+    fig.text(.015, .018, "Technischer Prototyp · keine 3D-Vermessung · keine biologisch validierte Wachstumsprognose", fontsize=8.5, color="#62737b")
+    fig.tight_layout(rect=(0, .10, 1, 1))
+    fig.savefig(ordner/TWIN_GRAFIK, dpi=150, facecolor="white")
+    plt.close(fig)
+
+
+def gesundheit_pro_foto_grafik(zeilen, ordner):
+    """Ein Eintrag je Foto. Fehlend, Referenz und gemessene Null unterscheiden."""
+    n = len(zeilen)
+    breite = max(10., min(26., 5.+.52*n))
+    fig, (ax, status_ax) = plt.subplots(2, 1, figsize=(breite, 7.8), sharex=True,
+                                     gridspec_kw={"height_ratios": [4, 1.5]})
+    x = np.arange(1, n+1)
+    texte, farben, labels = [], [], []
+    for i, z in enumerate(zeilen, 1):
+        score = z.get("gesundheit")
+        gueltig = isinstance(score, (int, float)) and math.isfinite(score) and 0 <= score <= 100
+        referenz = bool(z.get("_ist_referenz"))
+        if gueltig:
+            ax.bar(i, score, width=.67, color="#32816c", zorder=3)
+            # Auch ein tatsaechlich berechneter Score 0 bleibt sichtbar.
+            ax.scatter([i], [score], s=22, color="#245c4e", zorder=4)
+            if n <= 45:
+                ax.text(i, min(score+3, 104), f"{score:.1f}", ha="center", va="bottom", fontsize=8)
+            roh = z.get("gesundheit_roh")
+            if isinstance(roh, (int, float)) and math.isfinite(roh):
+                ax.scatter([i], [roh], marker="_", s=65, color="#795d91", zorder=5)
+            texte.append("Berechnet")
+            farben.append("#32816c")
+        elif referenz:
+            ax.scatter([i], [100], marker="D", s=55, facecolor="white", edgecolor="#547da0", zorder=4)
+            if n <= 45:
+                ax.text(i, 105, "Ref.", ha="center", fontsize=8, color="#547da0")
+            texte.append("Referenzstart")
+            farben.append("#547da0")
+        else:
+            # Dieser graue Platzhalter hat absichtlich KEINE Hoehe in Score-Einheiten.
+            ax.axvspan(i-.34, i+.34, ymin=.02, ymax=.92, facecolor="#e9edef", hatch="///",
+                       edgecolor="#c4cdd0", linewidth=0, zorder=0)
+            if n <= 45:
+                ax.text(i, 48, "—", ha="center", color="#738089", fontsize=12)
+            status = z.get("gesundheit_status") or "Kein Score gespeichert"
+            texte.append(status.replace("_", " "))
+            farben.append("#9b7141")
+        zeit = z.get("_zeit") or historienzeit(z.get("captured_at"))
+        labels.append(f"{i}\n{zeit:%d.%m. %H:%M}" if zeit else str(i))
+    ax.set_title("04 | Zustandsindex je Foto", loc="left", fontweight="semibold", pad=14)
+    ax.set_ylabel("Relativer Index [0–100]")
+    ax.set_ylim(-3, 114)
+    ax.set_yticks([0, 25, 50, 75, 100])
+    ax.grid(axis="y", alpha=.18, zorder=0)
+    ax.axhline(100, color="#aebcbd", ls=":", lw=1)
+    ax.plot([], [], "s", color="#32816c", label="Berechneter Score je Foto")
+    ax.plot([], [], "_", color="#795d91", label="Rohscore vor zeitlicher Glättung")
+    ax.plot([], [], "D", markerfacecolor="white", color="#547da0", label="Referenzstart; kein Gesundheitsmesswert")
+    ax.legend(loc="upper left", bbox_to_anchor=(0, 1.02), fontsize=8, ncol=3)
+    gruppen = list(dict.fromkeys(texte))
+    for j, text in enumerate(gruppen):
+        ids = [i for i, s in enumerate(texte) if s == text]
+        status_ax.scatter([i+1 for i in ids], [j]*len(ids), color=[farben[i] for i in ids], s=25)
+    status_ax.set_yticks(range(len(gruppen)), [t[:76] for t in gruppen], fontsize=8)
+    status_ax.set_ylim(len(gruppen)-.4, -.6)
+    status_ax.grid(axis="y", alpha=.15)
+    tick_ids = list(range(n)) if n <= 32 else sorted(set(np.linspace(0, n-1, min(24, n), dtype=int)))
+    status_ax.set_xticks([i+1 for i in tick_ids], [labels[i] for i in tick_ids], fontsize=8,
+                        rotation=0 if n <= 16 else 45)
+    status_ax.set_xlim(.4, max(1, n)+.6)
+    status_ax.set_xlabel("Ein Platz pro Foto · Nummer entspricht ergebnis.csv / ergebnis.json")
+    berechnet = sum(isinstance(z.get("gesundheit"), (float, int)) and math.isfinite(z["gesundheit"]) for z in zeilen)
+    fig.text(.015, .018, f"{n} Fotos enthalten · {berechnet} mit Score · Schraffiert = nicht bewertbar, nicht 0. "
+             "100 = wie die eigene Referenz; keine biologische Diagnose.", fontsize=8.5, color="#62737b")
+    fig.tight_layout(rect=(0, .055, 1, 1))
+    ordner.mkdir(exist_ok=True)
+    fig.savefig(ordner/GRAFIK_DATEIEN[3], dpi=150, facecolor="white")
+    plt.close(fig)
 
 
 def grafiken(zeilen, ordner):
@@ -1965,7 +2725,7 @@ def grafiken(zeilen, ordner):
         y = np.array([z[feld] if z.get(feld) is not None else np.nan for z in zeilen])
         anzahl = int(np.count_nonzero(np.isfinite(y)))
         ax.set_xlim(.5,max(1,len(zeilen))+.5)
-        ansichten = [z.get("ansicht") for z in zeilen]
+        ansichten = [z.get("_diagramm_gruppe", z.get("ansicht")) for z in zeilen]
         farben = ["#2e806a","#547da0","#9362a1","#ad7340","#56705a","#8a6371"]
         modi = [z.get("_score_modus") for z in zeilen]
         for i,ansicht in enumerate(dict.fromkeys(a for a in ansichten if a is not None)):
@@ -1976,7 +2736,7 @@ def grafiken(zeilen, ordner):
                 if not np.isfinite(y[maske]).any():
                     continue
                 teil = modus=="farbverhaeltnis_teilflaeche"
-                label = f"Ansicht {ansicht}"+(" · Farbteilfläche" if teil else "")
+                label = f"Referenz {ansicht}"+(" · Farbteilfläche" if teil else "")
                 ax.plot(aufnahmen,np.where(maske,y,np.nan),"s-" if teil else "o-",
                         ms=4.5,lw=1.6,color=farbe,label=label)
                 if zweiter:
@@ -2049,6 +2809,7 @@ def grafiken(zeilen, ordner):
     rate_cm = kalibriert and any(z.get("wachstumsrate_cm2_pro_tag") is not None for z in zeilen)
     feld = "wachstumsrate_cm2_pro_tag" if rate_cm else "wachstumsrate_pct_pro_tag"
     ratetexte = {"berechnet":"Berechnet", "berechnet_kurzer_abstand":"Berechnet · kurzer Abstand",
+                  "berechnet_historisch":"Berechnet · gespeicherter Vergleich",
                   "kameraausschnitt_nicht_vergleichbar":"Bildausschnitt nicht vergleichbar",
                   "zu_wenig_gemeinsame_sichtflaeche":"Zu wenig gemeinsamer Ausschnitt",
                   "berechnet_gemeinsamer_ausschnitt":"Berechnet · gemeinsamer Ausschnitt",
@@ -2080,26 +2841,9 @@ def grafiken(zeilen, ordner):
     else:
         hinweis(unten, "Keine auswertbare Blattmaske.")
     speichern(fig, 2)
-    scoretexte = {"datei_nicht_lesbar":"Datei nicht lesbar",
-                   "bildqualitaet_nicht_ausreichend":"Bildqualität unzureichend",
-                   "kameravergleich_nicht_verifiziert":"Kameraansicht nicht vergleichbar",
-                   "zu_wenig_gemeinsames_blattgewebe":"Zu wenig gemeinsame Blattfläche",
-                   "zu_wenig_bestaetigte_farbteilflaeche":"Zu wenig farblich geprüfte Blattfläche",
-                   "lichtvergleich_zu_wenig_blattgewebe":"Zu wenig belichtete Blattfläche",
-                   "einzelbilder_keine_gemeinsame_referenz":"Einzelbild ohne Referenz",
-                   "aufnahme_vor_referenz":"Aufnahme vor Referenz",
-                   "analysefehler":"Analysefehler"}
-    def score_status(z):
-        if z.get("_ist_referenz"):
-            return "Referenzstart"
-        if z.get("gesundheit") is not None:
-            return "Berechnet · Farbteilfläche" if z.get("_score_modus")=="farbverhaeltnis_teilflaeche" else "Berechnet"
-        status = z["gesundheit_status"]
-        return scoretexte.get(status,"Lichtvergleich nicht möglich" if status.startswith("licht") else "Nicht berechnet")
-    verlauf_mit_status(3,"04 | Relativer Zustandsindex — 100 = nahe an der Referenz",
-                       "gesundheit","Index [0–100]",[score_status(z) for z in zeilen],"gesundheit_roh")
+    gesundheit_pro_foto_grafik(zeilen, ordner)
     fig, ax = plt.subplots(figsize=(max(8.5,min(16,5+.45*len(zeilen))),4.7))
-    ax.set_title("05 | Teilbewertungen je Aufnahme",loc="left",fontweight="semibold")
+    ax.set_title("05 | Fünf Teilbewertungen · jede Spalte ist ein Foto",loc="left",fontweight="semibold")
     labels = ["Farbverteilung","Gelbzunahme","Braun-/Warmzunahme","Sättigungswechsel","Farbtonwechsel"]
     werte = np.array([[np.nan if z.get("score_"+k) is None else z["score_"+k] for z in zeilen]
                       for k in GEWICHTE],dtype=float)
@@ -2107,7 +2851,7 @@ def grafiken(zeilen, ordner):
     heat = ax.imshow(np.ma.masked_invalid(werte),aspect="auto",interpolation="nearest",
                      cmap="viridis",vmin=0,vmax=100)
     ax.set_yticks(range(len(labels)),labels)
-    pos = sorted(set(np.linspace(0,len(zeilen)-1,min(14,len(zeilen)),dtype=int)))
+    pos = list(range(len(zeilen))) if len(zeilen)<=32 else sorted(set(np.linspace(0,len(zeilen)-1,24,dtype=int)))
     ax.set_xticks(pos,[i+1 for i in pos])
     ax.set_xlabel("Aufnahmenummer (Reihenfolge in ergebnis.csv)")
     if len(zeilen)<=16:
@@ -2118,6 +2862,8 @@ def grafiken(zeilen, ordner):
                             color="#192620" if werte[j,i]>=58 else "white")
                 elif z.get("_ist_referenz"):
                     ax.text(i,j,"Ref.",ha="center",va="center",fontsize=8,color="#517493")
+                else:
+                    ax.text(i,j,"—",ha="center",va="center",fontsize=8,color="#62737b")
     fig.colorbar(heat,ax=ax,label="Teilscore [0–100]")
     fig.text(.014,.013,"Graue Felder: kein Vergleich. Ref. = Start einer Kameraansicht. Rohfarben stehen in Grafik 03.",
              fontsize=8.5,color=grau)
@@ -2200,6 +2946,8 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
     if not pfade:raise ValueError('Keine Eingabebilder; vorhandene Auswertung bleibt erhalten.')
     ausgabe.mkdir(parents=True,exist_ok=True)
     with auswertung_sperren(ausgabe):
+        historie = ergebnishistorie_laden(ausgabe)
+        twin_historie = twin_historie_laden(ausgabe)
         work=Path(tempfile.mkdtemp(prefix='.biobox-auswertung-',dir=ausgabe.parent))
         fertig=work/'neu';fertig.mkdir();backup=work/'vorher';backup.mkdir()
         cleanup=True
@@ -2220,8 +2968,8 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
                             target=fertig/folder/path.name
                             if path.is_dir():shutil.copytree(path,target,symlinks=True)
                             else:shutil.copy2(path,target,follow_symlinks=False)
-            rows=_analysieren(pfade,fertig,manuell,einzelbilder,neue_referenz)
-            required=['ergebnis.csv','ergebnis.json','masken','kontrolle','grafiken']
+            rows=_analysieren(pfade,fertig,manuell,einzelbilder,neue_referenz,historie,twin_historie)
+            required=['ergebnis.csv','ergebnis.json','digital_twin.json',TWIN_3D_DATEI,'masken','kontrolle','grafiken']
             if not all((fertig/name).exists() for name in required):
                 raise OSError('Neue Auswertung ist unvollstaendig; alte Ausgabe bleibt erhalten.')
             changes=[]
@@ -2246,8 +2994,11 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
         finally:
             if cleanup:shutil.rmtree(work)
     alte_referenzdateien_entfernen(ausgabe)
-    print(f'\n{len(rows)} Bilder erneut ausgewertet -> {ausgabe/"ergebnis.csv"}')
-    print('Masken, Kontrollbilder, CSV/JSON und alle 5 Grafiken gemeinsam aktualisiert.')
+    erhalten = sum(bool(z.get('_historisch')) for z in rows)
+    print(f'\n{len(pfade)} vorhandene Bilder verarbeitet; {erhalten} fruehere Messungen erhalten.')
+    print(f'{len(rows)} Datensaetze insgesamt -> {ausgabe/"ergebnis.csv"}')
+    print('Masken/Kontrollbilder, CSV/JSON-Historie, 5 Analyse-Grafiken, Digital Twin und lokale 3D-Ansicht aktualisiert.')
+    print('3D-Ansicht:', ausgabe/TWIN_3D_DATEI)
     n_rate = sum(z.get("wachstumsrate_pct_pro_tag") is not None for z in rows)
     n_score = sum(z.get("gesundheit") is not None for z in rows)
     n_pixel = sum(z.get("blattpixel_aenderung_pro_tag") is not None for z in rows)
@@ -2258,7 +3009,7 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
     return rows
 
 
-def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz=False):
+def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz=False, historie=None, twin_historie=None):
     ausgabe.mkdir(parents=True, exist_ok=True)
     masken, kontrolle = ausgabe/"masken", ausgabe/"kontrolle"
     masken.mkdir(exist_ok=True)
@@ -2333,6 +3084,7 @@ def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz
             z["massstab_quelle"] = quelle
             z["_massstab_status"] = quelle
             z["_objektiv_entzerrt"] = kalibrierung is not None
+            z["_objektiv_hash"] = lens_hash
             z["rauschen"] = rauschen_schaetzen(bild)
             if not zeit:
                 flags_hinzufuegen(z, "keine_aufnahmezeit")
@@ -2449,11 +3201,658 @@ def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz
         for p in ordner.glob("*"+suffix):
             if re.match(r"^\d{5}_", p.name) and p.name[:-len(suffix)] not in erzeugt:
                 p.unlink()
+    twin_ansichten_verbinden(historie or [], zeilen)
+    zeilen = ergebnishistorie_verbinden(historie or [], zeilen)
     csv_aktuell = ergebnisse_speichern(zeilen,hauptref,ausgabe)
     if not csv_aktuell:
         raise PermissionError("CSV konnte nicht erstellt werden; bisherige Auswertung bleibt erhalten.")
     grafiken(zeilen,ausgabe/"grafiken")
+    twin = digital_twin(zeilen, twin_historie, einzelbilder)
+    twin_speichern(twin, zeilen, ausgabe)
+    twin_3d_speichern(zeilen, twin, ausgabe, pfade)
+    print("Digital Twin:", twin["status"], f"| {twin['training']['points']} vergleichbare Aufnahmen")
+    if twin.get("forecast"):
+        p = twin["forecast"]
+        print(f"  {p['target_at']}: {p['predicted_px']:.0f} Blattpixel ({p['model']}; vorlaeufig)")
+    else:
+        print(f"  Prognose braucht mindestens {TWIN_MIN_AUFNAHMEN} passende Aufnahmen ueber {TWIN_MIN_SPANNE_STUNDEN} h; Details in digital_twin.json.")
     return zeilen
+
+
+def twin_3d_daten(zeilen, twin, ausgabe=None, bildpfade=None):
+    """Lokale Ansicht aus denselben Messwerten; keine zusaetzlichen API-Messwerte."""
+    aufnahmen = []
+    for nummer, z in enumerate(zeilen, 1):
+        satz = api_datensatz(z)
+        info = satz.get("analysis", {})
+        form = info.get("image_size")
+        aufnahmen.append({
+            "number": nummer, "file_name": z.get("bild"), "captured_at": z.get("captured_at"),
+            "series_id": info.get("series_id") or MESSREIHE,
+            "leaf_pixels": z.get("pflanzen_pixel"), "health_score": z.get("gesundheit"),
+            "health_raw": z.get("gesundheit_roh"), "health_status": z.get("gesundheit_status"),
+            "usable": bool(z.get("brauchbar")),
+            "is_reference": bool(z.get("_ist_referenz") or info.get("is_reference")),
+            "reference_file": info.get("reference_file"),
+            "view_id": info.get("twin_view_id") or info.get("view_id"),
+            "view_number": info.get("view_number"), "image_size": form,
+            "quality_flags": z.get("auffaelligkeit"),
+            "growth_rate_pct_per_day": z.get("wachstumsrate_pct_pro_tag"),
+            "growth_comparison_mode": info.get("growth_comparison_mode"),
+            "health_comparison_mode": info.get("health_comparison_mode"),
+            "scores": {"Farbverteilung": z.get("score_gruen"), "Gelbzunahme": z.get("score_gelb"),
+                       "Braunzunahme": z.get("score_braun"), "Sättigungswechsel": z.get("score_saettigung"),
+                       "Farbtonwechsel": z.get("score_farbton")},
+        })
+    daten = {"viewer_version": TWIN_3D_VERSION, "series_id": twin.get("series_id") or MESSREIHE,
+             "generated_at": iso(datetime.now(timezone.utc)), "observations": aufnahmen,
+             # Das unveraenderte Prognoselogbuch bleibt in digital_twin.json.
+             "twin": {k: copy.deepcopy(v) for k, v in twin.items() if k != "forecast_history"}, "preview": None,
+             "sources": [{"title": "RHS: Zimmerpflanzen pflegen", "url": "https://www.rhs.org.uk/plants/types/houseplants/growing-guide"},
+                         {"title": "RHS: Basilikum", "url": "https://www.rhs.org.uk/herbs/basil/grow-your-own"}]}
+    # Nur eine kleine Vorschau der letzten vorhandenen Aufnahme einbetten.
+    # Die HTML-Datei wird ersetzt und legt KEIN zweites Bildarchiv an.
+    if zeilen and ausgabe is not None:
+        z = max(enumerate(zeilen), key=lambda item: (
+            historienzeit(item[1].get("captured_at")) or datetime.min.replace(tzinfo=timezone.utc), item[0]))[1]
+        stamm = z.get("_ausgabe_stamm")
+        if not stamm:
+            ordner = Path(ausgabe)/"masken"
+            suffix = "_"+Path(z.get("bild") or "").stem+"_maske.png"
+            treffer = [p for p in ordner.iterdir() if p.is_file() and re.match(r"^\d{5}_", p.name) and p.name.endswith(suffix)] if ordner.is_dir() else []
+            if len(treffer) == 1:
+                stamm = treffer[0].name[:-len("_maske.png")]
+        if stamm:
+            pfad = Path(ausgabe)/"masken"/(stamm+"_maske.png")
+            if pfad.is_file():
+                maske = cv2.imdecode(np.frombuffer(pfad.read_bytes(), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+                if maske is not None:
+                    breite = min(340, maske.shape[1])
+                    klein = cv2.resize(maske, (breite, max(1, round(maske.shape[0]*breite/maske.shape[1]))), interpolation=cv2.INTER_NEAREST)
+                    ok, png = cv2.imencode(".png", klein)
+                    if ok:
+                        daten["preview"] = {"file_name": z["bild"], "mask": "data:image/png;base64,"+base64.b64encode(png).decode("ascii"), "photo": None}
+        if daten["preview"] is not None:
+            pfad = next((Path(p) for p in (bildpfade or []) if Path(p).name == z["bild"]), None)
+            if pfad is not None and pfad.is_file():
+                raw = pfad.read_bytes()
+                if z.get("_sha256") and hashlib.sha256(raw).hexdigest() != z["_sha256"]:
+                    raise OSError("Originalbild während der 3D-Ausgabe geändert: "+str(pfad))
+                original = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+                if original is not None:
+                    breite = min(500, original.shape[1])
+                    klein = cv2.resize(original, (breite, max(1, round(original.shape[0]*breite/original.shape[1]))), interpolation=cv2.INTER_AREA)
+                    ok, jpg = cv2.imencode(".jpg", klein, [cv2.IMWRITE_JPEG_QUALITY, 82])
+                    if ok:
+                        daten["preview"]["photo"] = "data:image/jpeg;base64,"+base64.b64encode(jpg).decode("ascii")
+    return json_sicher(daten)
+
+
+def twin_3d_speichern(zeilen, twin, ausgabe, bildpfade=None):
+    """Eine HTML-Datei; ohne Server, externe JavaScript-Dateien oder Netzabruf."""
+    ausgabe = Path(ausgabe)
+    ausgabe.mkdir(parents=True, exist_ok=True)
+    daten = twin_3d_daten(zeilen, twin, ausgabe, bildpfade)
+    # JSON darf ein HTML-script-Element auch bei fremden Dateinamen nicht beenden.
+    inhalt = json.dumps(daten, ensure_ascii=False, allow_nan=False).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    ziel = ausgabe/TWIN_3D_DATEI
+    tmp = ausgabe/("."+TWIN_3D_DATEI+".tmp")
+    tmp.write_text(TWIN_3D_HTML.replace("__BIOBOX_DATA__", inhalt), encoding="utf-8")
+    tmp.replace(ziel)
+    return ziel
+
+
+def twin_3d_aus_json(quelle, ausgabe):
+    """Bestehende JSONs nur lesen. Keine Bilder, CSVs oder Prognoselogbücher ändern."""
+    quelle = Path(quelle).expanduser().resolve()
+    daten = json.loads(quelle.read_text(encoding="utf-8-sig"))
+    if isinstance(daten, list) or (isinstance(daten, dict) and isinstance(daten.get("image"), dict)):
+        saetze = daten if isinstance(daten, list) else [daten]
+        zeilen = [historie_vorbereiten(historienzeile(s)) for s in saetze]
+        pfad = quelle.parent/"digital_twin.json"
+        twin = json.loads(pfad.read_text(encoding="utf-8-sig")) if pfad.is_file() else {}
+    elif isinstance(daten, dict) and isinstance(daten.get("state"), (dict, type(None))) and "forecast" in daten:
+        twin, zeilen = daten, []
+        # ergebnis.json enthaelt die komplette Gesundheitshistorie. Der Twin allein
+        # enthaelt nur einen Zustand, nicht automatisch alle frueheren Scores.
+        pfad = quelle.parent/"ergebnis.json"
+        if pfad.is_file():
+            saetze = json.loads(pfad.read_text(encoding="utf-8-sig"))
+            if not isinstance(saetze, list):
+                raise ValueError("ergebnis.json muss eine Liste von Bilddatensätzen enthalten")
+            zeilen = [historie_vorbereiten(historienzeile(s)) for s in saetze]
+    else:
+        raise ValueError("Bitte ergebnis.json oder digital_twin.json auswählen")
+    if not isinstance(twin, dict):
+        raise ValueError("digital_twin.json muss ein JSON-Objekt enthalten")
+    return twin_3d_speichern(zeilen, twin, ausgabe)
+
+
+def twin_3d_oeffnen(pfad):
+    pfad = Path(pfad).resolve()
+    print("3D-Ansicht:", pfad)
+    if not webbrowser.open(pfad.as_uri()):
+        print("Bitte die HTML-Datei per Doppelklick im Browser öffnen.")
+
+
+
+TWIN_3D_HTML = r"""<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="referrer" content="no-referrer">
+<meta name="biobox-viewer-version" content="0.2.0">
+<title>BioBox · Meine Pflanze</title>
+<style>
+:root{--ink:#203c30;--muted:#607268;--green:#246849;--line:#dce5de;--paper:#f4f6f1;--warm:#f8f2e5}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 Arial,Helvetica,sans-serif}
+button,input,select{font:inherit}
+button,select,summary{cursor:pointer}
+button{min-height:42px;padding:9px 14px;border:1px solid var(--line);border-radius:9px;background:white;color:var(--ink);font-weight:600}
+button:hover{background:#edf3eb}
+button:disabled{opacity:.45;cursor:default}
+button.primary,button.active{background:var(--green);border-color:var(--green);color:white}
+button.primary:hover,button.active:hover{background:#1a543b}
+:focus-visible{outline:3px solid #bc8b30;outline-offset:3px}
+a{color:var(--green)}
+h1,h2,h3,p{margin:0}
+h1{font-size:30px;letter-spacing:-.8px;line-height:1.2}
+h2{font-size:19px;letter-spacing:-.3px;line-height:1.3}
+h3{font-size:15px;line-height:1.4}
+p+p{margin-top:9px}
+.muted{color:var(--muted)}
+.small{font-size:13px}
+.mini{font-size:12px}
+.eyebrow{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;font-weight:700;color:var(--muted)}
+.brandbar{background:#173c2c;color:white}
+.brandinner{max-width:1280px;margin:auto;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.brand{font-size:23px;font-weight:700;letter-spacing:-.5px}
+.brand span{font-size:13px;font-weight:400;letter-spacing:0;color:#c3d5c5;margin-left:12px}
+.brandbar button{font-size:13px;padding:8px 13px;white-space:nowrap}
+main{max-width:1280px;margin:auto;padding:28px 24px 32px}
+.heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}
+.heading p{margin-top:7px;color:var(--muted)}
+.pill{display:inline-flex;align-items:center;border-radius:20px;background:#e7eee1;color:#466149;font-size:11px;padding:5px 10px;font-weight:600;white-space:nowrap}
+.pill.warn{background:#f2e8d1;color:#7b5929}
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin-bottom:20px;padding-bottom:8px}
+.tabs button{font-size:14px;background:transparent;border-color:transparent}
+.tabs button[aria-selected=true]{background:var(--green);border-color:var(--green);color:white}
+.tabs button:hover{background:#e6eee2;color:var(--ink)}
+.tabs button[aria-selected=true]:hover{background:#1a543b;color:white}
+.photochooser{display:flex;align-items:flex-end;gap:14px;margin-bottom:18px}
+.photochooser>label{flex:1;max-width:260px;min-width:0}
+label{font-size:13px;color:#425c4b;display:block}
+select,input[type=number],input[type=search]{display:block;width:100%;margin-top:6px;border:1px solid #cfdcd2;border-radius:8px;background:white;color:var(--ink);padding:10px;min-height:43px;min-width:0}
+.photofield{flex:1;min-width:0;max-width:460px}
+.photonavigation{display:flex;gap:6px;align-items:center;margin-top:6px}
+.photonavigation select{flex:1;min-width:0;margin:0}
+.photonavigation button{flex:none;width:43px;padding:8px;font-size:20px;line-height:1}
+.photochooser .photohelp{align-self:center;padding-top:19px;color:var(--muted);font-size:12px}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}
+.card{background:white;border:1px solid var(--line);border-radius:14px;overflow:hidden;min-width:0}
+.padding{padding:22px}
+.panelintro{margin:8px 0 18px;font-size:13px;color:var(--muted)}
+.viewport{position:relative;background:radial-gradient(ellipse at 52% 30%,#2a402f,#14221a 76%);color:#f1f5ed}
+#plantCanvas{display:block;width:100%;height:410px;touch-action:none;cursor:grab}
+#plantCanvas:active{cursor:grabbing}
+.canvashead{position:absolute;top:18px;left:20px;right:20px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;pointer-events:none}
+.canvashead b{font-size:14px;font-weight:500}
+.canvashead small{display:block;margin-top:3px;color:#b1c8b3;font-size:11px}
+.canvashead .pill{background:#ffffff16;color:#d0dfcc}
+.canvascontrols{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid #e4ebe2;flex-wrap:wrap}
+.canvascontrols p{font-size:12px;color:var(--muted)}
+.canvasbuttons{display:flex;gap:6px}
+.canvasbuttons button{min-height:36px;font-size:12px;padding:6px 10px}
+.modebuttons{display:flex;gap:5px;padding:11px 16px;background:#f3f6ef;border-bottom:1px solid var(--line)}
+.modebuttons button{font-size:12px;flex:1;padding:7px 8px;min-height:38px}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-top:1px solid var(--line)}
+.stats.withfuture{grid-template-columns:repeat(3,minmax(0,1fr))}
+.stat{padding:18px 20px;border-right:1px solid var(--line)}
+.stat:last-child{border:0}
+.stat span{display:block;color:var(--muted);font-size:12px}
+.stat strong{display:block;font-size:27px;letter-spacing:-.8px;font-weight:600;margin:3px 0}
+.stat small{display:block;font-size:11px;color:var(--muted);line-height:1.4}
+.understats{padding:0 20px 18px}
+.healthhint{font-size:12px;color:var(--muted);padding-top:14px}
+details{margin-top:14px}
+summary{font-size:13px;font-weight:600;color:var(--green);padding:4px 0;min-height:30px}
+details[open]>summary{margin-bottom:10px}
+.detailbody{display:grid;gap:12px;font-size:12px;color:var(--muted)}
+.detailbody p{overflow-wrap:anywhere}
+.detailbody h3{font-size:13px;color:var(--ink)}
+.scoreparts{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
+.scoreparts span{padding:5px 8px;background:#f0f4ec;border-radius:5px;font-size:11px}
+.previewimages{display:flex;gap:12px;margin-top:8px;align-items:flex-start}
+.previewimages figure{margin:0;flex:1;min-width:0}
+.previewimages img{display:block;max-width:100%;max-height:210px;object-fit:contain;border-radius:7px;background:#edf0e9}
+.previewimages figcaption{font-size:11px;margin-top:4px;color:var(--muted)}
+.carecard{padding:14px 0;border-top:1px solid var(--line)}
+.carecard p{font-size:13px;color:var(--muted);margin:5px 0 9px}
+.checklabel{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;min-height:30px}
+input[type=checkbox]{accent-color:var(--green);width:17px;height:17px;flex-shrink:0}
+.carecard details{margin-top:7px}
+.carecard summary{font-size:11px;font-weight:400;min-height:26px}
+.evidence{font-size:11px;color:var(--muted)}
+.evidence a{display:block;margin-top:4px}
+.planbar{font-size:12px;color:var(--muted);margin:14px 0}
+.fullbutton{width:100%}
+.sectionhead{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.sectionhead h2{margin:0}
+.daysvalue{font-size:30px;font-weight:600;letter-spacing:-1px}
+.daysvalue small{font-size:13px;letter-spacing:0;font-weight:400}
+input[type=range]{display:block;width:100%;accent-color:var(--green);margin:14px 0 6px;min-height:26px}
+.rangeends{display:flex;justify-content:space-between;color:var(--muted);font-size:11px}
+.targetdate{font-size:12px;color:var(--muted);margin:10px 0 18px}
+.ratebox{padding:13px 14px;background:#f0f5ec;border-radius:9px;font-size:13px}
+.ratebox strong{display:block;font-size:17px;margin-bottom:3px}
+.note{padding:12px 13px;border-radius:9px;background:var(--warm);color:#795e30;font-size:12px;margin-top:15px}
+.source-note{font-size:11px;color:var(--muted);margin:8px 0}
+.assumptions label+label{margin-top:12px}
+.assumptions .mini{margin-top:6px}
+.assumptions .restore{display:block;margin:12px 0 0;font-size:12px;min-height:36px}
+.selectedplan{font-size:12px;color:var(--muted);margin:16px 0 4px}
+.textbutton{border:0;background:transparent;font-size:12px;min-height:30px;padding:4px 0;color:var(--green);text-decoration:underline;font-weight:400}
+.textbutton:hover{background:transparent;color:#173c2c}
+.actionrow{display:flex;gap:8px;margin-top:18px}
+.actionrow button{flex:1;font-size:12px;padding:9px 10px}
+.toolbar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:18px 0}
+.toolbar input[type=search]{max-width:300px;margin:0}
+.toolbar label{display:flex;gap:7px;align-items:center}
+.chartwrap,#healthChart{height:210px;width:100%;display:block}
+#healthChart{cursor:pointer}
+.chartlegend{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:11px;margin:8px 0 16px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:2px;background:#327b55;margin-right:5px}
+.dot.grey{background:#cbd3cf}.dot.blue{background:#5b7f9e}
+.tablewrap{overflow-x:auto;max-height:460px}
+table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap}
+th,td{padding:11px 10px;text-align:left;border-bottom:1px solid #e6ece4}
+th{position:sticky;top:0;background:white;color:var(--muted);font-size:11px;font-weight:600}
+td.file{max-width:240px;overflow:hidden;text-overflow:ellipsis}
+tr[data-index]{cursor:pointer}tr[data-index]:hover{background:#f0f5ec}
+tr.selected{background:#eaf2e4}
+td.score{font-weight:600}.zero{color:#9b5735}
+.pagination{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px;font-size:12px;color:var(--muted)}
+.pagination button{font-size:12px;min-height:38px;padding:7px 10px}
+.notice{padding:12px 15px;border:1px solid #d5e1d5;border-radius:9px;background:#ecf3e6;color:#3d6244;font-size:13px;margin-bottom:18px;overflow-wrap:anywhere}
+.notice.error{background:#fbefe9;border-color:#ebd0c2;color:#984e37}
+.quickhelp{border-top:1px solid var(--line);margin-top:23px;padding-top:12px;color:var(--muted);font-size:12px}
+.quickhelp ol{padding-left:20px;margin:0}
+.quickhelp li+li{margin-top:5px}
+footer{margin-top:22px;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+@media(max-width:1000px){.layout{grid-template-columns:minmax(0,1fr) 310px}.padding{padding:18px}.stat{padding:16px 14px}.stat strong{font-size:23px}#plantCanvas{height:390px}.stats.withfuture .stat{padding:13px 10px}.stats.withfuture .stat strong{font-size:21px}}
+@media(max-width:800px){main{padding:22px 16px}.brandinner{padding:14px 16px}.layout{grid-template-columns:1fr}.photochooser .photohelp{display:none}.heading{align-items:flex-start}.heading p{font-size:13px}#plantCanvas{height:380px}.carecard{padding:13px 0}.padding{padding:20px}}
+@media(max-width:480px){.brand span{display:none}.brandbar button{font-size:12px}.brandinner{padding:12px 14px}main{padding:20px 12px}.heading{display:block;margin-bottom:17px}h1{font-size:27px}.heading .pill{margin-top:10px}.heading p{margin-top:6px}.tabs{gap:3px}.tabs button{flex:1;font-size:12px;padding:9px 5px;white-space:nowrap}.photochooser{flex-wrap:wrap;gap:10px}.photochooser>label{flex-basis:100%;max-width:none}.photofield{flex-basis:100%;max-width:none}#plantCanvas{height:320px}.canvashead{left:14px;right:14px;top:14px}.canvashead .pill{font-size:10px;padding:4px 7px}.canvashead b{font-size:13px}.canvashead small{font-size:10px}.canvascontrols{padding:9px 12px;gap:8px}.canvascontrols p{font-size:11px}.stat{padding:14px}.stat strong{font-size:23px}.stats.withfuture .stat{padding:13px 9px}.stats.withfuture .stat span{font-size:11px}.stats.withfuture .stat strong{font-size:18px}.stats.withfuture .stat small{font-size:10px}.understats{padding:0 14px 15px}.padding{padding:17px}.modebuttons{padding:9px 10px;gap:4px}.modebuttons button{font-size:11px;padding:7px 5px}.toolbar{gap:12px}.toolbar input[type=search]{max-width:none}.tablewrap{margin:0 -7px}th,td{padding:10px 7px;font-size:11px}.pagination{flex-wrap:wrap}.pagination>div{margin-left:auto}.brand{font-size:22px}.quickhelp{margin-top:18px}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<header class="brandbar"><div class="brandinner">
+  <div class="brand">BioBox <span>Pflanzenmonitoring</span></div>
+  <button id="importButton">Daten öffnen</button>
+  <input id="jsonFile" type="file" accept=".json,application/json" multiple hidden>
+</div></header>
+<main>
+<div id="importStatus" class="notice" role="status" hidden></div>
+<div class="heading">
+  <div><h1>Meine Pflanze</h1><p>Messwerte ansehen, Pflege planen und Wachstum testen.</p></div>
+  <span class="pill" id="freshBadge">Daten werden gelesen</span>
+</div>
+<nav class="tabs" role="tablist" aria-label="Bereiche">
+  <button id="tabPlant" role="tab" aria-controls="plantCarePanel" aria-selected="true" tabindex="0" data-tab="plant">Pflanze</button>
+  <button id="tabFuture" role="tab" aria-controls="futurePanel" aria-selected="false" tabindex="-1" data-tab="future">Wachstum testen</button>
+  <button id="tabHistory" role="tab" aria-controls="historyPanel" aria-selected="false" tabindex="-1" data-tab="history">Alle Fotos</button>
+</nav>
+<div class="photochooser">
+  <label id="seriesControl" hidden>Messreihe<select id="series" aria-label="Messreihe auswählen"></select></label>
+  <div class="photofield"><label for="photo">Ausgewähltes Foto</label><div class="photonavigation">
+    <button id="photoPrev" aria-label="Vorheriges Foto" title="Vorheriges Foto">‹</button>
+    <select id="photo" aria-label="Foto auswählen"></select>
+    <button id="photoNext" aria-label="Nächstes Foto" title="Nächstes Foto">›</button>
+  </div></div>
+  <span class="photohelp">Zum Start wird das neueste Foto angezeigt.</span>
+</div>
+<div class="layout" id="viewerRow">
+  <section class="card" aria-label="Pflanzenmodell und Messwerte">
+    <div class="viewport">
+      <canvas id="plantCanvas" tabindex="0" aria-label="Drehbares, vereinfachtes 3D-Pflanzenmodell. Mit Pfeiltasten drehen, mit Plus und Minus zoomen."></canvas>
+      <div class="canvashead"><div><b id="modelTitle">Modell zum Foto</b><small id="modelSubtitle">Mit Maus oder Finger drehen</small></div><span class="pill" id="viewBadge">Vereinfachtes Modell</span></div>
+    </div>
+    <div class="modebuttons" id="modelModes" role="group" aria-label="Darstellung im Wachstumstest" hidden>
+      <button data-mode="now">Beim Foto</button><button data-mode="future">Nach 7 Tagen</button><button data-mode="compare">Vergleichen</button>
+    </div>
+    <div class="canvascontrols"><p>Einfaches Modell, kein exakter 3D-Scan.</p><div class="canvasbuttons"><button id="rotate" aria-pressed="false">Drehen</button><button id="resetView">Ansicht zurück</button></div></div>
+    <div class="stats" id="statsStrip">
+      <div class="stat"><span>Blattfläche im Foto</span><strong id="areaNow">—</strong><small id="areaUnit">sichtbare Blattpixel</small></div>
+      <div class="stat"><span>Zustandsindex</span><strong id="healthNow">—</strong><small>0–100 · Vergleich zur Referenz</small></div>
+      <div class="stat" id="futureStat" hidden><span id="futureLabel">Nach 7 Tagen</span><strong id="areaFuture">—</strong><small id="futureSmall">Annahme erforderlich</small></div>
+    </div>
+    <div class="understats">
+      <p id="healthHint" class="healthhint"></p>
+      <details id="measurementDetails"><summary>Mehr anzeigen</summary><div class="detailbody">
+        <p id="snapshotInfo"></p><p id="qualityInfo"></p>
+        <div><h3>Teilwerte des Zustandsindex</h3><div class="scoreparts" id="scoreParts"></div></div>
+        <div id="previewDetails" hidden><h3>Foto und Blattmaske</h3><div class="previewimages">
+          <figure id="photoFigure"><img id="photoPreview" alt="Verkleinerte Originalaufnahme des ausgewählten Fotos"><figcaption>Originalfoto, verkleinert</figcaption></figure>
+          <figure><img id="maskPreview" alt="Blattmaske des ausgewählten Fotos"><figcaption>Berechnete Blattmaske</figcaption></figure>
+        </div></div>
+        <div><h3>Was das Modell zeigt</h3><p>Die Form wird aus den Messwerten veranschaulicht. Blattanzahl, Blattpositionen, Höhe und Tiefe sind nicht aus dem Foto rekonstruiert. Gemessen wird die sichtbare Blattfläche in Pixeln.</p></div>
+        <details><summary>Darstellung ändern</summary><label for="shape">Modellform</label><select id="shape"><option value="single">Einzeltrieb</option><option value="bush">Busch</option><option value="rosette">Rosette</option></select><p class="source-note">Die Auswahl ändert nur die Darstellung.</p><button id="topView">Von oben ansehen</button></details>
+      </div></details>
+    </div>
+  </section>
+  <section class="card padding" id="plantCarePanel" role="tabpanel" aria-labelledby="tabPlant">
+    <h2>Was kann als Nächstes geprüft werden?</h2>
+    <p class="panelintro">Passende Hinweise können für einen Pflegeplan vorgemerkt werden.</p>
+    <label for="species">Pflanzenart</label><select id="species"><option value="unknown">Allgemein / nicht festgelegt</option><option value="basil">Basilikum</option></select>
+    <div id="careCards"></div>
+    <p class="planbar" id="planCount">Keine Maßnahme vorgemerkt.</p>
+    <button id="goFuture" class="primary fullbutton">Wachstum testen</button>
+    <p class="source-note">Die Hinweise sind allgemeine Prüfpunkte. Es wird kein Gerät gesteuert.</p>
+  </section>
+  <section class="card padding" id="futurePanel" role="tabpanel" aria-labelledby="tabFuture" hidden>
+    <div class="eyebrow">Was wäre, wenn?</div><h2 style="margin-top:5px">Wachstum testen</h2>
+    <p class="panelintro">Eine mögliche Entwicklung der Blattfläche kann ausprobiert werden.</p>
+    <div class="sectionhead"><label for="days">Nach dem ausgewählten Foto</label><b class="daysvalue"><span id="daysLabel">7</span> <small>Tage</small></b></div>
+    <input id="days" type="range" min="0" max="14" step="1" value="7"><div class="rangeends"><span>Beim Foto</span><span>14 Tage später</span></div>
+    <p id="targetDate" class="targetdate"></p>
+    <div class="ratebox"><strong id="baselineSummary">Noch keine Rate vorhanden</strong><span id="ratePill">Annahme nötig</span></div>
+    <details class="assumptions" id="assumptions"><summary>Annahmen bearbeiten</summary>
+      <label>Änderung pro Tag [%]<input id="baseRate" type="number" min="-50" max="100" step="0.01" placeholder="z. B. 2"></label>
+      <p class="source-note" id="rateSource"></p>
+      <label>Zusätzliche Pflegewirkung [Prozentpunkte/Tag]<input id="effectRate" type="number" min="-20" max="20" step="0.1" value="0" disabled></label>
+      <p class="mini muted">Nur mit vorgemerkter Pflege. Beispiel: 2 % + 1 Prozentpunkt = 3 % pro Tag.</p>
+      <button class="restore" id="restoreRate">Rate aus Messdaten übernehmen</button>
+    </details>
+    <p id="selectedPlan" class="selectedplan">Kein Pflegepunkt ausgewählt.</p><button id="editCarePlan" class="textbutton">Pflegepunkte auswählen</button>
+    <p class="note" id="scenarioInfo" role="status"></p>
+    <p class="source-note">Die Pflegewirkung ist noch nicht aus Messungen gelernt. Das Szenario ändert keine Messwerte und sagt keinen zukünftigen Gesundheitswert voraus.</p>
+    <div class="actionrow"><button id="resetScenario">Zurücksetzen</button><button id="exportScenario" class="primary">Szenario speichern</button></div>
+    <details><summary>Weitere Möglichkeiten</summary><button id="play">Zeitraffer</button><p class="source-note" id="forecastInfo"></p></details>
+  </section>
+</div>
+<section class="card padding" id="historyPanel" role="tabpanel" aria-labelledby="tabHistory" hidden>
+  <div class="sectionhead"><h2>Alle Fotos und Bewertungen</h2><span class="pill" id="photoCount">0 Fotos</span></div>
+  <p class="panelintro">Eine Zeile oder einen Balken auswählen, um das Foto in der Pflanzenansicht zu öffnen.</p>
+  <div class="toolbar"><input id="search" type="search" placeholder="Datei oder Status suchen" aria-label="Fotos nach Datei oder Status filtern"><label><input id="onlyMissing" type="checkbox">Ohne berechneten Index</label></div>
+  <div class="chartwrap"><canvas id="healthChart" role="img" aria-label="Zustandsindex pro Foto auf dieser Seite. Alle Werte und Gründe stehen in der Tabelle darunter."></canvas></div>
+  <div class="chartlegend"><span><i class="dot"></i>Berechnet, auch 0</span><span><i class="dot blue"></i>Referenzfoto</span><span><i class="dot grey"></i>Kein berechenbarer Index</span></div>
+  <div class="tablewrap"><table><thead><tr><th scope="col">Nr.</th><th scope="col">Aufnahmezeit</th><th scope="col">Index</th><th scope="col">Blattpixel</th><th scope="col">Status / Grund</th><th scope="col">Datei</th></tr></thead><tbody id="healthRows"></tbody></table></div>
+  <div class="pagination"><span id="pageInfo">Keine Aufnahmen</span><div><button id="previousPage">Zurück</button> <button id="nextPage">Weiter</button></div></div>
+</section>
+<details class="quickhelp"><summary>So geht’s</summary><ol>
+  <li><b>Pflanze:</b> Foto wählen, Messwerte ansehen und Pflegepunkte vormerken.</li>
+  <li><b>Wachstum testen:</b> Zeitraum einstellen. Unter „Annahmen bearbeiten“ kann die tägliche Änderung angepasst werden.</li>
+  <li><b>Alle Fotos:</b> Frühere Aufnahmen und ihre Bewertungen ansehen.</li>
+</ol><p style="margin-top:10px">Die Ansicht zeigt einen gespeicherten Datenstand. Neue Daten werden nach einem weiteren Lauf von analyse.py übernommen. Über „Daten öffnen“ können ergebnis.json und digital_twin.json auch lokal geladen werden.</p></details>
+<footer><span>Lokale Ansicht · keine automatische Datenübertragung</span><span>BioBox · 3D-Ansicht 0.2.0</span></footer>
+</main>
+<script id="bioboxData" type="application/json">__BIOBOX_DATA__</script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), number=v=>typeof v==='number'&&Number.isFinite(v)?v:null;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), fmt=(v,d=0)=>number(v)===null?'—':v.toLocaleString('de-DE',{maximumFractionDigits:d});
+const dateMs=s=>typeof s==='string'&&/T.*(?:Z|[+-]\d\d:\d\d)$/.test(s)&&Number.isFinite(Date.parse(s))?Date.parse(s):null;
+const dateLabel=s=>dateMs(s)===null?'Zeit unbekannt':new Intl.DateTimeFormat('de-DE',{timeZone:'Europe/Berlin',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(s));
+const reasons={referenzfoto_start_der_ansicht:'Referenzstart; kein gemessener Gesundheitswert',kameravergleich_nicht_verifiziert:'Kameraansicht nicht vergleichbar',zu_wenig_gemeinsames_blattgewebe:'Zu wenig gemeinsame Blattfläche',zu_wenig_bestaetigte_farbteilflaeche:'Zu wenig farblich geprüfte Blattfläche',bildqualitaet_nicht_ausreichend:'Bildqualität unzureichend',datei_nicht_lesbar:'Datei nicht lesbar',einzelbilder_keine_gemeinsame_referenz:'Einzelbild ohne gemeinsame Referenz',historische_projektion_daten_veraltet:'Historische Projektion; Daten veraltet',zu_wenige_vergleichbare_aufnahmen:'Zu wenige vergleichbare Aufnahmen',zu_grosse_luecke_in_der_zeitreihe:'Zeitabstände für das 24h-Modell zu groß',keine_verlaessliche_aufnahmezeit:'Aufnahmezeit fehlt',kamera_fuer_prognose_nicht_fest_genug:'Kamera für die Prognose zu stark verändert',kameraansicht_nicht_bestaetigt:'Kameraansicht noch nicht bestätigt',einzelbilder_ohne_gemeinsamen_twin:'Unabhängige Einzelbilder'};
+function reason(s){if(reasons[s])return reasons[s];if(typeof s!=='string')return 'Kein Score gespeichert';if(s.includes('blattfarbverteilung'))return 'Vergleich der Blattfarbverteilungen';if(s.includes('farbverhaeltnis_teilflaeche'))return 'Farbvergleich im geprüften Lichtbereich';if(s.startsWith('vorlaeufige_referenz'))return 'Vergleich mit vorläufiger Referenz';if(s.startsWith('freigegeben'))return 'Vergleich mit geprüfter Referenz';if(s==='nicht_gespeichert')return 'Kein Wert gespeichert';return s.replaceAll('_',' ');}
+let bundle={observations:[],twin:{},preview:null}, rows=[],activeSeries='',selected=-1,page=0,manualRate=false,rateOrigin='',care=[],planned=new Set(),mode='now',activeTab='plant',playing=false,playStart=0,rotate=false,chartItems=[],scene=[];
+const PAGE_SIZE=25;
+function observation(raw,i){
+ if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Ungültiger Fotodatensatz.');
+ let r=raw;
+ if(raw.image&&typeof raw.image==='object'){
+  const m=raw.image_measurements||{},h=raw.health_assessment||{},a=raw.analysis||{};
+  r={file_name:raw.image.file_name,captured_at:raw.image.captured_at,series_id:a.series_id,leaf_pixels:m.plant_pixels,health_score:h.health_score,health_raw:h.health_score_raw,health_status:h.health_status||a.health_status,usable:m.usable,is_reference:a.is_reference,reference_file:a.reference_file,view_id:a.twin_view_id||a.view_id,view_number:a.view_number,image_size:a.image_size,quality_flags:m.quality_flags,growth_rate_pct_per_day:m.growth_rate_pct_per_day,growth_comparison_mode:a.growth_comparison_mode,health_comparison_mode:a.health_comparison_mode,scores:{Farbverteilung:h.score_green,Gelbzunahme:h.score_yellow,Braunzunahme:h.score_brown,'Sättigungswechsel':h.score_saturation,Farbtonwechsel:h.score_hue}};
+ }
+ const score=number(r.health_score),pixels=number(r.leaf_pixels),scores={};
+ for(const key of ['Farbverteilung','Gelbzunahme','Braunzunahme','Sättigungswechsel','Farbtonwechsel']){const v=number((r.scores||{})[key]);scores[key]=v!==null&&v>=0&&v<=100?v:null;}
+ const size=Array.isArray(r.image_size)&&r.image_size.length===2&&r.image_size.every(v=>number(v)!==null&&v>0&&Number.isInteger(v))?r.image_size:null;
+ return {number:i+1,file_name:typeof r.file_name==='string'?r.file_name:'Aufnahme '+(i+1),captured_at:dateMs(r.captured_at)!==null?r.captured_at:null,series_id:typeof r.series_id==='string'&&r.series_id?r.series_id:'Nicht zugeordnet',leaf_pixels:pixels!==null&&pixels>=0?pixels:null,health_score:score!==null&&score>=0&&score<=100?score:null,health_raw:number(r.health_raw),health_status:typeof r.health_status==='string'?r.health_status:'nicht_gespeichert',usable:r.usable===true,is_reference:r.is_reference===true,reference_file:typeof r.reference_file==='string'?r.reference_file:null,view_id:typeof r.view_id==='string'?r.view_id:null,view_number:r.view_number,image_size:size,quality_flags:typeof r.quality_flags==='string'?r.quality_flags:'',growth_rate_pct_per_day:number(r.growth_rate_pct_per_day),growth_comparison_mode:typeof r.growth_comparison_mode==='string'?r.growth_comparison_mode:'',health_comparison_mode:typeof r.health_comparison_mode==='string'?r.health_comparison_mode:'',scores};
+}
+function normalise(value){
+ if(Array.isArray(value))return {observations:value.map(observation),twin:{},preview:null};
+ if(!value||typeof value!=='object')throw Error('Bitte ergebnis.json oder digital_twin.json laden.');
+ if(value.image)return {observations:[observation(value,0)],twin:{},preview:null};
+ if(Array.isArray(value.observations)){
+  const result={...value,observations:value.observations.map(observation),twin:value.twin&&typeof value.twin==='object'?value.twin:{}};
+  if(!result.observations.length&&result.twin.state){result.observations=normalise(result.twin).observations;result.summaryOnly=true;}
+  return result;
+ }
+ if('state' in value&&'forecast' in value){
+  const s=value.state;
+  return {observations:s?[observation({...s,captured_at:s.observed_at,series_id:value.series_id},0)]:[],twin:value,preview:null,summaryOnly:true};
+ }
+ throw Error('Dieses JSON enthält keine unterstützten Bildmessungen.');
+}
+const current=()=>selected>=0?rows[selected]:null;
+const seriesRows=()=>rows.map((r,i)=>({r,i})).filter(x=>x.r.series_id===activeSeries);
+function latestIndex(){let found=-1,best=-Infinity;for(const {r,i}of seriesRows()){const t=dateMs(r.captured_at)??-1;if(t>=best){best=t;found=i;}}return found;}
+function install(value){
+ bundle=normalise(value);rows=bundle.observations;page=0;planned.clear();playing=false;
+ $('importStatus').hidden=true;$('search').value='';$('onlyMissing').checked=false;
+ const groups=[...new Set(rows.map(r=>r.series_id))];activeSeries=groups.includes(bundle.series_id)?bundle.series_id:(groups.at(-1)||'');
+ $('series').replaceChildren();for(const s of groups){const o=document.createElement('option');o.value=s;o.textContent=s;$('series').append(o);}$('series').value=activeSeries;
+ $('seriesControl').hidden=groups.length<2;
+ refillPhotos();selectPhoto(latestIndex());setTab('plant');
+ if(bundle.summaryOnly)notify('Nur der letzte Twin-Zustand ist enthalten. Für alle Fotos zusätzlich ergebnis.json öffnen.');
+ else if(!rows.length)notify('Noch keine Bildmessungen. Über „Daten öffnen“ die ergebnis.json auswählen.');
+}
+function notify(text,error=false){const el=$('importStatus');el.hidden=false;el.textContent=text;el.classList.toggle('error',error);}
+function refillPhotos(){
+ $('photo').replaceChildren();for(const {r,i}of seriesRows()){const o=document.createElement('option');o.value=String(i);o.textContent='Foto '+r.number+' · '+dateLabel(r.captured_at);$('photo').append(o);}
+ $('photo').disabled=!seriesRows().length;
+}
+function stopMotion(){playing=false;rotate=false;$('play').textContent='Zeitraffer';$('rotate').setAttribute('aria-pressed','false');$('rotate').classList.remove('active');}
+function setMode(value){mode=value;document.querySelectorAll('[data-mode]').forEach(b=>{b.classList.toggle('active',b.dataset.mode===mode);b.setAttribute('aria-pressed',String(b.dataset.mode===mode));});buildScene();requestDraw();}
+function setTab(value,focus=false){
+ const previous=activeTab;activeTab=value;
+ for(const button of document.querySelectorAll('[data-tab]')){const on=button.dataset.tab===value;button.setAttribute('aria-selected',String(on));button.tabIndex=on?0:-1;if(on&&focus)button.focus();}
+ $('viewerRow').hidden=value==='history';$('plantCarePanel').hidden=value!=='plant';$('futurePanel').hidden=value!=='future';$('historyPanel').hidden=value!=='history';
+ $('modelModes').hidden=value!=='future';$('futureStat').hidden=value!=='future';$('statsStrip').classList.toggle('withfuture',value==='future');
+ if(value!=='future'){playing=false;$('play').textContent='Zeitraffer';}
+ if(value==='history')stopMotion();else setMode(value==='plant'?'now':previous==='future'?mode:'future');
+ requestAnimationFrame(()=>{drawHealth();requestDraw();});
+}
+function openPhoto(i){selectPhoto(i);setTab('plant',true);}
+function stepPhoto(step){const list=seriesRows(),pos=list.findIndex(x=>x.i===selected),next=list[pos+step];if(next)selectPhoto(next.i);}
+function restoreRate(){const proposed=suggestedRate(current());manualRate=false;rateOrigin=proposed.source;$('baseRate').value=proposed.rate===null?'':String(Math.round(proposed.rate*100)/100);}
+function resetScenario(){stopMotion();planned.clear();$('days').value='7';$('effectRate').value='0';restoreRate();$('assumptions').open=inputRate('baseRate')===null;updateCare();updateScenario();}
+function modelForecast(r){
+ const t=bundle.twin||{},f=t.forecast;if(!r||!f||typeof f!=='object'||t.series_id!==r.series_id||dateMs(f.as_of)!==dateMs(r.captured_at)||dateMs(r.captured_at)===null)return null;
+ const source=number(f.source_px),pred=number(f.predicted_px),h=number(f.horizon_hours);
+ if(!r.usable||source===null||pred===null||source<=0||pred<=0||h!==24||Math.abs(source-(r.leaf_pixels??0))>Math.max(1,source*1e-5))return null;
+ if(t.state&&t.state.file_name&&t.state.file_name!==r.file_name)return null;
+ return f;
+}
+function suggestedRate(r){
+ const f=modelForecast(r);if(f){const rate=(f.predicted_px/f.source_px-1)*100;if(rate>=-50&&rate<=100)return {rate,source:'Aus der 24h-Modellprojektion; längere Zeiträume sind Szenarien.'};}
+ if(r&&r.usable&&r.growth_comparison_mode.startsWith('berechnet')&&r.growth_rate_pct_per_day!==null&&r.growth_rate_pct_per_day>=-50&&r.growth_rate_pct_per_day<=100)return {rate:r.growth_rate_pct_per_day,source:'Aus der berechneten Flächenänderung. Fortschreibung ist eine Annahme.'};
+ return {rate:null,source:'Keine geprüfte Rate vorhanden. Für ein Szenario eine eigene Annahme eingeben.'};
+}
+function selectPhoto(i){
+ selected=Number.isInteger(i)&&i>=0&&i<rows.length?i:-1;$('photo').value=String(selected);resetScenario();
+ const list=seriesRows(),positionInSeries=list.findIndex(x=>x.i===selected);$('photoPrev').disabled=positionInSeries<=0;$('photoNext').disabled=positionInSeries<0||positionInSeries>=list.length-1;
+ const position=filtered().findIndex(x=>x.i===selected);if(position>=0)page=Math.floor(position/PAGE_SIZE);
+ updateSnapshot();updateTable();
+}
+function updateSnapshot(){
+ const r=current();$('areaNow').textContent=fmt(r?.leaf_pixels);$('healthNow').textContent=r?.health_score===null||!r?'—':fmt(r.health_score,1)+' / 100';
+ $('areaUnit').textContent=r&&!r.usable?'Pixel · Maske prüfen':'sichtbare Blattpixel';
+ $('healthHint').textContent=!r?'Für Messwerte zuerst Bilddaten öffnen.':r.is_reference?'Referenzfoto: Ausgangspunkt des Vergleichs, noch kein berechneter Index.':r.health_score===null?'Kein berechneter Index: '+reason(r.health_status)+'.':'100 bedeutet: nahe an der Referenz. Der Index ist keine Krankheitsdiagnose.';
+ $('snapshotInfo').textContent=r?'Aufnahme '+r.number+' · '+dateLabel(r.captured_at)+' (Europe/Berlin) · '+r.file_name:'Keine Aufnahme geladen.';
+ const age=r&&dateMs(r.captured_at)!==null?(Date.now()-dateMs(r.captured_at))/3600000:null;
+ $('freshBadge').textContent=age===null?'Aufnahmezeit unbekannt':age<0?'Kamerazeit prüfen':age<=3?'Aufnahme der letzten 3 Stunden':'Älterer Datenstand';$('freshBadge').classList.toggle('warn',age===null||age<0||age>3);
+ $('qualityInfo').textContent=r?'Bewertung: '+(r.is_reference?'Referenzstart; kein gemessener Gesundheitswert':r.health_score===null?reason(r.health_status):reason(r.health_status))+(r.quality_flags?' · Prüfhilfe: '+r.quality_flags.replaceAll('_',' '):''):'';
+ $('scoreParts').replaceChildren();if(r)for(const [key,value]of Object.entries(r.scores)){const e=document.createElement('span');e.textContent=key+': '+fmt(value,1);$('scoreParts').append(e);}
+ const p=bundle.preview,show=!!(r&&p&&p.file_name===r.file_name&&typeof p.mask==='string'&&p.mask.startsWith('data:image/png;base64,'));$('previewDetails').hidden=!show;
+ if(show){$('maskPreview').src=p.mask;const photo=typeof p.photo==='string'&&p.photo.startsWith('data:image/jpeg;base64,');$('photoFigure').hidden=!photo;if(photo)$('photoPreview').src=p.photo;}
+ const f=modelForecast(r);$('forecastInfo').textContent=f?'Separates 24h-Modell: '+fmt(f.predicted_px)+' px am '+dateLabel(f.target_at)+'. '+(f.is_current===true&&age!==null&&age>=0&&age<=3?'Vorläufig; biologisch nicht validiert.':'Historische Projektion ab dieser Aufnahme.'):'24h-Modell: '+reason((bundle.twin||{}).status||'keine passende Modellprognose')+'.';
+}
+function careSuggestions(r){
+ const general='https://www.rhs.org.uk/plants/types/houseplants/growing-guide',basil='https://www.rhs.org.uk/herbs/basil/grow-your-own',out=[];
+ if(!r||!r.usable)out.push({id:'image',title:'Aufnahme prüfen',text:'Blattmaske, Schärfe und Belichtung kontrollieren.',evidence:r?reason(r.health_status):'Keine Bildmessung vorhanden.'});
+ if(r&&r.health_score!==null&&r.health_score<80)out.push({id:'inspect',title:'Blätter genauer ansehen',text:'Veränderungen an Blättern und Blattunterseiten prüfen.',evidence:'Der relative Zustandsindex beträgt '+fmt(r.health_score,1)+' / 100. Farbänderungen allein zeigen keine bestimmte Krankheit oder Ursache.',url:general});
+ out.push({id:'water',title:'Erde vor dem Gießen prüfen',text:'Feuchte kontrollieren und stehendes Wasser im Topf vermeiden.',evidence:'Die Bodenfeuchte wird nicht aus dem Foto gemessen. Der Wasserbedarf hängt auch von der Pflanzenart ab.',url:general});
+ out.push({id:'light',title:'Lichtbedingungen prüfen',text:'Lichtdauer und Lampenabstand für die Pflanzenart prüfen.',evidence:'Helle Fotos bedeuten nicht automatisch genügend Pflanzenlicht. Messungen von Licht und Lichtdauer sind hier noch nicht gekoppelt.',url:general});
+ if($('species').value==='basil'){
+  out.push({id:'basil',title:'Basilikum warm und hell halten',text:'Einen warmen, lichtreichen Standort wählen. Gleichmäßig feucht halten und die Wurzeln vor stehendem Wasser schützen.',evidence:'Allgemeine Basilikum-Pflege; kein aus dem Foto gemessener Bedarf.',url:basil});
+  out.push({id:'harvest',title:'Triebspitzen gezielt ernten',text:'Bei ausreichend entwickeltem Basilikum regelmäßig Triebspitzen ernten, um buschigen Wuchs zu unterstützen.',evidence:'Ernten verändert die sichtbare Fläche. Den Eingriff im Pflegeprotokoll festhalten.',url:basil});
+ }
+ return out;
+}
+function updateCare(){
+ care=careSuggestions(current());const ids=new Set(care.map(x=>x.id));planned=new Set([...planned].filter(x=>ids.has(x)));$('careCards').replaceChildren();
+ for(const item of care){const box=document.createElement('div');box.className='carecard';const title=document.createElement('h3');title.textContent=item.title;const p=document.createElement('p');p.textContent=item.text;box.append(title,p);
+  const label=document.createElement('label'),input=document.createElement('input');label.className='checklabel';input.type='checkbox';input.checked=planned.has(item.id);input.addEventListener('change',()=>{if(input.checked)planned.add(item.id);else planned.delete(item.id);updateScenario();});label.append(input,document.createTextNode('Für Pflegeplan vormerken'));box.append(label);
+  const details=document.createElement('details'),summary=document.createElement('summary'),e=document.createElement('div');summary.textContent='Warum dieser Hinweis?';e.className='evidence';e.textContent=item.evidence;details.append(summary,e);
+  if(item.url){const link=document.createElement('a');link.href=item.url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Pflegegrundlage ansehen (RHS)';e.append(link);}box.append(details);$('careCards').append(box);
+ }
+}
+function inputRate(id){const text=$(id).value.trim();if(!text)return null;const v=Number(text);return Number.isFinite(v)?v:null;}
+function projectScenario(r,days,base,effect,applyEffect){
+ if(!r||r.leaf_pixels===null||r.leaf_pixels<=0||!r.usable)return {baseline:null,planned:null,problem:'Keine geprüfte positive Blattfläche für diese Aufnahme.'};
+ if(days===0)return {baseline:r.leaf_pixels,planned:r.leaf_pixels,problem:''};
+ if(base===null||base< -50||base>100)return {baseline:null,planned:null,problem:'Eine tägliche Änderung zwischen −50 und 100 % als Annahme eintragen.'};
+ const extra=applyEffect?effect:0;if(extra===null||extra< -20||extra>20||base+extra<=-100)return {baseline:null,planned:null,problem:'Zusätzliche Wirkung zwischen −20 und 20 Prozentpunkten pro Tag eintragen.'};
+ const baseline=r.leaf_pixels*Math.pow(1+base/100,days),plannedValue=r.leaf_pixels*Math.pow(1+(base+extra)/100,days),max=r.image_size?r.image_size[0]*r.image_size[1]:Infinity;
+ if(!Number.isFinite(baseline)||!Number.isFinite(plannedValue)||baseline<=0||plannedValue<=0||baseline>max||plannedValue>max)return {baseline:null,planned:null,problem:'Die Annahme überschreitet die messbare Bildfläche. Rate oder Zeitraum verringern.'};
+ return {baseline,planned:plannedValue,problem:''};
+}
+function scenario(){return projectScenario(current(),Number($('days').value),inputRate('baseRate'),inputRate('effectRate'),planned.size>0);}
+function updateScenario(){
+ const days=Number($('days').value),r=current(),hasPlan=planned.size>0,rate=inputRate('baseRate');$('effectRate').disabled=!hasPlan;$('planCount').textContent=hasPlan?planned.size+(planned.size===1?' Pflegepunkt vorgemerkt.':' Pflegepunkte vorgemerkt.'):'Keine Maßnahme vorgemerkt.';$('daysLabel').textContent=String(days);
+ $('targetDate').textContent=r&&dateMs(r.captured_at)!==null?'Ab '+dateLabel(r.captured_at)+' → '+dateLabel(new Date(dateMs(r.captured_at)+days*86400000).toISOString()):'Ohne Aufnahmezeit: Zeitraum ab dem ausgewählten Foto.';
+ $('baselineSummary').textContent=rate===null?'Noch keine Rate vorhanden':(rate>0?'+':'')+fmt(rate,2)+' % pro Tag';$('ratePill').textContent=rate===null?'Unter „Annahmen bearbeiten“ eine Rate eintragen.':manualRate?'Eigene Annahme':'Aus bisherigen Messdaten übernommen';
+ $('restoreRate').disabled=suggestedRate(r).rate===null;
+ $('rateSource').textContent=manualRate?'Eigene Annahme; keine gemessene Wachstumsrate.':rateOrigin;const result=scenario();$('areaFuture').textContent=fmt(result.planned);$('futureLabel').textContent=days===0?'Beim Foto':'Nach '+days+(days===1?' Tag':' Tagen');
+ document.querySelector('[data-mode="future"]').textContent=$('futureLabel').textContent;
+ $('futureSmall').textContent=result.problem?'Annahme prüfen':days===0?'gemessene Blattpixel':'Blattpixel · nur Annahme';
+ $('selectedPlan').textContent=hasPlan?'Vorgemerkt: '+care.filter(c=>planned.has(c.id)).map(c=>c.title).join(' · '):'Kein Pflegepunkt ausgewählt.';
+ $('scenarioInfo').textContent=result.problem||(days===0?'Gezeigt wird die gemessene Fläche des ausgewählten Fotos.':hasPlan&&inputRate('effectRate')!==0?'Ohne zusätzliche Wirkung: '+fmt(result.baseline)+' Blattpixel. Mit der angenommenen Pflegewirkung: '+fmt(result.planned)+' Blattpixel.':'Mit dieser Annahme ergeben sich '+fmt(result.planned)+' Blattpixel. Zusätzliche Pflegewirkung: 0.');
+ $('exportScenario').disabled=!r||result.planned===null;buildScene();requestDraw();
+}
+function filtered(){const q=$('search').value.toLocaleLowerCase('de-DE');return seriesRows().filter(({r})=>(!$('onlyMissing').checked||r.health_score===null)&&(!q||(r.file_name+' '+reason(r.health_status)).toLocaleLowerCase('de-DE').includes(q)));}
+function updateTable(){
+ const list=filtered();page=clamp(page,0,Math.max(0,Math.ceil(list.length/PAGE_SIZE)-1));chartItems=list.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE);$('healthRows').replaceChildren();
+ for(const {r,i}of chartItems){const tr=document.createElement('tr');tr.dataset.index=String(i);tr.classList.toggle('selected',i===selected);tr.tabIndex=0;tr.setAttribute('aria-label','Aufnahme '+r.number+' in der Pflanzenansicht öffnen');tr.addEventListener('click',()=>openPhoto(i));tr.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){openPhoto(i);e.preventDefault();}});
+  const values=[r.number,dateLabel(r.captured_at),r.health_score===null?'—':fmt(r.health_score,1),fmt(r.leaf_pixels),r.is_reference?'Referenzfoto':r.health_score===null?reason(r.health_status):'Berechnet',r.file_name];
+  values.forEach((v,k)=>{const td=document.createElement('td');td.textContent=String(v);if(k===5){td.className='file';td.title=r.file_name;}if(k===2)td.className=r.health_score===0?'score zero':'score';tr.append(td);});$('healthRows').append(tr);
+ }
+ $('photoCount').textContent=seriesRows().length+' Fotos';$('pageInfo').textContent=list.length?'Fotos '+(page*PAGE_SIZE+1)+'–'+Math.min(list.length,(page+1)*PAGE_SIZE)+' von '+list.length+(list.length!==seriesRows().length?' (gefiltert)':''):'Keine passenden Fotos';$('previousPage').disabled=page===0;$('nextPage').disabled=(page+1)*PAGE_SIZE>=list.length;drawHealth();
+}
+function canvasSize(canvas){const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,1.8);const w=Math.max(1,rect.width),h=Math.max(1,rect.height);if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);}const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);return {ctx,w,h};}
+function drawHealth(){
+ if($('historyPanel').hidden)return;
+ const {ctx,w,h}=canvasSize($('healthChart'));ctx.clearRect(0,0,w,h);const left=36,top=14,bottom=h-32,height=bottom-top,n=chartItems.length,step=(w-left-8)/Math.max(1,n);ctx.font='10px Arial';ctx.textAlign='right';
+ for(const v of [0,25,50,75,100]){const y=bottom-height*v/100;ctx.strokeStyle='#e6ece5';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(w-5,y);ctx.stroke();ctx.fillStyle='#7a8a7c';ctx.fillText(String(v),left-7,y+3);}
+ chartItems.forEach(({r,i},j)=>{const x=left+(j+.5)*step,width=Math.min(30,step*.6);if(i===selected){ctx.fillStyle='#eaf1e3';ctx.fillRect(x-step*.46,top,step*.92,height+18);}
+  if(r.health_score!==null){const y=bottom-height*r.health_score/100;ctx.fillStyle='#327b55';ctx.fillRect(x-width/2,y,width,Math.max(2,bottom-y));ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();}
+  else if(r.is_reference){ctx.strokeStyle='#5b7f9e';ctx.lineWidth=1.8;ctx.beginPath();ctx.moveTo(x,top-3);ctx.lineTo(x+5,top+2);ctx.lineTo(x,top+7);ctx.lineTo(x-5,top+2);ctx.closePath();ctx.stroke();}
+  else {ctx.fillStyle='#e0e5e0';ctx.fillRect(x-width/2,top+10,width,height-10);ctx.strokeStyle='#aebbb0';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x-3,bottom-7);ctx.lineTo(x+3,bottom-1);ctx.moveTo(x+3,bottom-7);ctx.lineTo(x-3,bottom-1);ctx.stroke();}
+  ctx.fillStyle='#607665';ctx.textAlign='center';ctx.fillText(String(r.number),x,h-13);
+ });if(!n){ctx.textAlign='center';ctx.fillStyle='#718577';ctx.fillText('Keine Aufnahmen für diesen Filter.',w/2,h/2);}ctx.lineWidth=1;
+}
+// Kleine, deterministische 3D-Geometrie. Perspektive und Beleuchtung werden
+// lokal berechnet; sie sind keine aus Fotos gemessene Pflanzenarchitektur.
+const add=(a,b)=>a.map((v,i)=>v+b[i]),sub=(a,b)=>a.map((v,i)=>v-b[i]),mul=(a,s)=>a.map(v=>v*s),dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0),cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],unit=a=>mul(a,1/(Math.hypot(...a)||1));
+let yaw=-.55,pitch=.18,zoom=1,drag=null,drawPending=null,lastFrame=0;
+function face(points,color,offset=0,alpha=1,line=false){scene.push({points:points.map(p=>[p[0]+offset,p[1],p[2]]),color,alpha,line});}
+function tube(a,b,radius,color,offset){const axis=unit(sub(b,a)),u=unit(cross(axis,Math.abs(axis[1])>.9?[1,0,0]:[0,1,0])),v=cross(axis,u);for(let j=0;j<6;j++){const point=(p,k)=>add(p,add(mul(u,Math.cos(k*Math.PI/3)*radius),mul(v,Math.sin(k*Math.PI/3)*radius)));face([point(a,j),point(b,j),point(b,j+1),point(a,j+1)],color,offset);}}
+function pot(offset){for(let j=0;j<40;j++){const point=(rad,y,k)=>[Math.cos(k*Math.PI/20)*rad,y,Math.sin(k*Math.PI/20)*rad];face([point(.53,-.8,j),point(.71,-.03,j),point(.71,-.03,j+1),point(.53,-.8,j+1)],[137,115,87],offset);face([point(.72,-.09,j),point(.72,.015,j),point(.72,.015,j+1),point(.72,-.09,j+1)],[167,145,112],offset);face([[0,-.015,0],point(.66,-.015,j),point(.66,-.015,j+1)],[47,43,32],offset);}}
+function leaf(root,angle,length,width,offset,index){
+ const dir=[Math.cos(angle),0,Math.sin(angle)],side=[-Math.sin(angle),0,Math.cos(angle)],at=(u,v)=>add(root,add(mul(dir,length*u),add(mul(side,width*Math.pow(Math.sin(Math.PI*u),.8)*v),[0,.34*Math.sin(Math.PI*u*.9)-.16*u*u+.045*v*v*Math.sin(Math.PI*u),0]))),color=[54+(index%4)*7,119+(index%5)*7,59+(index%3)*5];
+ for(let u=0;u<7;u++)for(let v=0;v<4;v++){const a=u/7,b=(u+1)/7,c=-1+v/2,d=c+.5;face([at(a,c),at(b,c),at(b,d),at(a,d)],color,offset);}
+ for(let u=0;u<7;u++){const a=add(at(u/7,0),[0,.006,0]),b=add(at((u+1)/7,0),[0,.006,0]);face([a,b],[146,173,97],offset,1,true);}
+}
+function plant(areaRatio,offset,scale=1){
+ pot(offset);const shape=$('shape').value,branches=shape==='bush'?5:shape==='rosette'?1:3;
+ for(let stem=0;stem<branches;stem++){const theta=stem*2.399,spread=stem===0?0:shape==='bush'?.24:.10,base=[Math.cos(theta)*spread,0,Math.sin(theta)*spread],height=(shape==='rosette'?.45:2.1-stem*.16)*scale,levels=shape==='rosette'?7:5;
+  let previous=base;
+  for(let k=1;k<=levels;k++){const end=[base[0]+Math.sin(k*.4+stem)*.10,height*k/levels,base[2]+Math.cos(k*.35+stem)*.09];tube(previous,end,(.023-.002*k)*scale,[79,115,55],offset);const angle=theta+k*1.57+(stem*.3),size=(shape==='rosette'?.92:.88-.095*k)*Math.sqrt(clamp(areaRatio,.07,5.5))*scale;
+   for(let opposite=0;opposite<2;opposite++){const a=angle+opposite*Math.PI,root=add(end,[Math.cos(a)*.10*scale,-.025,Math.sin(a)*.10*scale]);tube(end,root,.009*scale,[88,126,66],offset);leaf(root,a,size,.32*size,offset,k+stem);}
+   previous=end;
+  }
+ }
+}
+function referenceRatio(r){if(!r||!r.usable||r.leaf_pixels===null||!r.view_id)return 1;const eligible=seriesRows().map(x=>x.r).filter(q=>q.usable&&q.leaf_pixels!==null&&q.leaf_pixels>0&&q.view_id===r.view_id&&JSON.stringify(q.image_size)===JSON.stringify(r.image_size)&&dateMs(q.captured_at)!==null&&dateMs(r.captured_at)!==null&&dateMs(q.captured_at)<=dateMs(r.captured_at)).sort((a,b)=>dateMs(a.captured_at)-dateMs(b.captured_at));return eligible.length?r.leaf_pixels/eligible[0].leaf_pixels:1;}
+function buildScene(){
+ scene=[];const r=current(),s=scenario(),ratio=referenceRatio(r);
+ $('modelTitle').textContent=mode==='now'?'Modell zum Foto':mode==='compare'?'Zwei Annahmen vergleichen':'Mögliche Entwicklung';$('viewBadge').textContent=mode==='now'?'Vereinfachtes Modell':'Szenario · nur Annahme';
+ if(!r||r.leaf_pixels===null||r.leaf_pixels<=0){pot(0);return;}
+ if(mode==='compare'&&s.baseline!==null&&s.planned!==null){plant(ratio*s.baseline/r.leaf_pixels,-1.2,.75);plant(ratio*s.planned/r.leaf_pixels,1.2,.75);}
+ else plant(ratio*(mode==='future'&&s.planned!==null?s.planned/r.leaf_pixels:1),0);
+}
+function transform(p){const x=p[0]*Math.cos(yaw)+p[2]*Math.sin(yaw),z=-p[0]*Math.sin(yaw)+p[2]*Math.cos(yaw),y=p[1]-.9;return [x,y*Math.cos(pitch)-z*Math.sin(pitch),y*Math.sin(pitch)+z*Math.cos(pitch)];}
+function drawModel(now){
+ if($('viewerRow').hidden)return;
+ const dt=lastFrame?Math.min(.08,(now-lastFrame)/1000):0;lastFrame=now;if(rotate)yaw+=dt*.24;
+ if(playing){const day=Math.floor((now-playStart)/450);if(day>=14){$('days').value='14';playing=false;$('play').textContent='Zeitraffer';updateScenario();}else if(Number($('days').value)!==day){$('days').value=String(day);updateScenario();}}
+ const {ctx,w,h}=canvasSize($('plantCanvas'));ctx.clearRect(0,0,w,h);const lens=Math.min(w,h)*1.62*zoom,project=p=>{const q=transform(p),d=7+q[2];return [w/2+q[0]*lens/d,h*.57-q[1]*lens/d,q[2]];};
+ ctx.fillStyle='#00000022';ctx.beginPath();ctx.ellipse(w/2,h*.83,Math.min(w*.28,180),23,0,0,Math.PI*2);ctx.fill();ctx.lineWidth=.6;ctx.strokeStyle='#799e7415';
+ for(let k=-5;k<=5;k++){const a=project([k*.55,-.81,-2.6]),b=project([k*.55,-.81,2.6]),c=project([-2.6,-.81,k*.55]),d=project([2.6,-.81,k*.55]);ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.moveTo(c[0],c[1]);ctx.lineTo(d[0],d[1]);ctx.stroke();}
+ const sorted=scene.map(f=>({...f,screen:f.points.map(project),depth:f.points.reduce((s,p)=>s+transform(p)[2],0)/f.points.length})).sort((a,b)=>b.depth-a.depth),light=unit([-.5,.8,1]);
+ for(const f of sorted){let shade=1;if(!f.line&&f.points.length>2){const normal=unit(cross(sub(f.points[1],f.points[0]),sub(f.points[2],f.points[0])));shade=.53+.44*Math.abs(dot(normal,light));}const color=f.color.map(v=>Math.round(clamp(v*shade,0,255)));ctx.globalAlpha=f.alpha;ctx.beginPath();ctx.moveTo(f.screen[0][0],f.screen[0][1]);for(const p of f.screen.slice(1))ctx.lineTo(p[0],p[1]);if(f.line){ctx.strokeStyle='rgb('+color.join(',')+')';ctx.lineWidth=.7;ctx.stroke();}else{ctx.closePath();ctx.fillStyle='rgb('+color.join(',')+')';ctx.fill();}}
+ ctx.globalAlpha=1;ctx.fillStyle='#a8c0a3';ctx.textAlign='center';ctx.font='10px Arial';const r=current(),s=scenario();
+ if(!r||r.leaf_pixels===null)ctx.fillText('JSON mit einer gültigen Blattfläche öffnen.',w/2,h*.28);
+ else if(r.leaf_pixels===0)ctx.fillText('Keine Blattpixel erkannt · Maske und Originalfoto prüfen.',w/2,h*.28);
+ if(mode!=='now'&&s.planned===null)ctx.fillText('Noch kein berechenbares Szenario · Aufnahmezustand wird gezeigt.',w/2,h*.23);
+ if(mode==='compare'&&s.planned!==null){ctx.fillText('Ohne Pflegewirkung',w*.28,h-29);ctx.fillText('Mit angenommener Wirkung',w*.72,h-29);}
+}
+function requestDraw(){if(drawPending!==null)return;drawPending=requestAnimationFrame(time=>{drawPending=null;drawModel(time);if(rotate||playing)requestDraw();});}
+$('plantCanvas').addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY};$('plantCanvas').setPointerCapture(e.pointerId);});
+$('plantCanvas').addEventListener('pointermove',e=>{if(!drag)return;yaw+=(e.clientX-drag.x)*.009;pitch=clamp(pitch+(e.clientY-drag.y)*.006,-.45,1.4);drag={x:e.clientX,y:e.clientY};requestDraw();});
+for(const event of ['pointerup','pointercancel'])$('plantCanvas').addEventListener(event,()=>{drag=null;});
+$('plantCanvas').addEventListener('wheel',e=>{e.preventDefault();zoom=clamp(zoom*Math.exp(-e.deltaY*.001),.5,1.9);requestDraw();},{passive:false});
+$('plantCanvas').addEventListener('keydown',e=>{if(e.key==='ArrowLeft')yaw-=.15;else if(e.key==='ArrowRight')yaw+=.15;else if(e.key==='ArrowUp')pitch=clamp(pitch+.1,-.45,1.4);else if(e.key==='ArrowDown')pitch=clamp(pitch-.1,-.45,1.4);else if(e.key==='+')zoom=clamp(zoom+.1,.5,1.9);else if(e.key==='-')zoom=clamp(zoom-.1,.5,1.9);else return;e.preventDefault();requestDraw();});
+$('rotate').addEventListener('click',()=>{rotate=!rotate;$('rotate').setAttribute('aria-pressed',String(rotate));$('rotate').classList.toggle('active',rotate);requestDraw();});
+$('resetView').addEventListener('click',()=>{yaw=-.55;pitch=.18;zoom=1;requestDraw();});$('topView').addEventListener('click',()=>{pitch=1.35;requestDraw();});
+for(const button of document.querySelectorAll('[data-mode]'))button.addEventListener('click',()=>setMode(button.dataset.mode));
+for(const button of document.querySelectorAll('[data-tab]')){
+ button.addEventListener('click',()=>setTab(button.dataset.tab));
+ button.addEventListener('keydown',e=>{const tabs=[...document.querySelectorAll('[data-tab]')],index=tabs.indexOf(button);let next=null;if(e.key==='ArrowRight')next=(index+1)%tabs.length;else if(e.key==='ArrowLeft')next=(index+tabs.length-1)%tabs.length;else if(e.key==='Home')next=0;else if(e.key==='End')next=tabs.length-1;if(next!==null){e.preventDefault();setTab(tabs[next].dataset.tab,true);}});
+}
+$('goFuture').addEventListener('click',()=>setTab('future',true));$('editCarePlan').addEventListener('click',()=>setTab('plant',true));
+$('photoPrev').addEventListener('click',()=>stepPhoto(-1));$('photoNext').addEventListener('click',()=>stepPhoto(1));
+$('resetScenario').addEventListener('click',resetScenario);$('restoreRate').addEventListener('click',()=>{restoreRate();updateScenario();});
+$('shape').addEventListener('change',()=>{buildScene();requestDraw();});$('species').addEventListener('change',()=>{updateCare();updateScenario();});
+$('days').addEventListener('input',()=>{playing=false;$('play').textContent='Zeitraffer';updateScenario();});$('baseRate').addEventListener('input',()=>{manualRate=true;updateScenario();});$('effectRate').addEventListener('input',updateScenario);
+$('play').addEventListener('click',()=>{if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){$('days').value=String((Number($('days').value)+1)%15);updateScenario();return;}playing=!playing;playStart=performance.now();$('play').textContent=playing?'Anhalten':'Zeitraffer';requestDraw();});
+$('series').addEventListener('change',()=>{activeSeries=$('series').value;page=0;planned.clear();$('search').value='';$('onlyMissing').checked=false;refillPhotos();selectPhoto(latestIndex());});$('photo').addEventListener('change',()=>selectPhoto(Number($('photo').value)));
+for(const id of ['search','onlyMissing'])$(id).addEventListener('input',()=>{page=0;updateTable();});$('previousPage').addEventListener('click',()=>{page--;updateTable();});$('nextPage').addEventListener('click',()=>{page++;updateTable();});
+$('healthChart').addEventListener('click',e=>{const rect=$('healthChart').getBoundingClientRect(),j=Math.floor((e.clientX-rect.left-36)/((rect.width-44)/Math.max(1,chartItems.length)));if(chartItems[j])openPhoto(chartItems[j].i);});
+$('exportScenario').addEventListener('click',()=>{const r=current(),s=scenario();if(!r||s.planned===null)return;const data={kind:'assumed_growth_scenario',schema_version:'1.0',created_at:new Date().toISOString(),series_id:r.series_id,source_file:r.file_name,as_of:r.captured_at,horizon_days:Number($('days').value),observed_leaf_pixels:r.leaf_pixels,baseline_rate_pct_per_day:inputRate('baseRate'),baseline_rate_origin:manualRate?'user_assumption':rateOrigin,additional_rate_percentage_points_per_day:planned.size?inputRate('effectRate'):0,planned_actions:care.filter(c=>planned.has(c.id)).map(c=>({id:c.id,title:c.title})),baseline_scenario_pixels:s.baseline,planned_scenario_pixels:s.planned,geometry:'schematic_not_reconstructed',biologically_validated:false,issued_forecast:false};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='biobox_szenario.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
+$('importButton').addEventListener('click',()=>$('jsonFile').click());
+function matchingTwin(data,twin){return twin&&typeof twin==='object'&&typeof twin.series_id==='string'&&twin.series_id!==''&&data.observations.some(r=>r.series_id===twin.series_id);}
+function combineImport(previous,next){
+ // A summary enriches its own series; a new measurement file replaces the history.
+ // No health values or observations from different plants are combined.
+ if(next.summaryOnly){
+  if(!previous.summaryOnly&&previous.observations.length&&matchingTwin(previous,next.twin))return {...previous,twin:next.twin,summaryOnly:false};
+  return next;
+ }
+ if(!Object.keys(next.twin||{}).length&&matchingTwin(next,previous.twin))return {...next,twin:previous.twin};
+ return next;
+}
+$('jsonFile').addEventListener('change',async e=>{try{
+ const files=[...e.target.files];if(!files.length)return;
+ if(files.some(f=>f.size>64*1024*1024))throw Error('Eine Datei ist größer als 64 MB. Einen kleineren Ausschnitt der Bilddaten öffnen.');
+ let loaded=bundle;
+ for(const file of files){const parsed=JSON.parse((await file.text()).replace(/^\uFEFF/,''));loaded=combineImport(loaded,normalise(parsed));}
+ install(loaded);
+ notify(bundle.summaryOnly?'Nur der letzte Zustand ist geladen. Für alle Fotos zusätzlich die passende ergebnis.json öffnen.':rows.length+' Fotos lokal geladen. Die Dateien wurden nicht verändert.');
+ }catch(error){notify(error.message||'Die Datei konnte nicht gelesen werden.',true);}finally{e.target.value='';}
+});
+const resizeObserver=new ResizeObserver(()=>{drawHealth();requestDraw();});resizeObserver.observe($('plantCanvas'));resizeObserver.observe($('healthChart'));
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopMotion();else{lastFrame=0;requestDraw();}});
+try{install(JSON.parse($('bioboxData').textContent));}catch(error){notify('Daten konnten nicht gelesen werden: '+error.message,true);install({observations:[],twin:{}});}
+</script>
+</body>
+</html>
+"""
 
 
 def main():
@@ -2469,6 +3868,9 @@ def main():
     parser.add_argument("--einzelbilder", action="store_true", help="Verschiedene Pflanzen: keine zeitlichen Gesundheits-/Wachstumsvergleiche")
     parser.add_argument("--neue-referenz", action="store_true", help="Referenz fuer diese Messreihe neu bilden")
     parser.add_argument("--ausgabe", type=Path, help="Ausgabeordner (Standard: neben bilder/auswertung)")
+    parser.add_argument("--3d", dest="drei_d", action="store_true", help="Lokale 3D-Ansicht im Browser öffnen; allein: vorhandene JSONs ohne Pi-Abruf ansehen")
+    parser.add_argument("--3d-aus-json", dest="drei_d_json", type=Path, metavar="JSON", help="Persönliche 3D-Ansicht aus ergebnis.json oder digital_twin.json öffnen")
+    parser.add_argument("--ohne-browser", action="store_true", help="Bilder normal analysieren, die 3D-Ansicht anschließend nicht öffnen")
     parser.add_argument("--mm-pro-pixel", type=float, default=MM_PRO_PIXEL_MANUELL, help="Verifizierter Massstab der Blattebene")
     parser.add_argument("--kalibrieren", metavar="ORDNER", help="Objektiv mit Schachbrettbildern kalibrieren")
     parser.add_argument("--maske-korrigieren",type=Path,metavar="JPG",help="Blattmaske eines Originalfotos mit Pinsel korrigieren")
@@ -2479,6 +3881,27 @@ def main():
     parser.add_argument("--referenz-mm", type=float, help="Tatsaechlich gemessene Laenge zwischen den zwei Punkten, in mm")
     parser.add_argument("--punkte", nargs=4, type=float, metavar=("X1", "Y1", "X2", "Y2"), help="Messpunkte im Originalbild; ohne Angabe zwei Klicks im Bildfenster")
     args = parser.parse_args()
+    if args.ohne_browser and (args.drei_d or args.drei_d_json):
+        parser.error("--ohne-browser nicht mit --3d oder --3d-aus-json kombinieren")
+    speziell = (args.nur_bild or args.massstab or args.massstab_bild or args.maske_korrigieren or args.kalibrieren
+                or args.stundenaufnahme_einrichten or args.stundenaufnahme_status or args.stundenaufnahme_ausschalten)
+    if (args.drei_d or args.drei_d_json) and speziell:
+        parser.error("3D-Ansicht separat von Download, Kalibrierung, Maskenkorrektur und Pi-Zeitplan öffnen")
+    if args.drei_d_json and (args.lokal or args.ordner or args.abholen):
+        parser.error("--3d-aus-json liest vorhandene JSONs; nicht mit einem Bilderordner oder --abholen kombinieren")
+    if args.drei_d_json or (args.drei_d and not (args.lokal or args.ordner or args.abholen)):
+        quelle = args.drei_d_json or (args.ausgabe or BILDER_ORDNER.parent/"auswertung")/"ergebnis.json"
+        ziel = args.ausgabe or Path(quelle).expanduser().resolve().parent
+        try:
+            vorhanden = Path(ziel)/TWIN_3D_DATEI
+            quellen = [Path(quelle), Path(quelle).parent/"digital_twin.json", Path(__file__)]
+            aktuell = (not args.drei_d_json and vorhanden.is_file()
+                       and all(not p.is_file() or vorhanden.stat().st_mtime_ns >= p.stat().st_mtime_ns for p in quellen))
+            twin_3d_oeffnen(vorhanden if aktuell else twin_3d_aus_json(quelle, ziel))
+        except (OSError, ValueError, TypeError) as fehler:
+            print("3D-Ansicht nicht erstellt:", fehler)
+            return 1
+        return 0
     cv2.setNumThreads(2)
     if args.mm_pro_pixel is not None and (not math.isfinite(args.mm_pro_pixel) or args.mm_pro_pixel <= 0):
         parser.error("--mm-pro-pixel muss positiv und endlich sein")
@@ -2559,6 +3982,19 @@ def main():
         return 1
     if not pfade:
         print(f"Keine Bilder gefunden in: {ziel}. Vorhandene Auswertung bleibt erhalten.")
+        # Nach dem Aufraeumen der Fotos bleibt die Ergebnishistorie nutzbar.
+        # Nur beim normalen Pi-Start auf diese vorhandenen Werte zurueckgreifen.
+        if not lokal and not args.ohne_browser:
+            quelle = next((Path(ausgabe)/name for name in ("ergebnis.json", "digital_twin.json")
+                           if (Path(ausgabe)/name).is_file()), None)
+            if quelle is not None:
+                try:
+                    print("3D-Ansicht aus vorhandenen Messwerten; keine neue Bildanalyse.")
+                    twin_3d_oeffnen(twin_3d_aus_json(quelle, ausgabe))
+                except (OSError, ValueError, TypeError) as fehler:
+                    print("3D-Ansicht nicht erstellt:", fehler)
+                    return 1
+                return 0
         return 1
     print(f"Lokale Auswertung: {len(pfade)} Bilder aus {ziel}; alle Ausgaben werden neu berechnet.", flush=True)
     try:
@@ -2566,6 +4002,12 @@ def main():
     except (OSError, ValueError) as fehler:
         print(f"Analyse abgebrochen: {fehler}")
         return 1
+    if not args.ohne_browser:
+        try:
+            twin_3d_oeffnen(Path(ausgabe)/TWIN_3D_DATEI)
+        except OSError as fehler:
+            print(f"Auswertung fertig; Browser konnte nicht geoeffnet werden: {fehler}")
+            print("Bitte die HTML-Datei selbst oeffnen:", Path(ausgabe)/TWIN_3D_DATEI)
     return 0
 
 

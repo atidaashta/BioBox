@@ -1,0 +1,47 @@
+{
+  "version": "0.1.0",
+  "series_id": "pflanze-01",
+  "generated_at": "2026-11-10T17:03:02.417471Z",
+  "pipeline_version": "4.8.1",
+  "scope": "visible_leaf_area_pixels",
+  "status": "zu_wenige_vergleichbare_aufnahmen",
+  "state": {
+    "observed_at": "2025-02-08T12:00:05Z",
+    "file_name": "basil03_20250208T120005Z.png",
+    "leaf_pixels": 324503,
+    "health_score": 77.3,
+    "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
+    "usable": true,
+    "quality_flags": "gesundheit_ueber_blattfarbverteilung",
+    "age_hours": 15365.049,
+    "fresh": false
+  },
+  "forecast": null,
+  "training": {
+    "points": 1,
+    "span_hours": 0.0,
+    "min_points": 6,
+    "min_span_hours": 24,
+    "window_hours": 72,
+    "excluded_images": {
+      "flaechensprung_pruefen": 2,
+      "kamera_fuer_prognose_nicht_fest_genug": 2
+    },
+    "comparison_group": "a6451123a91fadca0b441bb6390fa1b803394210d041fea36e9b65278e922860",
+    "first_at": "2025-02-08T12:00:05Z",
+    "last_at": "2025-02-08T12:00:05Z"
+  },
+  "validation": null,
+  "online_validation": {
+    "comparisons": 0,
+    "mae_px": null,
+    "last_value_mae_px": null
+  },
+  "forecast_history": [],
+  "limitations": [
+    "Technischer Prototyp; keine biologisch validierte Wachstumsprognose.",
+    "Sichtbare Blattflaeche kann sich auch durch Blattstellung oder Maskenfehler aendern.",
+    "Die lokale 3D-Ansicht ist schematisch; Pflanzenhoehe und Tiefe sind nicht vermessen.",
+    "Pflegewirkungen sind ohne zugeordnete Sensor- und Aktionszeitreihen nicht gelernt."
+  ]
+}
