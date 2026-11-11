@@ -33,7 +33,7 @@ python analyse.py --stundenaufnahme-einrichten
 python analyse.py --stundenaufnahme-status
 ```
 
-Die Einrichtung benötigt einen erreichbaren Pi, einen autorisierten SSH-Schlüssel und einen aktiven Cron-Dienst. Der Verbindungstest und die Prüfung der ersten geplanten Aufnahme stehen in der [Übergabe](Atida-Handover.md). Der Pi-Abruf lädt nur fertige JPEGs. Nach einem erfolgreichen Abgleich werden höchstens die letzten 100 importierten Kamera-JPEGs lokal behalten. Andere Bilder und ältere Messwerte bleiben erhalten.
+Die Einrichtung benötigt einen erreichbaren Pi, einen autorisierten SSH-Schlüssel und einen aktiven Cron-Dienst. Prüfe nach der Einrichtung den Status. Kontrolliere nach der nächsten vollen Stunde erneut, ob eine neue Aufnahme angezeigt wird. Der Pi-Abruf lädt nur fertige JPEGs. Nach einem erfolgreichen Abgleich werden höchstens die letzten 100 importierten Kamera-JPEGs lokal behalten. Andere Bilder und ältere Messwerte bleiben erhalten.
 
 ## Ergebnisse lesen
 
@@ -77,6 +77,5 @@ Ausgewählte Messwerte werden an Ollama auf demselben PC übergeben. Ist keine K
 | A-M2 | [Computer-Vision-Pipeline](docs/BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md): Messwerte, CSV/JSON, Diagramme und Historie. |
 | A-M3 | [Gesundheitsbewertung](docs/BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md): Referenz, Lichtabgleich, Score und Gründe für fehlende Werte. |
 | A-M4 | [Digital-Twin-Modell](docs/BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md): 3D-Ansicht, Szenarien, Modellprüfung und Pflegetipps. |
-| Betrieb | [Atida-Handover](Atida-Handover.md): Pi, Zeitplan, Archive und Übergabe an die Plattform. |
 
 Der Datenexport für die spätere Integration ist `ergebnis.json`. Die Zuordnung zur Datenbank und der API-Vertrag werden mit Edona abgestimmt. `analyse.py` sendet die Daten nicht automatisch an die Plattform.
