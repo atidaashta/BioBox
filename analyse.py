@@ -133,8 +133,8 @@ CHROMA_MIN = 4            # a*-Mindestabstand von Grau; darunter keine Pflanze
 RATE_MIN_MINUTEN = 30    # Kurzer Vergleich; hohe Schwankung moeglich
 RATE_STABIL_STUNDEN = 12  # Wenn verfuegbar, laengeren Abstand bevorzugen
 SCORING_VERSION = "4.1.0"
-ANALYSE_VERSION = "4.8.2"
-TWIN_3D_VERSION = "0.3.0"
+ANALYSE_VERSION = "4.8.3"
+TWIN_3D_VERSION = "0.3.1"
 TWIN_3D_DATEI = "digital_twin_3d.html"
 TWIN_VERSION = "0.1.0"
 TWIN_HORIZONT_STUNDEN = 24
@@ -3335,16 +3335,8 @@ def twin_3d_oeffnen(pfad):
 
 
 
-TWIN_3D_HTML = r"""<!doctype html>
-<html lang="de">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light">
-<meta name="referrer" content="no-referrer">
-<meta name="biobox-viewer-version" content="0.3.0">
-<title>BioBox · Basilikum</title>
-<style>
+# Gestaltung der lokalen Ansicht; beim Export wird sie in die HTML-Datei eingebettet.
+TWIN_3D_CSS = r"""
 :root{--ink:#203c30;--muted:#607268;--green:#246849;--line:#dce5de;--paper:#f4f6f1;--warm:#f8f2e5}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -3369,7 +3361,6 @@ p+p{margin-top:9px}
 .brandbar{background:#173c2c;color:white}
 .brandinner{max-width:1080px;margin:auto;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
 .brand{font-size:23px;font-weight:700;letter-spacing:-.5px}
-.brand span{font-size:13px;font-weight:400;letter-spacing:0;color:#c3d5c5;margin-left:12px}
 .brandbar button{font-size:13px;padding:8px 13px;white-space:nowrap}
 main{max-width:1080px;margin:auto;padding:24px 24px 28px}
 .heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px}
@@ -3482,13 +3473,27 @@ td.score{font-weight:600}.zero{color:#9b5735}
 .quickhelp{margin-top:14px;color:var(--muted);font-size:12px}
 @media(max-width:900px){.padding{padding:18px}.stat{padding:13px 14px}.stat strong{font-size:23px}.stats.withfuture .stat{padding:12px 10px}.stats.withfuture .stat strong{font-size:21px}}
 @media(max-width:760px){main{padding:18px 16px}.brandinner{padding:12px 16px}.layout.growth-layout{grid-template-columns:minmax(0,1fr)}#plantCanvas{height:335px}}
-@media(max-width:480px){.brand span{display:none}.brandbar button{font-size:12px}.brandinner{padding:10px 14px}main{padding:17px 12px}.heading{display:block;margin-bottom:12px}h1{font-size:27px}.tabs{margin-top:10px;gap:3px}.tabs button{flex:1;font-size:12px;padding:9px 5px;white-space:nowrap}.photochooser{flex-wrap:wrap;gap:10px}.photochooser>label{flex-basis:100%;max-width:none}.photofield{flex-basis:100%;max-width:none}#plantCanvas{height:300px}.canvashead{left:12px;right:12px;top:12px}.canvashead .pill{font-size:10px;padding:4px 7px}.canvashead b{font-size:12px}.canvascontrols{padding:7px 12px;gap:6px}.canvascontrols p{font-size:11px}.stat{padding:12px 13px}.stat strong{font-size:22px}.stats.withfuture .stat{padding:11px 9px}.stats.withfuture .stat span{font-size:11px}.stats.withfuture .stat strong{font-size:18px}.stats.withfuture .stat small{font-size:10px}.understats,.care-panel{padding:0 13px 7px}.padding{padding:16px}.modebuttons{padding:8px 10px;gap:4px}.modebuttons button{font-size:11px;padding:7px 5px}.toolbar{gap:12px}.toolbar input[type=search]{max-width:none}.tablewrap{margin:0 -7px}th,td{padding:10px 7px;font-size:11px}.pagination{flex-wrap:wrap}.pagination>div{margin-left:auto}.brand{font-size:22px}}
+@media(max-width:480px){.brandbar button{font-size:12px}.brandinner{padding:10px 14px}main{padding:17px 12px}.heading{display:block;margin-bottom:12px}h1{font-size:27px}.tabs{margin-top:10px;gap:3px}.tabs button{flex:1;font-size:12px;padding:9px 5px;white-space:nowrap}.photochooser{flex-wrap:wrap;gap:10px}.photochooser>label{flex-basis:100%;max-width:none}.photofield{flex-basis:100%;max-width:none}#plantCanvas{height:300px}.canvashead{left:12px;right:12px;top:12px}.canvashead .pill{font-size:10px;padding:4px 7px}.canvashead b{font-size:12px}.canvascontrols{padding:7px 12px;gap:6px}.canvascontrols p{font-size:11px}.stat{padding:12px 13px}.stat strong{font-size:22px}.stats.withfuture .stat{padding:11px 9px}.stats.withfuture .stat span{font-size:11px}.stats.withfuture .stat strong{font-size:18px}.stats.withfuture .stat small{font-size:10px}.understats,.care-panel{padding:0 13px 7px}.padding{padding:16px}.modebuttons{padding:8px 10px;gap:4px}.modebuttons button{font-size:11px;padding:7px 5px}.toolbar{gap:12px}.toolbar input[type=search]{max-width:none}.tablewrap{margin:0 -7px}th,td{padding:10px 7px;font-size:11px}.pagination{flex-wrap:wrap}.pagination>div{margin-left:auto}.brand{font-size:22px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+"""
+
+
+TWIN_3D_HTML = r"""<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="referrer" content="no-referrer">
+<meta name="biobox-viewer-version" content="0.3.1">
+<title>BioBox · Basilikum</title>
+<style>
+__BIOBOX_CSS__
 </style>
 </head>
 <body>
 <header class="brandbar"><div class="brandinner">
-  <div class="brand">BioBox <span>Digitaler Zwilling</span></div>
+  <div class="brand">BioBox</div>
   <button id="importButton">Daten öffnen</button>
   <input id="jsonFile" type="file" accept=".json,application/json" multiple hidden>
 </div></header>
@@ -3513,7 +3518,7 @@ td.score{font-weight:600}.zero{color:#9b5735}
 <div class="layout" id="viewerRow">
   <section class="card" aria-label="Pflanzenmodell und Messwerte">
     <div class="viewport">
-      <canvas id="plantCanvas" tabindex="0" aria-label="Drehbares 3D-Modell von Basilikum. Mit Pfeiltasten drehen, mit Plus und Minus zoomen."></canvas>
+      <canvas id="plantCanvas" tabindex="0" aria-label="3D-Modell von Basilikum. Ziehen oder Pfeiltasten zum Drehen. Umschalt plus waagrecht ziehen zum seitlichen Kippen. Plus und Minus zum Zoomen."></canvas>
       <div class="canvashead"><b id="modelTitle">Modell zum Foto</b><span class="pill" id="viewBadge">Schematisch</span></div>
     </div>
     <div class="modebuttons" id="modelModes" role="group" aria-label="Darstellung im Wachstumstest" hidden>
@@ -3534,8 +3539,6 @@ td.score{font-weight:600}.zero{color:#9b5735}
           <figure id="photoFigure"><img id="photoPreview" alt="Verkleinerte Originalaufnahme des ausgewählten Fotos"><figcaption>Originalfoto, verkleinert</figcaption></figure>
           <figure><img id="maskPreview" alt="Blattmaske des ausgewählten Fotos"><figcaption>Berechnete Blattmaske</figcaption></figure>
         </div></div>
-        <div><h3>Modell und Messwerte</h3><p>Das Basilikummodell veranschaulicht die sichtbare Blattfläche. Blattform, Blattgröße und Höhe sind keine Messungen. Ein Index von 100 bedeutet Nähe zur Referenz; er ist keine Diagnose.</p></div>
-        <div><button id="topView">Von oben ansehen</button></div>
       </div></details>
     </div>
   </section>
@@ -3747,7 +3750,8 @@ function drawHealth(){
 // Kleine, deterministische 3D-Geometrie. Perspektive und Beleuchtung werden
 // lokal berechnet; sie sind keine aus Fotos gemessene Pflanzenarchitektur.
 const add=(a,b)=>a.map((v,i)=>v+b[i]),sub=(a,b)=>a.map((v,i)=>v-b[i]),mul=(a,s)=>a.map(v=>v*s),dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0),cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],unit=a=>mul(a,1/(Math.hypot(...a)||1));
-let yaw=-.55,pitch=.29,zoom=1,drag=null,drawPending=null,lastFrame=0;
+let yaw=-.55,pitch=.29,roll=0,zoom=1,drag=null,drawPending=null,lastFrame=0;
+const wrapAngle=a=>Math.atan2(Math.sin(a),Math.cos(a));
 function face(points,color,offset=0,alpha=1,line=false){scene.push({points,color,offset,alpha,line});}
 function tube(a,b,radius,color,offset){const axis=unit(sub(b,a)),u=unit(cross(axis,Math.abs(axis[1])>.9?[1,0,0]:[0,1,0])),v=cross(axis,u);for(let j=0;j<6;j++){const point=(p,k)=>add(p,add(mul(u,Math.cos(k*Math.PI/3)*radius),mul(v,Math.sin(k*Math.PI/3)*radius)));face([point(a,j),point(b,j),point(b,j+1),point(a,j+1)],color,offset);}}
 function pot(offset){for(let j=0;j<40;j++){const point=(rad,y,k)=>[Math.cos(k*Math.PI/20)*rad,y,Math.sin(k*Math.PI/20)*rad];face([point(.53,-.8,j),point(.71,-.03,j),point(.71,-.03,j+1),point(.53,-.8,j+1)],[137,115,87],offset);face([point(.72,-.09,j),point(.72,.015,j),point(.72,.015,j+1),point(.72,-.09,j+1)],[167,145,112],offset);face([[0,-.015,0],point(.66,-.015,j),point(.66,-.015,j+1)],[47,43,32],offset);}}
@@ -3803,10 +3807,14 @@ function buildScene(){
  if(mode==='compare'&&s.baseline!==null&&s.planned!==null){plant(ratio*s.baseline/r.leaf_pixels,-1.2,.75);plant(ratio*s.planned/r.leaf_pixels,1.2,.75);}
  else plant(ratio*(mode==='future'&&s.planned!==null?s.planned/r.leaf_pixels:1),0);
 }
-function transform(p,offset=0){const x=p[0]*Math.cos(yaw)+p[2]*Math.sin(yaw)+offset,z=-p[0]*Math.sin(yaw)+p[2]*Math.cos(yaw),y=p[1]-.78;return [x,y*Math.cos(pitch)-z*Math.sin(pitch),y*Math.sin(pitch)+z*Math.cos(pitch)];}
+function transform(p,offset=0){
+ const x=p[0]*Math.cos(yaw)+p[2]*Math.sin(yaw),z=-p[0]*Math.sin(yaw)+p[2]*Math.cos(yaw),y=p[1]-.78;
+ const height=y*Math.cos(pitch)-z*Math.sin(pitch),depth=y*Math.sin(pitch)+z*Math.cos(pitch);
+ return [x*Math.cos(roll)-height*Math.sin(roll)+offset,x*Math.sin(roll)+height*Math.cos(roll),depth];
+}
 function drawModel(now){
  if($('viewerRow').hidden)return;
- const dt=lastFrame?Math.min(.08,(now-lastFrame)/1000):0;lastFrame=now;if(rotate)yaw+=dt*.24;
+ const dt=lastFrame?Math.min(.08,(now-lastFrame)/1000):0;lastFrame=now;if(rotate)yaw=wrapAngle(yaw+dt*.24);
  if(playing){const day=Math.floor((now-playStart)/450);if(day>=14){$('days').value='14';playing=false;$('play').textContent='Zeitraffer';updateScenario();}else if(Number($('days').value)!==day){$('days').value=String(day);updateScenario();}}
  const {ctx,w,h}=canvasSize($('plantCanvas'));ctx.clearRect(0,0,w,h);const lens=Math.min(w,h)*1.58*zoom,project=(p,offset)=>{const q=transform(p,offset),d=7+q[2];return [w/2+q[0]*lens/d,h*.52-q[1]*lens/d,q[2]];};
  const r=current(),s=scenario(),comparison=mode==='compare'&&s.planned!==null;
@@ -3820,13 +3828,34 @@ function drawModel(now){
  if(comparison){ctx.fillText('Ohne Wirkung',project([0,0,0],-1.2)[0],h-14);ctx.fillText('Mit Annahme',project([0,0,0],1.2)[0],h-14);}
 }
 function requestDraw(){if(drawPending!==null)return;drawPending=requestAnimationFrame(time=>{drawPending=null;drawModel(time);if(rotate||playing)requestDraw();});}
-$('plantCanvas').addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY};$('plantCanvas').setPointerCapture(e.pointerId);});
-$('plantCanvas').addEventListener('pointermove',e=>{if(!drag)return;yaw+=(e.clientX-drag.x)*.009;pitch=clamp(pitch+(e.clientY-drag.y)*.006,-.45,1.4);drag={x:e.clientX,y:e.clientY};requestDraw();});
-for(const event of ['pointerup','pointercancel'])$('plantCanvas').addEventListener(event,()=>{drag=null;});
+$('plantCanvas').addEventListener('pointerdown',e=>{
+ if(e.button!==0||drag)return;
+ drag={id:e.pointerId,x:e.clientX,y:e.clientY};
+ e.currentTarget.setPointerCapture(e.pointerId);
+ e.currentTarget.focus({preventScroll:true});
+});
+$('plantCanvas').addEventListener('pointermove',e=>{
+ if(!drag||e.pointerId!==drag.id)return;
+ const dx=e.clientX-drag.x,dy=e.clientY-drag.y;
+ if(e.shiftKey)roll=wrapAngle(roll+dx*.012);
+ else {yaw=wrapAngle(yaw+dx*.010);pitch=wrapAngle(pitch+dy*.010);}
+ drag.x=e.clientX;drag.y=e.clientY;requestDraw();
+});
+for(const event of ['pointerup','pointercancel','lostpointercapture'])$('plantCanvas').addEventListener(event,e=>{if(drag&&e.pointerId===drag.id)drag=null;});
 $('plantCanvas').addEventListener('wheel',e=>{e.preventDefault();zoom=clamp(zoom*Math.exp(-e.deltaY*.001),.5,1.9);requestDraw();},{passive:false});
-$('plantCanvas').addEventListener('keydown',e=>{if(e.key==='ArrowLeft')yaw-=.15;else if(e.key==='ArrowRight')yaw+=.15;else if(e.key==='ArrowUp')pitch=clamp(pitch+.1,-.45,1.4);else if(e.key==='ArrowDown')pitch=clamp(pitch-.1,-.45,1.4);else if(e.key==='+')zoom=clamp(zoom+.1,.5,1.9);else if(e.key==='-')zoom=clamp(zoom-.1,.5,1.9);else return;e.preventDefault();requestDraw();});
+$('plantCanvas').addEventListener('keydown',e=>{
+ if(e.key==='ArrowLeft'||e.key==='ArrowRight'){
+  const turn=e.key==='ArrowLeft'?-.15:.15;
+  if(e.shiftKey)roll=wrapAngle(roll+turn);else yaw=wrapAngle(yaw+turn);
+ }else if(e.key==='ArrowUp')pitch=wrapAngle(pitch+.1);
+ else if(e.key==='ArrowDown')pitch=wrapAngle(pitch-.1);
+ else if(e.key==='+')zoom=clamp(zoom+.1,.5,1.9);
+ else if(e.key==='-')zoom=clamp(zoom-.1,.5,1.9);
+ else return;
+ e.preventDefault();requestDraw();
+});
 $('rotate').addEventListener('click',()=>{rotate=!rotate;$('rotate').setAttribute('aria-pressed',String(rotate));$('rotate').classList.toggle('active',rotate);requestDraw();});
-$('resetView').addEventListener('click',()=>{stopMotion();yaw=-.55;pitch=.29;zoom=1;requestDraw();});$('topView').addEventListener('click',()=>{pitch=1.35;requestDraw();});
+$('resetView').addEventListener('click',()=>{stopMotion();yaw=-.55;pitch=.29;roll=0;zoom=1;requestDraw();});
 for(const button of document.querySelectorAll('[data-mode]'))button.addEventListener('click',()=>setMode(button.dataset.mode));
 for(const button of document.querySelectorAll('[data-tab]')){
  button.addEventListener('click',()=>setTab(button.dataset.tab));
@@ -3869,7 +3898,7 @@ try{install(JSON.parse($('bioboxData').textContent));}catch(error){notify('Daten
 </script>
 </body>
 </html>
-"""
+""".replace("__BIOBOX_CSS__", TWIN_3D_CSS)
 
 
 def main():

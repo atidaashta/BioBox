@@ -3,100 +3,85 @@
 | Feld | Stand |
 | --- | --- |
 | Dokument-ID | BB-GUIDE-TWIN-001 |
-| Version | 1.0 |
-| Datum | 10.11.2026 |
-| Software | analyse.py 4.8.0 · 3D-Ansicht 0.2.0 |
+| Meilenstein | A-M4 |
+| Version | 1.1 |
+| Datum | 11.11.2026 |
+| Software | analyse.py 4.8.3 · 3D-Ansicht 0.3.1 |
 | Status | Prototyp für die lokale Darstellung und Szenarien |
 
-## 1. Zweck
+## 1. Starten
 
-In der 3D-Ansicht werden die Bildmessungen einer Pflanze übersichtlich dargestellt. Fotos können ausgewählt, Zustandswerte verglichen und mögliche Entwicklungen der Blattfläche ausprobiert werden.
-
-Die Ansicht wird von `analyse.py` als `auswertung/digital_twin_3d.html` erstellt. Sie kann ohne Webserver im Browser geöffnet werden. Für die Ansicht werden keine weiteren Python-Dateien, JavaScript-Installation oder Internetverbindung benötigt. Die bisherigen Python-Abhängigkeiten der Analyse bleiben erforderlich.
-
-## 2. Starten und öffnen
-
-Die bisherige `analyse.py` wird durch die neue Datei ersetzt. Die Anleitung kann im Projektordner `docs` abgelegt werden.
-
-PowerShell wird im Projektordner geöffnet:
+Die bisherige `analyse.py` wird ersetzt. Anschließend wird im Projektordner folgender Befehl ausgeführt:
 
 ```powershell
-cd "$env:USERPROFILE\Downloads\Diploma"
+python analyse.py
 ```
 
-**Wenn bereits eine `auswertung/ergebnis.json` vorhanden ist**, wird die neue Ansicht damit erstellt und geöffnet:
+Nach der Bildauswertung wird die Ansicht im Browser geöffnet. Sind bereits Messwerte vorhanden und sollen nur diese angezeigt werden, kann die Seite ohne Raspberry Pi und ohne erneute Bildanalyse erstellt werden:
 
 ```powershell
 python analyse.py --3d-aus-json auswertung/ergebnis.json
 ```
 
-Dabei werden nur vorhandene Messdaten gelesen. Eine Verbindung zum Raspberry Pi und eine erneute Bildanalyse werden nicht benötigt.
+Die erzeugte Datei `auswertung/digital_twin_3d.html` kann auch per Doppelklick geöffnet werden. Für das Anzeigen der Datei wird kein Webserver benötigt.
 
-**Wenn die lokalen Bilder neu ausgewertet werden sollen**, wird folgender Befehl verwendet:
+## 2. Pflanze ansehen und drehen
 
-```powershell
-python analyse.py --lokal bilder --3d
-```
+Die Ansicht zeigt ein Basilikummodell. Zum Start wird die neueste Aufnahme ausgewählt. Über die Fotoauswahl und die Pfeile kann zwischen den Aufnahmen gewechselt werden. Bei mehreren Messreihen wird zusätzlich deren Auswahl angezeigt. Die Uhrzeiten werden in der Zeitzone Europe/Berlin dargestellt.
 
-Anschließend kann die gespeicherte Ansicht mit `python analyse.py --3d` oder durch Doppelklick auf `auswertung/digital_twin_3d.html` geöffnet werden. Falls die Datei in einem Texteditor erscheint, wird über „Öffnen mit“ ein Browser, beispielsweise Edge oder Chrome, ausgewählt.
-
-## 3. Die drei Bereiche
-
-| Bereich | Verwendung |
+| Bedienung | Wirkung |
 | --- | --- |
-| **Pflanze** | Modell und Messwerte des ausgewählten Fotos ansehen; Pflegepunkte vormerken. |
-| **Wachstum testen** | Zeitraum einstellen und eine mögliche Flächenentwicklung mit eigenen Annahmen vergleichen. |
-| **Alle Fotos** | Bewertungen und Gründe für fehlende Werte pro Foto ansehen; ältere Fotos suchen und auswählen. |
+| Linke Maustaste halten und ziehen | Das Modell waagrecht und senkrecht frei drehen. Auch Ansichten von unten und über Kopf sind möglich. |
+| Umschalttaste halten und waagrecht ziehen | Das Modell zusätzlich seitlich kippen. |
+| Mausrad | Vergrößern oder verkleinern. |
+| „Drehen“ | Automatische Drehung starten oder anhalten. |
+| „Ansicht zurück“ | Ausgangsperspektive und Vergrößerung wiederherstellen. |
 
-Zum Start wird das neueste Foto angezeigt. Über die Fotoauswahl und die Pfeile kann zwischen Aufnahmen gewechselt werden. Bei mehreren Messreihen wird zusätzlich deren Auswahl eingeblendet. Aufnahmezeiten werden in der Zeitzone Europe/Berlin angezeigt.
+Nach einem Klick auf das Modell kann auch mit den Pfeiltasten gedreht werden. Umschalt mit Pfeil links oder rechts kippt das Modell seitlich. Plus und Minus ändern die Vergrößerung. Am Handy kann waagrecht über das Modell gewischt werden.
 
-Das Modell wird mit Maus oder Finger gedreht. Mit dem Mausrad kann gezoomt werden. Nach Auswahl des Modells können auch Pfeiltasten sowie Plus und Minus verwendet werden. Über „Ansicht zurück“ wird die ursprüngliche Perspektive wiederhergestellt.
+Unter dem Modell stehen die Blattfläche im Foto und der Zustandsindex. **„Messdetails“** zeigt den Dateinamen, die Bewertung und ihre Teilwerte. Foto und Blattmaske werden angezeigt, wenn eine Vorschau für die Aufnahme vorhanden ist. **„Pflegetipps“** enthält Hinweise für Basilikum. Bei Bedarf können Pflegepunkte für ein Szenario vorgemerkt werden.
 
-Unter **„Mehr anzeigen“** werden Dateiname, Bewertungsmethode und Teilwerte eingeblendet. Eine kleine Foto- und Maskenvorschau wird angezeigt, wenn sie für die ausgewählte Aufnahme eingebettet ist. Die HTML-Datei enthält kein vollständiges Fotoarchiv. Die Modellform kann unter „Darstellung ändern“ angepasst werden; Messwerte werden dadurch nicht verändert.
+## 3. Wachstum testen
 
-In „Alle Fotos“ werden bis zu 25 Einträge pro Seite angezeigt. Weitere Einträge sind über „Zurück“ und „Weiter“ erreichbar. Eine Zeile oder ein Balken öffnet die gewählte Aufnahme im Bereich „Pflanze“. Die Suche und der Filter „Ohne berechneten Index“ helfen bei der Kontrolle.
+1. **„Wachstum testen“** öffnen und 0 bis 14 Tage ab dem ausgewählten Foto einstellen.
+2. Mit **„Beim Foto“** und **„Nach … Tagen“** zwischen dem Modell zur Aufnahme und dem Szenario wechseln.
+3. Bei Bedarf unter **„Annahmen bearbeiten“** eine eigene tägliche Änderung eingeben. Ist keine passende Rate verfügbar, wird dieser Bereich automatisch geöffnet, sofern die Blattfläche für ein Szenario geeignet ist.
+4. Bei vorgemerkter Pflege kann eine zusätzliche Wirkung eingegeben werden. Unter **„Weitere Möglichkeiten“ → „Pflegewirkung vergleichen“** werden die beiden Annahmen mit und ohne zusätzliche Wirkung gegenübergestellt.
 
-## 4. Pflege und Wachstum ausprobieren
+Beispiel: Aus 10.000 Blattpixeln werden bei einer angenommenen Änderung von 2 % pro Tag nach einem Tag 10.200 Pixel. Mit einer zusätzlich angenommenen Pflegewirkung von 1 Prozentpunkt werden 3 % pro Tag angesetzt, also 10.300 Pixel nach einem Tag.
 
-Pflegehinweise werden zunächst im Bereich „Pflanze“ vorgemerkt. Unter „Warum dieser Hinweis?“ werden die Begründung und gegebenenfalls eine Quelle angezeigt. Basilikumhinweise werden nur nach Auswahl der Pflanzenart „Basilikum“ ergänzt.
+Das Vormerken eines Pflegepunkts allein ändert die Rate nicht. Die Wirkung wird als eigene Annahme eingetragen. Messwerte bleiben erhalten, und ein künftiger Gesundheitswert wird nicht berechnet. Die separate vorläufige 24-Stunden-Projektion wird unter „Weitere Möglichkeiten“ angezeigt, wenn sie für die Aufnahme verfügbar ist.
 
-Danach wird „Wachstum testen“ geöffnet:
+Unter **„Weitere Möglichkeiten“** kann das Szenario gespeichert oder zurückgesetzt werden. „Zurücksetzen“ stellt sieben Tage und die verfügbare vorgeschlagene Rate wieder her und entfernt vorgemerkte Pflegepunkte sowie eigene Wirkungsannahmen. Auch bei einem Fotowechsel werden diese Angaben zurückgesetzt. Die gespeicherte `biobox_szenario.json` dient als Export der Annahmen.
 
-1. Mit dem Regler wird ein Zeitraum von 0 bis 14 Tagen **ab dem ausgewählten Foto** eingestellt.
-2. Eine passende Rate wird aus der bisherigen Auswertung übernommen. Fehlt sie, werden die Eingabefelder unter „Annahmen bearbeiten“ automatisch geöffnet.
-3. Bei Bedarf werden die tägliche Änderung und eine zusätzliche Pflegewirkung eingetragen. Eine zusätzliche Wirkung ist nur bei vorgemerkter Pflege freigeschaltet und startet mit 0.
-4. Über „Vergleichen“ werden das Szenario ohne zusätzliche Wirkung und das Szenario mit der eigenen Wirkungsannahme gegenübergestellt.
+## 4. Frühere Fotos finden
 
-Beispiel: Bei 10.000 Blattpixeln und einer angenommenen Änderung von 2 % pro Tag ergeben sich nach einem Tag 10.200 Pixel. Wird zusätzlich 1 Prozentpunkt Pflegewirkung angenommen, werden 3 % pro Tag und damit 10.300 Pixel verwendet. Für mehrere Tage wird die Änderung täglich fortgeschrieben.
+Unter **„Alle Fotos“** werden die Aufnahmen mit Messwerten und Bewertungsstatus angezeigt. Ein Klick auf eine Zeile öffnet das Foto im Bereich „Pflanze“. Mit „Zurück“ und „Weiter“ wird zwischen den Seiten gewechselt.
 
-Durch das Vormerken eines Pflegepunkts wird **keine Verbesserung automatisch angenommen**. Die Wirkung ist noch nicht aus Messungen gelernt. Messwerte und Gesundheitsbewertungen bleiben unverändert; ein künftiger Gesundheitswert wird nicht vorhergesagt. Unmögliche Flächen oberhalb der gesamten Bildfläche werden abgelehnt.
+Unter **„Filter und Diagramm“** können Aufnahmen gesucht, nach fehlenden Indexwerten gefiltert und im Diagramm angezeigt werden. Ein Klick auf einen Balken öffnet ebenfalls das zugehörige Foto.
 
-„Zurücksetzen“ löscht den vorgemerkten Plan und eigene Wirkungsannahmen, stellt sieben Tage ein und übernimmt wieder die verfügbare Ausgangsrate. Beim Wechsel des Fotos werden diese Angaben ebenfalls zurückgesetzt. Über „Szenario speichern“ wird eine `biobox_szenario.json` mit den Annahmen heruntergeladen. Für den Erhalt des Plans muss sie vor einem Fotowechsel oder dem Schließen gespeichert werden. Die Szenariodatei ist ein Export; sie wird nicht über „Daten öffnen“ wieder eingelesen.
-
-## 5. Werte richtig verstehen
+## 5. Werte richtig einordnen
 
 | Anzeige | Bedeutung |
 | --- | --- |
-| Blattpixel | Sichtbare, projizierte Blattfläche der Maske; keine Höhe, keine cm² und keine verdeckten Blätter. |
-| Zustandsindex 0–100 | Relativer Vergleich mit der eigenen Referenz. 100 bedeutet Nähe zur Referenz und keine bestätigte vollständige Gesundheit. |
-| 0 | Tatsächlich gespeicherter Nullwert; er wird angezeigt. |
-| — | Kein berechenbarer oder gespeicherter Wert. Der Grund wird angegeben. |
-| Referenzfoto | Ausgangspunkt des Vergleichs; noch kein berechneter Zustandsindex. |
+| Blattpixel | Sichtbare Blattfläche in der Bildmaske. |
+| Zustandsindex 0–100 | Vergleich mit der eigenen Referenzaufnahme. 100 bedeutet eine hohe Ähnlichkeit zur Referenz. |
+| 0 | Ein gespeicherter Nullwert. |
+| — | Ein Wert fehlt oder konnte nicht berechnet werden. Der Grund steht in der Bewertung. |
+| Referenzfoto | Ausgangsaufnahme für den Vergleich. |
 
-Die 3D-Pflanze ist eine vereinfachte Illustration. Höhe, Blattanzahl und Blattpositionen wurden nicht räumlich rekonstruiert. Die wählbare Form ist keine automatische Erkennung der Pflanzenart.
-
-Das separate 24-Stunden-Modell wird unter „Weitere Möglichkeiten“ erläutert, sofern eine passende Projektion vorhanden ist. Es benötigt ausreichend vergleichbare Aufnahmen und ist noch nicht biologisch validiert. Längere Zeiträume im Wachstumstest sind angenommene Szenarien. Auch bei einer übernommenen Rate bleibt ihre Fortschreibung eine Annahme. Pflegehinweise sind Prüfpunkte und keine Diagnose oder automatische Bewässerungsanweisung.
+Das Basilikummodell ist eine vereinfachte Darstellung. Die Form und Größe der einzelnen Blätter sowie die Höhe der Pflanze werden daraus nicht gemessen. Der Zustandsindex dient zum Vergleich der Aufnahmen; eine Pflanzendiagnose ist daraus nicht ableitbar. Wachstumsszenarien beruhen auf Annahmen und lösen keine Gerätesteuerung aus.
 
 ## 6. Dateien und Aktualisierung
 
-| Datei | Aufgabe |
+| Datei | Inhalt |
 | --- | --- |
-| `auswertung/ergebnis.json` | Messwerte und Bewertungen je Foto; Grundlage für die geplante Datenbank-/API-Anbindung. |
-| `auswertung/ergebnis.csv` | Dieselben Ergebnisse als Tabelle, beispielsweise für Excel. |
+| `auswertung/ergebnis.json` | Messwerte und Bewertungen je Foto. |
+| `auswertung/ergebnis.csv` | Ergebnisse als Tabelle, z. B. für Excel. |
 | `auswertung/digital_twin.json` | Letzter Modellzustand und gegebenenfalls die vorläufige 24-Stunden-Projektion. |
-| `auswertung/digital_twin_3d.html` | Persönliche Browseransicht eines gespeicherten Datenstands. |
-| `biobox_szenario.json` | Heruntergeladene Annahmen eines Wachstumstests; keine Messdaten oder bestätigte Prognose. |
+| `auswertung/digital_twin_3d.html` | Die im Browser angezeigte Seite mit dem gespeicherten Datenstand. |
+| `biobox_szenario.json` | Export der Annahmen aus einem Wachstumsszenario. |
 
-Die Ansicht ist nicht live. Nach neuen Aufnahmen wird die Analyse erneut ausgeführt und die HTML-Datei neu geöffnet oder im Browser aktualisiert. Über „Daten öffnen“ können `ergebnis.json` und die passende `digital_twin.json` gemeinsam oder nacheinander lokal geladen werden. Eine neue Ergebnisdatei ersetzt die angezeigte Historie; getrennte Messreihen werden nicht zusammengeführt. Änderungen in der Ansicht verändern keine Quelldateien und werden nicht automatisch an Edona oder eine Datenbank übertragen. Quellenlinks öffnen sich nur bei Auswahl und benötigen Internet.
+Nach neuen Aufnahmen wird `python analyse.py` erneut ausgeführt. Über **„Daten öffnen“** können `ergebnis.json` und die passende `digital_twin.json` auch im Browser lokal geladen werden. Für die vollständige Fotoliste wird `ergebnis.json` benötigt. Ein Szenarioexport kann über diese Funktion nicht importiert werden.
 
-**Falls etwas fehlt:** Bei alter Oberfläche wird der Befehl `--3d-aus-json` aus Abschnitt 2 erneut ausgeführt. Bei fehlenden Fotos wird `ergebnis.json` geöffnet; die Twin-Datei allein enthält nur den letzten Zustand. Bei fehlender Szenariorate wird unter „Annahmen bearbeiten“ eine eigene Annahme eingetragen. Fehlende Zustandswerte werden anhand des angegebenen Grundes sowie der Aufnahme und Maske geprüft; sie werden nicht durch 0 oder 100 ersetzt.
+Die Gestaltung steht in einem eigenen CSS-Abschnitt in `analyse.py`. Beim Export wird sie in die HTML-Datei eingefügt. Dadurch kann die Seite als einzelne Datei geöffnet und weitergegeben werden.
