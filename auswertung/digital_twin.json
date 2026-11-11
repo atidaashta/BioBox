@@ -1,7 +1,7 @@
 {
   "version": "0.1.0",
   "series_id": "pflanze-01",
-  "generated_at": "2026-11-10T17:03:02.417471Z",
+  "generated_at": "2026-11-11T08:51:57.041389Z",
   "pipeline_version": "4.8.1",
   "scope": "visible_leaf_area_pixels",
   "status": "zu_wenige_vergleichbare_aufnahmen",
@@ -13,7 +13,7 @@
     "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
     "usable": true,
     "quality_flags": "gesundheit_ueber_blattfarbverteilung",
-    "age_hours": 15365.049,
+    "age_hours": 15380.864,
     "fresh": false
   },
   "forecast": null,

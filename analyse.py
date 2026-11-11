@@ -133,8 +133,8 @@ CHROMA_MIN = 4            # a*-Mindestabstand von Grau; darunter keine Pflanze
 RATE_MIN_MINUTEN = 30    # Kurzer Vergleich; hohe Schwankung moeglich
 RATE_STABIL_STUNDEN = 12  # Wenn verfuegbar, laengeren Abstand bevorzugen
 SCORING_VERSION = "4.1.0"
-ANALYSE_VERSION = "4.8.1"
-TWIN_3D_VERSION = "0.2.0"
+ANALYSE_VERSION = "4.8.2"
+TWIN_3D_VERSION = "0.3.0"
 TWIN_3D_DATEI = "digital_twin_3d.html"
 TWIN_VERSION = "0.1.0"
 TWIN_HORIZONT_STUNDEN = 24
@@ -3248,8 +3248,7 @@ def twin_3d_daten(zeilen, twin, ausgabe=None, bildpfade=None):
              "generated_at": iso(datetime.now(timezone.utc)), "observations": aufnahmen,
              # Das unveraenderte Prognoselogbuch bleibt in digital_twin.json.
              "twin": {k: copy.deepcopy(v) for k, v in twin.items() if k != "forecast_history"}, "preview": None,
-             "sources": [{"title": "RHS: Zimmerpflanzen pflegen", "url": "https://www.rhs.org.uk/plants/types/houseplants/growing-guide"},
-                         {"title": "RHS: Basilikum", "url": "https://www.rhs.org.uk/herbs/basil/grow-your-own"}]}
+             "sources": [{"title": "RHS: Basilikum", "url": "https://www.rhs.org.uk/herbs/basil/grow-your-own"}]}
     # Nur eine kleine Vorschau der letzten vorhandenen Aufnahme einbetten.
     # Die HTML-Datei wird ersetzt und legt KEIN zweites Bildarchiv an.
     if zeilen and ausgabe is not None:
@@ -3343,8 +3342,8 @@ TWIN_3D_HTML = r"""<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="no-referrer">
-<meta name="biobox-viewer-version" content="0.2.0">
-<title>BioBox · Meine Pflanze</title>
+<meta name="biobox-viewer-version" content="0.3.0">
+<title>BioBox · Basilikum</title>
 <style>
 :root{--ink:#203c30;--muted:#607268;--green:#246849;--line:#dce5de;--paper:#f4f6f1;--warm:#f8f2e5}
 *{box-sizing:border-box}
@@ -3367,43 +3366,40 @@ p+p{margin-top:9px}
 .muted{color:var(--muted)}
 .small{font-size:13px}
 .mini{font-size:12px}
-.eyebrow{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;font-weight:700;color:var(--muted)}
 .brandbar{background:#173c2c;color:white}
-.brandinner{max-width:1280px;margin:auto;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.brandinner{max-width:1080px;margin:auto;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
 .brand{font-size:23px;font-weight:700;letter-spacing:-.5px}
 .brand span{font-size:13px;font-weight:400;letter-spacing:0;color:#c3d5c5;margin-left:12px}
 .brandbar button{font-size:13px;padding:8px 13px;white-space:nowrap}
-main{max-width:1280px;margin:auto;padding:28px 24px 32px}
-.heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}
-.heading p{margin-top:7px;color:var(--muted)}
+main{max-width:1080px;margin:auto;padding:24px 24px 28px}
+.heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:16px}
 .pill{display:inline-flex;align-items:center;border-radius:20px;background:#e7eee1;color:#466149;font-size:11px;padding:5px 10px;font-weight:600;white-space:nowrap}
 .pill.warn{background:#f2e8d1;color:#7b5929}
-.tabs{display:flex;gap:6px;border-bottom:1px solid var(--line);margin-bottom:20px;padding-bottom:8px}
+.tabs{display:flex;gap:6px}
 .tabs button{font-size:14px;background:transparent;border-color:transparent}
 .tabs button[aria-selected=true]{background:var(--green);border-color:var(--green);color:white}
 .tabs button:hover{background:#e6eee2;color:var(--ink)}
 .tabs button[aria-selected=true]:hover{background:#1a543b;color:white}
-.photochooser{display:flex;align-items:flex-end;gap:14px;margin-bottom:18px}
+.photochooser{display:flex;align-items:flex-end;gap:14px;margin-bottom:14px}
 .photochooser>label{flex:1;max-width:260px;min-width:0}
 label{font-size:13px;color:#425c4b;display:block}
 select,input[type=number],input[type=search]{display:block;width:100%;margin-top:6px;border:1px solid #cfdcd2;border-radius:8px;background:white;color:var(--ink);padding:10px;min-height:43px;min-width:0}
 .photofield{flex:1;min-width:0;max-width:460px}
-.photonavigation{display:flex;gap:6px;align-items:center;margin-top:6px}
+.photonavigation{display:flex;gap:6px;align-items:center}
 .photonavigation select{flex:1;min-width:0;margin:0}
 .photonavigation button{flex:none;width:43px;padding:8px;font-size:20px;line-height:1}
-.photochooser .photohelp{align-self:center;padding-top:19px;color:var(--muted);font-size:12px}
-.layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}
+.layout{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;align-items:start}
+.layout.growth-layout{grid-template-columns:minmax(0,1fr) 295px;gap:16px}
 .card{background:white;border:1px solid var(--line);border-radius:14px;overflow:hidden;min-width:0}
 .padding{padding:22px}
-.panelintro{margin:8px 0 18px;font-size:13px;color:var(--muted)}
-.viewport{position:relative;background:radial-gradient(ellipse at 52% 30%,#2a402f,#14221a 76%);color:#f1f5ed}
-#plantCanvas{display:block;width:100%;height:410px;touch-action:none;cursor:grab}
+.panelintro{margin:8px 0 12px;font-size:13px;color:var(--muted)}
+.viewport{position:relative;background:radial-gradient(ellipse at 50% 36%,#344c39,#17291f 80%);color:#f1f5ed}
+#plantCanvas{display:block;width:100%;height:380px;touch-action:pan-y;cursor:grab}
 #plantCanvas:active{cursor:grabbing}
-.canvashead{position:absolute;top:18px;left:20px;right:20px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;pointer-events:none}
+.canvashead{position:absolute;top:14px;left:16px;right:16px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;pointer-events:none}
 .canvashead b{font-size:14px;font-weight:500}
-.canvashead small{display:block;margin-top:3px;color:#b1c8b3;font-size:11px}
 .canvashead .pill{background:#ffffff16;color:#d0dfcc}
-.canvascontrols{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid #e4ebe2;flex-wrap:wrap}
+.canvascontrols{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 16px;border-top:1px solid #e4ebe2;flex-wrap:wrap}
 .canvascontrols p{font-size:12px;color:var(--muted)}
 .canvasbuttons{display:flex;gap:6px}
 .canvasbuttons button{min-height:36px;font-size:12px;padding:6px 10px}
@@ -3411,13 +3407,17 @@ select,input[type=number],input[type=search]{display:block;width:100%;margin-top
 .modebuttons button{font-size:12px;flex:1;padding:7px 8px;min-height:38px}
 .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-top:1px solid var(--line)}
 .stats.withfuture{grid-template-columns:repeat(3,minmax(0,1fr))}
-.stat{padding:18px 20px;border-right:1px solid var(--line)}
+.stat{padding:13px 18px;border-right:1px solid var(--line)}
+.stat:nth-child(2){border:0}
+.stats.withfuture .stat:nth-child(2){border-right:1px solid var(--line)}
 .stat:last-child{border:0}
 .stat span{display:block;color:var(--muted);font-size:12px}
 .stat strong{display:block;font-size:27px;letter-spacing:-.8px;font-weight:600;margin:3px 0}
 .stat small{display:block;font-size:11px;color:var(--muted);line-height:1.4}
-.understats{padding:0 20px 18px}
-.healthhint{font-size:12px;color:var(--muted);padding-top:14px}
+.understats{padding:0 18px 8px;border-top:1px solid var(--line)}
+#measurementDetails,#careDetails{margin:6px 0 0}
+.care-panel{padding:0 18px 8px}
+.care-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 details{margin-top:14px}
 summary{font-size:13px;font-weight:600;color:var(--green);padding:4px 0;min-height:30px}
 details[open]>summary{margin-bottom:10px}
@@ -3439,16 +3439,14 @@ input[type=checkbox]{accent-color:var(--green);width:17px;height:17px;flex-shrin
 .evidence{font-size:11px;color:var(--muted)}
 .evidence a{display:block;margin-top:4px}
 .planbar{font-size:12px;color:var(--muted);margin:14px 0}
-.fullbutton{width:100%}
 .sectionhead{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .sectionhead h2{margin:0}
 .daysvalue{font-size:30px;font-weight:600;letter-spacing:-1px}
 .daysvalue small{font-size:13px;letter-spacing:0;font-weight:400}
 input[type=range]{display:block;width:100%;accent-color:var(--green);margin:14px 0 6px;min-height:26px}
 .rangeends{display:flex;justify-content:space-between;color:var(--muted);font-size:11px}
-.targetdate{font-size:12px;color:var(--muted);margin:10px 0 18px}
-.ratebox{padding:13px 14px;background:#f0f5ec;border-radius:9px;font-size:13px}
-.ratebox strong{display:block;font-size:17px;margin-bottom:3px}
+.targetdate{font-size:12px;color:var(--muted);margin:8px 0}
+.rate-line{font-size:13px;color:var(--muted);margin:12px 0 4px}
 .note{padding:12px 13px;border-radius:9px;background:var(--warm);color:#795e30;font-size:12px;margin-top:15px}
 .source-note{font-size:11px;color:var(--muted);margin:8px 0}
 .assumptions label+label{margin-top:12px}
@@ -3457,8 +3455,10 @@ input[type=range]{display:block;width:100%;accent-color:var(--green);margin:14px
 .selectedplan{font-size:12px;color:var(--muted);margin:16px 0 4px}
 .textbutton{border:0;background:transparent;font-size:12px;min-height:30px;padding:4px 0;color:var(--green);text-decoration:underline;font-weight:400}
 .textbutton:hover{background:transparent;color:#173c2c}
-.actionrow{display:flex;gap:8px;margin-top:18px}
+.actionrow{display:flex;gap:8px;margin:12px 0}
 .actionrow button{flex:1;font-size:12px;padding:9px 10px}
+.scenario-options{display:flex;gap:8px;flex-wrap:wrap}
+.scenario-options button{font-size:12px}
 .toolbar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:18px 0}
 .toolbar input[type=search]{max-width:300px;margin:0}
 .toolbar label{display:flex;gap:7px;align-items:center}
@@ -3471,7 +3471,7 @@ input[type=range]{display:block;width:100%;accent-color:var(--green);margin:14px
 table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap}
 th,td{padding:11px 10px;text-align:left;border-bottom:1px solid #e6ece4}
 th{position:sticky;top:0;background:white;color:var(--muted);font-size:11px;font-weight:600}
-td.file{max-width:240px;overflow:hidden;text-overflow:ellipsis}
+td.reason{white-space:normal;min-width:90px;overflow-wrap:anywhere}
 tr[data-index]{cursor:pointer}tr[data-index]:hover{background:#f0f5ec}
 tr.selected{background:#eaf2e4}
 td.score{font-weight:600}.zero{color:#9b5735}
@@ -3479,116 +3479,106 @@ td.score{font-weight:600}.zero{color:#9b5735}
 .pagination button{font-size:12px;min-height:38px;padding:7px 10px}
 .notice{padding:12px 15px;border:1px solid #d5e1d5;border-radius:9px;background:#ecf3e6;color:#3d6244;font-size:13px;margin-bottom:18px;overflow-wrap:anywhere}
 .notice.error{background:#fbefe9;border-color:#ebd0c2;color:#984e37}
-.quickhelp{border-top:1px solid var(--line);margin-top:23px;padding-top:12px;color:var(--muted);font-size:12px}
-.quickhelp ol{padding-left:20px;margin:0}
-.quickhelp li+li{margin-top:5px}
-footer{margin-top:22px;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
-@media(max-width:1000px){.layout{grid-template-columns:minmax(0,1fr) 310px}.padding{padding:18px}.stat{padding:16px 14px}.stat strong{font-size:23px}#plantCanvas{height:390px}.stats.withfuture .stat{padding:13px 10px}.stats.withfuture .stat strong{font-size:21px}}
-@media(max-width:800px){main{padding:22px 16px}.brandinner{padding:14px 16px}.layout{grid-template-columns:1fr}.photochooser .photohelp{display:none}.heading{align-items:flex-start}.heading p{font-size:13px}#plantCanvas{height:380px}.carecard{padding:13px 0}.padding{padding:20px}}
-@media(max-width:480px){.brand span{display:none}.brandbar button{font-size:12px}.brandinner{padding:12px 14px}main{padding:20px 12px}.heading{display:block;margin-bottom:17px}h1{font-size:27px}.heading .pill{margin-top:10px}.heading p{margin-top:6px}.tabs{gap:3px}.tabs button{flex:1;font-size:12px;padding:9px 5px;white-space:nowrap}.photochooser{flex-wrap:wrap;gap:10px}.photochooser>label{flex-basis:100%;max-width:none}.photofield{flex-basis:100%;max-width:none}#plantCanvas{height:320px}.canvashead{left:14px;right:14px;top:14px}.canvashead .pill{font-size:10px;padding:4px 7px}.canvashead b{font-size:13px}.canvashead small{font-size:10px}.canvascontrols{padding:9px 12px;gap:8px}.canvascontrols p{font-size:11px}.stat{padding:14px}.stat strong{font-size:23px}.stats.withfuture .stat{padding:13px 9px}.stats.withfuture .stat span{font-size:11px}.stats.withfuture .stat strong{font-size:18px}.stats.withfuture .stat small{font-size:10px}.understats{padding:0 14px 15px}.padding{padding:17px}.modebuttons{padding:9px 10px;gap:4px}.modebuttons button{font-size:11px;padding:7px 5px}.toolbar{gap:12px}.toolbar input[type=search]{max-width:none}.tablewrap{margin:0 -7px}th,td{padding:10px 7px;font-size:11px}.pagination{flex-wrap:wrap}.pagination>div{margin-left:auto}.brand{font-size:22px}.quickhelp{margin-top:18px}}
+.quickhelp{margin-top:14px;color:var(--muted);font-size:12px}
+@media(max-width:900px){.padding{padding:18px}.stat{padding:13px 14px}.stat strong{font-size:23px}.stats.withfuture .stat{padding:12px 10px}.stats.withfuture .stat strong{font-size:21px}}
+@media(max-width:760px){main{padding:18px 16px}.brandinner{padding:12px 16px}.layout.growth-layout{grid-template-columns:minmax(0,1fr)}#plantCanvas{height:335px}}
+@media(max-width:480px){.brand span{display:none}.brandbar button{font-size:12px}.brandinner{padding:10px 14px}main{padding:17px 12px}.heading{display:block;margin-bottom:12px}h1{font-size:27px}.tabs{margin-top:10px;gap:3px}.tabs button{flex:1;font-size:12px;padding:9px 5px;white-space:nowrap}.photochooser{flex-wrap:wrap;gap:10px}.photochooser>label{flex-basis:100%;max-width:none}.photofield{flex-basis:100%;max-width:none}#plantCanvas{height:300px}.canvashead{left:12px;right:12px;top:12px}.canvashead .pill{font-size:10px;padding:4px 7px}.canvashead b{font-size:12px}.canvascontrols{padding:7px 12px;gap:6px}.canvascontrols p{font-size:11px}.stat{padding:12px 13px}.stat strong{font-size:22px}.stats.withfuture .stat{padding:11px 9px}.stats.withfuture .stat span{font-size:11px}.stats.withfuture .stat strong{font-size:18px}.stats.withfuture .stat small{font-size:10px}.understats,.care-panel{padding:0 13px 7px}.padding{padding:16px}.modebuttons{padding:8px 10px;gap:4px}.modebuttons button{font-size:11px;padding:7px 5px}.toolbar{gap:12px}.toolbar input[type=search]{max-width:none}.tablewrap{margin:0 -7px}th,td{padding:10px 7px;font-size:11px}.pagination{flex-wrap:wrap}.pagination>div{margin-left:auto}.brand{font-size:22px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 </style>
 </head>
 <body>
 <header class="brandbar"><div class="brandinner">
-  <div class="brand">BioBox <span>Pflanzenmonitoring</span></div>
+  <div class="brand">BioBox <span>Digitaler Zwilling</span></div>
   <button id="importButton">Daten öffnen</button>
   <input id="jsonFile" type="file" accept=".json,application/json" multiple hidden>
 </div></header>
 <main>
 <div id="importStatus" class="notice" role="status" hidden></div>
 <div class="heading">
-  <div><h1>Meine Pflanze</h1><p>Messwerte ansehen, Pflege planen und Wachstum testen.</p></div>
-  <span class="pill" id="freshBadge">Daten werden gelesen</span>
+  <h1>Basilikum</h1>
+  <nav class="tabs" role="tablist" aria-label="Bereiche">
+    <button id="tabPlant" role="tab" aria-controls="plantCarePanel" aria-selected="true" tabindex="0" data-tab="plant">Pflanze</button>
+    <button id="tabFuture" role="tab" aria-controls="futurePanel" aria-selected="false" tabindex="-1" data-tab="future">Wachstum testen</button>
+    <button id="tabHistory" role="tab" aria-controls="historyPanel" aria-selected="false" tabindex="-1" data-tab="history">Alle Fotos</button>
+  </nav>
 </div>
-<nav class="tabs" role="tablist" aria-label="Bereiche">
-  <button id="tabPlant" role="tab" aria-controls="plantCarePanel" aria-selected="true" tabindex="0" data-tab="plant">Pflanze</button>
-  <button id="tabFuture" role="tab" aria-controls="futurePanel" aria-selected="false" tabindex="-1" data-tab="future">Wachstum testen</button>
-  <button id="tabHistory" role="tab" aria-controls="historyPanel" aria-selected="false" tabindex="-1" data-tab="history">Alle Fotos</button>
-</nav>
 <div class="photochooser">
   <label id="seriesControl" hidden>Messreihe<select id="series" aria-label="Messreihe auswählen"></select></label>
-  <div class="photofield"><label for="photo">Ausgewähltes Foto</label><div class="photonavigation">
+  <div class="photofield" id="photoChooser"><div class="photonavigation">
     <button id="photoPrev" aria-label="Vorheriges Foto" title="Vorheriges Foto">‹</button>
     <select id="photo" aria-label="Foto auswählen"></select>
     <button id="photoNext" aria-label="Nächstes Foto" title="Nächstes Foto">›</button>
   </div></div>
-  <span class="photohelp">Zum Start wird das neueste Foto angezeigt.</span>
 </div>
 <div class="layout" id="viewerRow">
   <section class="card" aria-label="Pflanzenmodell und Messwerte">
     <div class="viewport">
-      <canvas id="plantCanvas" tabindex="0" aria-label="Drehbares, vereinfachtes 3D-Pflanzenmodell. Mit Pfeiltasten drehen, mit Plus und Minus zoomen."></canvas>
-      <div class="canvashead"><div><b id="modelTitle">Modell zum Foto</b><small id="modelSubtitle">Mit Maus oder Finger drehen</small></div><span class="pill" id="viewBadge">Vereinfachtes Modell</span></div>
+      <canvas id="plantCanvas" tabindex="0" aria-label="Drehbares 3D-Modell von Basilikum. Mit Pfeiltasten drehen, mit Plus und Minus zoomen."></canvas>
+      <div class="canvashead"><b id="modelTitle">Modell zum Foto</b><span class="pill" id="viewBadge">Schematisch</span></div>
     </div>
     <div class="modebuttons" id="modelModes" role="group" aria-label="Darstellung im Wachstumstest" hidden>
-      <button data-mode="now">Beim Foto</button><button data-mode="future">Nach 7 Tagen</button><button data-mode="compare">Vergleichen</button>
+      <button data-mode="now">Beim Foto</button><button data-mode="future">Nach 7 Tagen</button>
     </div>
-    <div class="canvascontrols"><p>Einfaches Modell, kein exakter 3D-Scan.</p><div class="canvasbuttons"><button id="rotate" aria-pressed="false">Drehen</button><button id="resetView">Ansicht zurück</button></div></div>
+    <div class="canvascontrols"><p>Ziehen zum Drehen</p><div class="canvasbuttons"><button id="rotate" aria-pressed="false">Drehen</button><button id="resetView">Ansicht zurück</button></div></div>
     <div class="stats" id="statsStrip">
       <div class="stat"><span>Blattfläche im Foto</span><strong id="areaNow">—</strong><small id="areaUnit">sichtbare Blattpixel</small></div>
-      <div class="stat"><span>Zustandsindex</span><strong id="healthNow">—</strong><small>0–100 · Vergleich zur Referenz</small></div>
+      <div class="stat"><span>Zustandsindex</span><strong id="healthNow">—</strong><small id="healthHint">Vergleich zur Referenz</small></div>
       <div class="stat" id="futureStat" hidden><span id="futureLabel">Nach 7 Tagen</span><strong id="areaFuture">—</strong><small id="futureSmall">Annahme erforderlich</small></div>
     </div>
-    <div class="understats">
-      <p id="healthHint" class="healthhint"></p>
-      <details id="measurementDetails"><summary>Mehr anzeigen</summary><div class="detailbody">
+    <div class="understats" id="measurementPanel">
+      <details id="measurementDetails"><summary>Messdetails</summary><div class="detailbody">
+        <div><span class="pill" id="freshBadge"></span></div>
         <p id="snapshotInfo"></p><p id="qualityInfo"></p>
         <div><h3>Teilwerte des Zustandsindex</h3><div class="scoreparts" id="scoreParts"></div></div>
         <div id="previewDetails" hidden><h3>Foto und Blattmaske</h3><div class="previewimages">
           <figure id="photoFigure"><img id="photoPreview" alt="Verkleinerte Originalaufnahme des ausgewählten Fotos"><figcaption>Originalfoto, verkleinert</figcaption></figure>
           <figure><img id="maskPreview" alt="Blattmaske des ausgewählten Fotos"><figcaption>Berechnete Blattmaske</figcaption></figure>
         </div></div>
-        <div><h3>Was das Modell zeigt</h3><p>Die Form wird aus den Messwerten veranschaulicht. Blattanzahl, Blattpositionen, Höhe und Tiefe sind nicht aus dem Foto rekonstruiert. Gemessen wird die sichtbare Blattfläche in Pixeln.</p></div>
-        <details><summary>Darstellung ändern</summary><label for="shape">Modellform</label><select id="shape"><option value="single">Einzeltrieb</option><option value="bush">Busch</option><option value="rosette">Rosette</option></select><p class="source-note">Die Auswahl ändert nur die Darstellung.</p><button id="topView">Von oben ansehen</button></details>
+        <div><h3>Modell und Messwerte</h3><p>Das Basilikummodell veranschaulicht die sichtbare Blattfläche. Blattform, Blattgröße und Höhe sind keine Messungen. Ein Index von 100 bedeutet Nähe zur Referenz; er ist keine Diagnose.</p></div>
+        <div><button id="topView">Von oben ansehen</button></div>
       </div></details>
     </div>
   </section>
-  <section class="card padding" id="plantCarePanel" role="tabpanel" aria-labelledby="tabPlant">
-    <h2>Was kann als Nächstes geprüft werden?</h2>
-    <p class="panelintro">Passende Hinweise können für einen Pflegeplan vorgemerkt werden.</p>
-    <label for="species">Pflanzenart</label><select id="species"><option value="unknown">Allgemein / nicht festgelegt</option><option value="basil">Basilikum</option></select>
-    <div id="careCards"></div>
-    <p class="planbar" id="planCount">Keine Maßnahme vorgemerkt.</p>
-    <button id="goFuture" class="primary fullbutton">Wachstum testen</button>
-    <p class="source-note">Die Hinweise sind allgemeine Prüfpunkte. Es wird kein Gerät gesteuert.</p>
+  <section class="card care-panel" id="plantCarePanel" role="tabpanel" aria-labelledby="tabPlant">
+    <details id="careDetails"><summary>Pflegetipps</summary>
+      <div id="careCards"></div>
+      <div class="care-actions"><p class="planbar" id="planCount">Keine Maßnahme vorgemerkt.</p><button id="goFuture" class="primary">Wachstum testen</button></div>
+      <p class="source-note">Vorgemerkte Punkte können im Szenario berücksichtigt werden.</p>
+    </details>
   </section>
   <section class="card padding" id="futurePanel" role="tabpanel" aria-labelledby="tabFuture" hidden>
-    <div class="eyebrow">Was wäre, wenn?</div><h2 style="margin-top:5px">Wachstum testen</h2>
-    <p class="panelintro">Eine mögliche Entwicklung der Blattfläche kann ausprobiert werden.</p>
-    <div class="sectionhead"><label for="days">Nach dem ausgewählten Foto</label><b class="daysvalue"><span id="daysLabel">7</span> <small>Tage</small></b></div>
-    <input id="days" type="range" min="0" max="14" step="1" value="7"><div class="rangeends"><span>Beim Foto</span><span>14 Tage später</span></div>
-    <p id="targetDate" class="targetdate"></p>
-    <div class="ratebox"><strong id="baselineSummary">Noch keine Rate vorhanden</strong><span id="ratePill">Annahme nötig</span></div>
+    <h2>Wachstum testen</h2>
+    <div class="sectionhead"><label for="days">Tage nach dem Foto</label><b class="daysvalue"><span id="daysLabel">7</span></b></div>
+    <input id="days" type="range" min="0" max="14" step="1" value="7"><div class="rangeends"><span>0 Tage</span><span>14 Tage</span></div>
+    <p class="rate-line" id="baselineSummary"></p>
+    <p class="note" id="scenarioInfo" role="status" hidden></p>
     <details class="assumptions" id="assumptions"><summary>Annahmen bearbeiten</summary>
       <label>Änderung pro Tag [%]<input id="baseRate" type="number" min="-50" max="100" step="0.01" placeholder="z. B. 2"></label>
       <p class="source-note" id="rateSource"></p>
       <label>Zusätzliche Pflegewirkung [Prozentpunkte/Tag]<input id="effectRate" type="number" min="-20" max="20" step="0.1" value="0" disabled></label>
-      <p class="mini muted">Nur mit vorgemerkter Pflege. Beispiel: 2 % + 1 Prozentpunkt = 3 % pro Tag.</p>
-      <button class="restore" id="restoreRate">Rate aus Messdaten übernehmen</button>
+      <p class="source-note">Die Pflegewirkung ist eine eigene Annahme. Beispiel: 2 % + 1 Prozentpunkt = 3 % pro Tag.</p>
+      <p id="selectedPlan" class="selectedplan" hidden></p><button id="editCarePlan" class="textbutton">Pflegepunkte auswählen</button>
+      <button class="restore" id="restoreRate">Vorgeschlagene Rate übernehmen</button>
     </details>
-    <p id="selectedPlan" class="selectedplan">Kein Pflegepunkt ausgewählt.</p><button id="editCarePlan" class="textbutton">Pflegepunkte auswählen</button>
-    <p class="note" id="scenarioInfo" role="status"></p>
-    <p class="source-note">Die Pflegewirkung ist noch nicht aus Messungen gelernt. Das Szenario ändert keine Messwerte und sagt keinen zukünftigen Gesundheitswert voraus.</p>
-    <div class="actionrow"><button id="resetScenario">Zurücksetzen</button><button id="exportScenario" class="primary">Szenario speichern</button></div>
-    <details><summary>Weitere Möglichkeiten</summary><button id="play">Zeitraffer</button><p class="source-note" id="forecastInfo"></p></details>
+    <details id="scenarioMore"><summary>Weitere Möglichkeiten</summary>
+      <div class="scenario-options"><button data-mode="compare">Pflegewirkung vergleichen</button><button id="play">Zeitraffer</button></div>
+      <div class="actionrow"><button id="resetScenario">Zurücksetzen</button><button id="exportScenario" class="primary">Szenario speichern</button></div>
+      <p id="targetDate" class="targetdate"></p><p class="source-note" id="forecastInfo"></p>
+    </details>
   </section>
 </div>
 <section class="card padding" id="historyPanel" role="tabpanel" aria-labelledby="tabHistory" hidden>
-  <div class="sectionhead"><h2>Alle Fotos und Bewertungen</h2><span class="pill" id="photoCount">0 Fotos</span></div>
-  <p class="panelintro">Eine Zeile oder einen Balken auswählen, um das Foto in der Pflanzenansicht zu öffnen.</p>
-  <div class="toolbar"><input id="search" type="search" placeholder="Datei oder Status suchen" aria-label="Fotos nach Datei oder Status filtern"><label><input id="onlyMissing" type="checkbox">Ohne berechneten Index</label></div>
-  <div class="chartwrap"><canvas id="healthChart" role="img" aria-label="Zustandsindex pro Foto auf dieser Seite. Alle Werte und Gründe stehen in der Tabelle darunter."></canvas></div>
-  <div class="chartlegend"><span><i class="dot"></i>Berechnet, auch 0</span><span><i class="dot blue"></i>Referenzfoto</span><span><i class="dot grey"></i>Kein berechenbarer Index</span></div>
-  <div class="tablewrap"><table><thead><tr><th scope="col">Nr.</th><th scope="col">Aufnahmezeit</th><th scope="col">Index</th><th scope="col">Blattpixel</th><th scope="col">Status / Grund</th><th scope="col">Datei</th></tr></thead><tbody id="healthRows"></tbody></table></div>
+  <div class="sectionhead"><h2>Aufnahmen</h2><span class="pill" id="photoCount">0 Fotos</span></div>
+  <p class="panelintro">Zum Öffnen ein Foto in der Liste auswählen.</p>
+  <details id="historyTools"><summary>Filter und Diagramm</summary>
+    <div class="toolbar"><input id="search" type="search" placeholder="Datei oder Status suchen" aria-label="Fotos nach Datei oder Status filtern"><label><input id="onlyMissing" type="checkbox">Ohne berechneten Index</label></div>
+    <div class="chartwrap"><canvas id="healthChart" role="img" aria-label="Zustandsindex pro Foto. Werte und Gründe stehen in der Tabelle."></canvas></div>
+    <div class="chartlegend"><span><i class="dot"></i>Berechnet</span><span><i class="dot blue"></i>Referenzfoto</span><span><i class="dot grey"></i>Kein Index</span></div>
+  </details>
+  <div class="tablewrap"><table><thead><tr><th scope="col">Nr.</th><th scope="col">Aufnahme</th><th scope="col">Index</th><th scope="col">Blattpixel</th><th scope="col">Status</th></tr></thead><tbody id="healthRows"></tbody></table></div>
   <div class="pagination"><span id="pageInfo">Keine Aufnahmen</span><div><button id="previousPage">Zurück</button> <button id="nextPage">Weiter</button></div></div>
 </section>
-<details class="quickhelp"><summary>So geht’s</summary><ol>
-  <li><b>Pflanze:</b> Foto wählen, Messwerte ansehen und Pflegepunkte vormerken.</li>
-  <li><b>Wachstum testen:</b> Zeitraum einstellen. Unter „Annahmen bearbeiten“ kann die tägliche Änderung angepasst werden.</li>
-  <li><b>Alle Fotos:</b> Frühere Aufnahmen und ihre Bewertungen ansehen.</li>
-</ol><p style="margin-top:10px">Die Ansicht zeigt einen gespeicherten Datenstand. Neue Daten werden nach einem weiteren Lauf von analyse.py übernommen. Über „Daten öffnen“ können ergebnis.json und digital_twin.json auch lokal geladen werden.</p></details>
-<footer><span>Lokale Ansicht · keine automatische Datenübertragung</span><span>BioBox · 3D-Ansicht 0.2.0</span></footer>
+<details class="quickhelp"><summary>Hilfe</summary><p>Die Ansicht wird mit <code>python analyse.py</code> aktualisiert. Über „Daten öffnen“ können ergebnis.json und digital_twin.json lokal geladen werden.</p><p>Wachstumsszenarien dienen zum Ausprobieren. Sie ändern keine Messdaten und steuern keine Geräte.</p></details>
 </main>
 <script id="bioboxData" type="application/json">__BIOBOX_DATA__</script>
 <script>
@@ -3652,6 +3642,7 @@ function setTab(value,focus=false){
  const previous=activeTab;activeTab=value;
  for(const button of document.querySelectorAll('[data-tab]')){const on=button.dataset.tab===value;button.setAttribute('aria-selected',String(on));button.tabIndex=on?0:-1;if(on&&focus)button.focus();}
  $('viewerRow').hidden=value==='history';$('plantCarePanel').hidden=value!=='plant';$('futurePanel').hidden=value!=='future';$('historyPanel').hidden=value!=='history';
+ $('viewerRow').classList.toggle('growth-layout',value==='future');$('measurementPanel').hidden=value!=='plant';$('photoChooser').hidden=value==='history';
  $('modelModes').hidden=value!=='future';$('futureStat').hidden=value!=='future';$('statsStrip').classList.toggle('withfuture',value==='future');
  if(value!=='future'){playing=false;$('play').textContent='Zeitraffer';}
  if(value==='history')stopMotion();else setMode(value==='plant'?'now':previous==='future'?mode:'future');
@@ -3660,7 +3651,7 @@ function setTab(value,focus=false){
 function openPhoto(i){selectPhoto(i);setTab('plant',true);}
 function stepPhoto(step){const list=seriesRows(),pos=list.findIndex(x=>x.i===selected),next=list[pos+step];if(next)selectPhoto(next.i);}
 function restoreRate(){const proposed=suggestedRate(current());manualRate=false;rateOrigin=proposed.source;$('baseRate').value=proposed.rate===null?'':String(Math.round(proposed.rate*100)/100);}
-function resetScenario(){stopMotion();planned.clear();$('days').value='7';$('effectRate').value='0';restoreRate();$('assumptions').open=inputRate('baseRate')===null;updateCare();updateScenario();}
+function resetScenario(){stopMotion();planned.clear();$('days').value='7';$('effectRate').value='0';restoreRate();const r=current();$('assumptions').open=!!r&&r.usable&&r.leaf_pixels>0&&inputRate('baseRate')===null;updateCare();updateScenario();}
 function modelForecast(r){
  const t=bundle.twin||{},f=t.forecast;if(!r||!f||typeof f!=='object'||t.series_id!==r.series_id||dateMs(f.as_of)!==dateMs(r.captured_at)||dateMs(r.captured_at)===null)return null;
  const source=number(f.source_px),pred=number(f.predicted_px),h=number(f.horizon_hours);
@@ -3682,7 +3673,7 @@ function selectPhoto(i){
 function updateSnapshot(){
  const r=current();$('areaNow').textContent=fmt(r?.leaf_pixels);$('healthNow').textContent=r?.health_score===null||!r?'—':fmt(r.health_score,1)+' / 100';
  $('areaUnit').textContent=r&&!r.usable?'Pixel · Maske prüfen':'sichtbare Blattpixel';
- $('healthHint').textContent=!r?'Für Messwerte zuerst Bilddaten öffnen.':r.is_reference?'Referenzfoto: Ausgangspunkt des Vergleichs, noch kein berechneter Index.':r.health_score===null?'Kein berechneter Index: '+reason(r.health_status)+'.':'100 bedeutet: nahe an der Referenz. Der Index ist keine Krankheitsdiagnose.';
+ $('healthHint').textContent=!r?'Kein Foto geladen':r.is_reference?'Referenzfoto':r.health_score===null?'Kein berechenbarer Index':'Vergleich zur Referenz';
  $('snapshotInfo').textContent=r?'Aufnahme '+r.number+' · '+dateLabel(r.captured_at)+' (Europe/Berlin) · '+r.file_name:'Keine Aufnahme geladen.';
  const age=r&&dateMs(r.captured_at)!==null?(Date.now()-dateMs(r.captured_at))/3600000:null;
  $('freshBadge').textContent=age===null?'Aufnahmezeit unbekannt':age<0?'Kamerazeit prüfen':age<=3?'Aufnahme der letzten 3 Stunden':'Älterer Datenstand';$('freshBadge').classList.toggle('warn',age===null||age<0||age>3);
@@ -3693,15 +3684,11 @@ function updateSnapshot(){
  const f=modelForecast(r);$('forecastInfo').textContent=f?'Separates 24h-Modell: '+fmt(f.predicted_px)+' px am '+dateLabel(f.target_at)+'. '+(f.is_current===true&&age!==null&&age>=0&&age<=3?'Vorläufig; biologisch nicht validiert.':'Historische Projektion ab dieser Aufnahme.'):'24h-Modell: '+reason((bundle.twin||{}).status||'keine passende Modellprognose')+'.';
 }
 function careSuggestions(r){
- const general='https://www.rhs.org.uk/plants/types/houseplants/growing-guide',basil='https://www.rhs.org.uk/herbs/basil/grow-your-own',out=[];
+ const basil='https://www.rhs.org.uk/herbs/basil/grow-your-own',out=[];
  if(!r||!r.usable)out.push({id:'image',title:'Aufnahme prüfen',text:'Blattmaske, Schärfe und Belichtung kontrollieren.',evidence:r?reason(r.health_status):'Keine Bildmessung vorhanden.'});
- if(r&&r.health_score!==null&&r.health_score<80)out.push({id:'inspect',title:'Blätter genauer ansehen',text:'Veränderungen an Blättern und Blattunterseiten prüfen.',evidence:'Der relative Zustandsindex beträgt '+fmt(r.health_score,1)+' / 100. Farbänderungen allein zeigen keine bestimmte Krankheit oder Ursache.',url:general});
- out.push({id:'water',title:'Erde vor dem Gießen prüfen',text:'Feuchte kontrollieren und stehendes Wasser im Topf vermeiden.',evidence:'Die Bodenfeuchte wird nicht aus dem Foto gemessen. Der Wasserbedarf hängt auch von der Pflanzenart ab.',url:general});
- out.push({id:'light',title:'Lichtbedingungen prüfen',text:'Lichtdauer und Lampenabstand für die Pflanzenart prüfen.',evidence:'Helle Fotos bedeuten nicht automatisch genügend Pflanzenlicht. Messungen von Licht und Lichtdauer sind hier noch nicht gekoppelt.',url:general});
- if($('species').value==='basil'){
-  out.push({id:'basil',title:'Basilikum warm und hell halten',text:'Einen warmen, lichtreichen Standort wählen. Gleichmäßig feucht halten und die Wurzeln vor stehendem Wasser schützen.',evidence:'Allgemeine Basilikum-Pflege; kein aus dem Foto gemessener Bedarf.',url:basil});
-  out.push({id:'harvest',title:'Triebspitzen gezielt ernten',text:'Bei ausreichend entwickeltem Basilikum regelmäßig Triebspitzen ernten, um buschigen Wuchs zu unterstützen.',evidence:'Ernten verändert die sichtbare Fläche. Den Eingriff im Pflegeprotokoll festhalten.',url:basil});
- }
+ if(r&&r.health_score!==null&&r.health_score<80)out.push({id:'inspect',title:'Blätter ansehen',text:'Sichtbare Veränderungen an den Blättern prüfen.',evidence:'Der relative Zustandsindex beträgt '+fmt(r.health_score,1)+' / 100. Farbänderungen allein zeigen keine bestimmte Ursache.'});
+ out.push({id:'water',title:'Erde vor dem Gießen prüfen',text:'Feuchte prüfen und Staunässe vermeiden.',evidence:'Die Bodenfeuchte wird nicht aus dem Foto gemessen.',url:basil});
+ out.push({id:'basil',title:'Licht und Wärme prüfen',text:'Für Basilikum einen hellen, warmen Standort wählen.',evidence:'Allgemeine Basilikum-Pflege. Fotohelligkeit ist keine Lichtmessung.',url:basil});
  return out;
 }
 function updateCare(){
@@ -3726,27 +3713,28 @@ function scenario(){return projectScenario(current(),Number($('days').value),inp
 function updateScenario(){
  const days=Number($('days').value),r=current(),hasPlan=planned.size>0,rate=inputRate('baseRate');$('effectRate').disabled=!hasPlan;$('planCount').textContent=hasPlan?planned.size+(planned.size===1?' Pflegepunkt vorgemerkt.':' Pflegepunkte vorgemerkt.'):'Keine Maßnahme vorgemerkt.';$('daysLabel').textContent=String(days);
  $('targetDate').textContent=r&&dateMs(r.captured_at)!==null?'Ab '+dateLabel(r.captured_at)+' → '+dateLabel(new Date(dateMs(r.captured_at)+days*86400000).toISOString()):'Ohne Aufnahmezeit: Zeitraum ab dem ausgewählten Foto.';
- $('baselineSummary').textContent=rate===null?'Noch keine Rate vorhanden':(rate>0?'+':'')+fmt(rate,2)+' % pro Tag';$('ratePill').textContent=rate===null?'Unter „Annahmen bearbeiten“ eine Rate eintragen.':manualRate?'Eigene Annahme':'Aus bisherigen Messdaten übernommen';
+ $('baselineSummary').textContent=rate===null?'Keine Rate vorhanden':(manualRate?'Eigene Rate: ':'Rate: ')+(rate>0?'+':'')+fmt(rate,2)+' % pro Tag';
  $('restoreRate').disabled=suggestedRate(r).rate===null;
  $('rateSource').textContent=manualRate?'Eigene Annahme; keine gemessene Wachstumsrate.':rateOrigin;const result=scenario();$('areaFuture').textContent=fmt(result.planned);$('futureLabel').textContent=days===0?'Beim Foto':'Nach '+days+(days===1?' Tag':' Tagen');
  document.querySelector('[data-mode="future"]').textContent=$('futureLabel').textContent;
  $('futureSmall').textContent=result.problem?'Annahme prüfen':days===0?'gemessene Blattpixel':'Blattpixel · nur Annahme';
- $('selectedPlan').textContent=hasPlan?'Vorgemerkt: '+care.filter(c=>planned.has(c.id)).map(c=>c.title).join(' · '):'Kein Pflegepunkt ausgewählt.';
- $('scenarioInfo').textContent=result.problem||(days===0?'Gezeigt wird die gemessene Fläche des ausgewählten Fotos.':hasPlan&&inputRate('effectRate')!==0?'Ohne zusätzliche Wirkung: '+fmt(result.baseline)+' Blattpixel. Mit der angenommenen Pflegewirkung: '+fmt(result.planned)+' Blattpixel.':'Mit dieser Annahme ergeben sich '+fmt(result.planned)+' Blattpixel. Zusätzliche Pflegewirkung: 0.');
+ $('selectedPlan').hidden=!hasPlan;$('selectedPlan').textContent=hasPlan?'Vorgemerkt: '+care.filter(c=>planned.has(c.id)).map(c=>c.title).join(' · '):'';
+ const message=result.problem||(hasPlan&&days>0&&inputRate('effectRate')!==0?'Ohne Pflegewirkung: '+fmt(result.baseline)+' Blattpixel. Mit Annahme: '+fmt(result.planned)+' Blattpixel.':'');
+ $('scenarioInfo').textContent=message;$('scenarioInfo').hidden=!message;
  $('exportScenario').disabled=!r||result.planned===null;buildScene();requestDraw();
 }
 function filtered(){const q=$('search').value.toLocaleLowerCase('de-DE');return seriesRows().filter(({r})=>(!$('onlyMissing').checked||r.health_score===null)&&(!q||(r.file_name+' '+reason(r.health_status)).toLocaleLowerCase('de-DE').includes(q)));}
 function updateTable(){
  const list=filtered();page=clamp(page,0,Math.max(0,Math.ceil(list.length/PAGE_SIZE)-1));chartItems=list.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE);$('healthRows').replaceChildren();
  for(const {r,i}of chartItems){const tr=document.createElement('tr');tr.dataset.index=String(i);tr.classList.toggle('selected',i===selected);tr.tabIndex=0;tr.setAttribute('aria-label','Aufnahme '+r.number+' in der Pflanzenansicht öffnen');tr.addEventListener('click',()=>openPhoto(i));tr.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){openPhoto(i);e.preventDefault();}});
-  const values=[r.number,dateLabel(r.captured_at),r.health_score===null?'—':fmt(r.health_score,1),fmt(r.leaf_pixels),r.is_reference?'Referenzfoto':r.health_score===null?reason(r.health_status):'Berechnet',r.file_name];
-  values.forEach((v,k)=>{const td=document.createElement('td');td.textContent=String(v);if(k===5){td.className='file';td.title=r.file_name;}if(k===2)td.className=r.health_score===0?'score zero':'score';tr.append(td);});$('healthRows').append(tr);
+  const values=[r.number,dateLabel(r.captured_at),r.health_score===null?'—':fmt(r.health_score,1),fmt(r.leaf_pixels),r.is_reference?'Referenzfoto':r.health_score===null?reason(r.health_status):'Berechnet'];
+  values.forEach((v,k)=>{const td=document.createElement('td');td.textContent=String(v);if(k===1)td.title=r.file_name;if(k===2)td.className=r.health_score===0?'score zero':'score';if(k===4)td.className='reason';tr.append(td);});$('healthRows').append(tr);
  }
  $('photoCount').textContent=seriesRows().length+' Fotos';$('pageInfo').textContent=list.length?'Fotos '+(page*PAGE_SIZE+1)+'–'+Math.min(list.length,(page+1)*PAGE_SIZE)+' von '+list.length+(list.length!==seriesRows().length?' (gefiltert)':''):'Keine passenden Fotos';$('previousPage').disabled=page===0;$('nextPage').disabled=(page+1)*PAGE_SIZE>=list.length;drawHealth();
 }
 function canvasSize(canvas){const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,1.8);const w=Math.max(1,rect.width),h=Math.max(1,rect.height);if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);}const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);return {ctx,w,h};}
 function drawHealth(){
- if($('historyPanel').hidden)return;
+ if($('historyPanel').hidden||!$('historyTools').open)return;
  const {ctx,w,h}=canvasSize($('healthChart'));ctx.clearRect(0,0,w,h);const left=36,top=14,bottom=h-32,height=bottom-top,n=chartItems.length,step=(w-left-8)/Math.max(1,n);ctx.font='10px Arial';ctx.textAlign='right';
  for(const v of [0,25,50,75,100]){const y=bottom-height*v/100;ctx.strokeStyle='#e6ece5';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(w-5,y);ctx.stroke();ctx.fillStyle='#7a8a7c';ctx.fillText(String(v),left-7,y+3);}
  chartItems.forEach(({r,i},j)=>{const x=left+(j+.5)*step,width=Math.min(30,step*.6);if(i===selected){ctx.fillStyle='#eaf1e3';ctx.fillRect(x-step*.46,top,step*.92,height+18);}
@@ -3759,48 +3747,77 @@ function drawHealth(){
 // Kleine, deterministische 3D-Geometrie. Perspektive und Beleuchtung werden
 // lokal berechnet; sie sind keine aus Fotos gemessene Pflanzenarchitektur.
 const add=(a,b)=>a.map((v,i)=>v+b[i]),sub=(a,b)=>a.map((v,i)=>v-b[i]),mul=(a,s)=>a.map(v=>v*s),dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0),cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],unit=a=>mul(a,1/(Math.hypot(...a)||1));
-let yaw=-.55,pitch=.18,zoom=1,drag=null,drawPending=null,lastFrame=0;
-function face(points,color,offset=0,alpha=1,line=false){scene.push({points:points.map(p=>[p[0]+offset,p[1],p[2]]),color,alpha,line});}
+let yaw=-.55,pitch=.29,zoom=1,drag=null,drawPending=null,lastFrame=0;
+function face(points,color,offset=0,alpha=1,line=false){scene.push({points,color,offset,alpha,line});}
 function tube(a,b,radius,color,offset){const axis=unit(sub(b,a)),u=unit(cross(axis,Math.abs(axis[1])>.9?[1,0,0]:[0,1,0])),v=cross(axis,u);for(let j=0;j<6;j++){const point=(p,k)=>add(p,add(mul(u,Math.cos(k*Math.PI/3)*radius),mul(v,Math.sin(k*Math.PI/3)*radius)));face([point(a,j),point(b,j),point(b,j+1),point(a,j+1)],color,offset);}}
 function pot(offset){for(let j=0;j<40;j++){const point=(rad,y,k)=>[Math.cos(k*Math.PI/20)*rad,y,Math.sin(k*Math.PI/20)*rad];face([point(.53,-.8,j),point(.71,-.03,j),point(.71,-.03,j+1),point(.53,-.8,j+1)],[137,115,87],offset);face([point(.72,-.09,j),point(.72,.015,j),point(.72,.015,j+1),point(.72,-.09,j+1)],[167,145,112],offset);face([[0,-.015,0],point(.66,-.015,j),point(.66,-.015,j+1)],[47,43,32],offset);}}
 function leaf(root,angle,length,width,offset,index){
- const dir=[Math.cos(angle),0,Math.sin(angle)],side=[-Math.sin(angle),0,Math.cos(angle)],at=(u,v)=>add(root,add(mul(dir,length*u),add(mul(side,width*Math.pow(Math.sin(Math.PI*u),.8)*v),[0,.34*Math.sin(Math.PI*u*.9)-.16*u*u+.045*v*v*Math.sin(Math.PI*u),0]))),color=[54+(index%4)*7,119+(index%5)*7,59+(index%3)*5];
- for(let u=0;u<7;u++)for(let v=0;v<4;v++){const a=u/7,b=(u+1)/7,c=-1+v/2,d=c+.5;face([at(a,c),at(b,c),at(b,d),at(a,d)],color,offset);}
- for(let u=0;u<7;u++){const a=add(at(u/7,0),[0,.006,0]),b=add(at((u+1)/7,0),[0,.006,0]);face([a,b],[146,173,97],offset,1,true);}
+ const dir=[Math.cos(angle),0,Math.sin(angle)],side=[-Math.sin(angle),0,Math.cos(angle)];
+ const at=(u,v)=>{
+  const arc=Math.sin(Math.PI*u),envelope=Math.pow(arc,.82)*(1.15-.30*u);
+  const height=length*(.20*arc-.22*u*u+.12*(1-v*v)*arc);
+  return add(root,add(mul(dir,length*u),add(mul(side,width*envelope*v),[0,height,0])));
+ };
+ const color=[58+(index%4)*7,135+(index%5)*6,57+(index%3)*5],vein=[128,166,91];
+ for(let u=0;u<8;u++)for(let v=0;v<4;v++){const a=u/8,b=(u+1)/8,c=-1+v/2,d=c+.5;face([at(a,c),at(b,c),at(b,d),at(a,d)],color,offset);}
+ const raised=(u,v)=>add(at(u,v),[0,.006,0]);
+ for(let u=0;u<8;u++)face([raised(u/8,0),raised((u+1)/8,0)],vein,offset,.8,true);
+ for(const u of [.28,.50,.70])for(const side of [-1,1])face([raised(u,0),raised(u+.09,side*.77)],vein,offset,.4,true);
 }
 function plant(areaRatio,offset,scale=1){
- pot(offset);const shape=$('shape').value,branches=shape==='bush'?5:shape==='rosette'?1:3;
- for(let stem=0;stem<branches;stem++){const theta=stem*2.399,spread=stem===0?0:shape==='bush'?.24:.10,base=[Math.cos(theta)*spread,0,Math.sin(theta)*spread],height=(shape==='rosette'?.45:2.1-stem*.16)*scale,levels=shape==='rosette'?7:5;
-  let previous=base;
-  for(let k=1;k<=levels;k++){const end=[base[0]+Math.sin(k*.4+stem)*.10,height*k/levels,base[2]+Math.cos(k*.35+stem)*.09];tube(previous,end,(.023-.002*k)*scale,[79,115,55],offset);const angle=theta+k*1.57+(stem*.3),size=(shape==='rosette'?.92:.88-.095*k)*Math.sqrt(clamp(areaRatio,.07,5.5))*scale;
-   for(let opposite=0;opposite<2;opposite++){const a=angle+opposite*Math.PI,root=add(end,[Math.cos(a)*.10*scale,-.025,Math.sin(a)*.10*scale]);tube(end,root,.009*scale,[88,126,66],offset);leaf(root,a,size,.32*size,offset,k+stem);}
-   previous=end;
+ pot(offset);
+ // Kompakte Basilikumblätter in Paaren, mit kleineren Blättern an den Spitzen.
+ // Die sichtbare Flächenänderung beeinflusst die Illustration nur begrenzt.
+ const signal=Math.sqrt(clamp(areaRatio,.04,1000000));
+ const leafScale=.55+.90*signal/(1+signal);
+ const shoots=[
+  {angle:.22,start:0,height:2.04,spread:.10,lengths:[.23,.30,.35,.36,.28,.17]},
+  {angle:2.35,start:.28,height:1.59,spread:.52,lengths:[.22,.30,.32,.17]},
+  {angle:4.49,start:.20,height:1.45,spread:.49,lengths:[.21,.29,.30,.16]},
+  {angle:.60,start:.39,height:1.77,spread:.43,lengths:[.23,.31,.28,.15]},
+ ];
+ for(const [index,shoot]of shoots.entries()){
+  let previous=[0,shoot.start*scale,0];
+  for(const [k,length]of shoot.lengths.entries()){
+   const t=(k+1)/shoot.lengths.length,spread=shoot.spread*Math.sin(t*Math.PI/2);
+   const tip=mul([Math.cos(shoot.angle)*spread,shoot.start+(shoot.height-shoot.start)*t,Math.sin(shoot.angle)*spread],scale);
+   tube(previous,tip,(.021-.011*t)*scale,[91,132,62],offset);
+   for(const opposite of [0,1]){
+    const angle=shoot.angle+k*Math.PI/2+opposite*Math.PI+.06*(k%3);
+    const petiole=(.047+.065*length)*scale;
+    const root=add(tip,[Math.cos(angle)*petiole,.014*scale,Math.sin(angle)*petiole]);
+    const size=length*leafScale*scale*(opposite?.94:1);
+    tube(tip,root,.007*scale,[93,138,62],offset);
+    leaf(root,angle,size,.34*size,offset,k+index+opposite);
+   }
+   previous=tip;
   }
  }
 }
 function referenceRatio(r){if(!r||!r.usable||r.leaf_pixels===null||!r.view_id)return 1;const eligible=seriesRows().map(x=>x.r).filter(q=>q.usable&&q.leaf_pixels!==null&&q.leaf_pixels>0&&q.view_id===r.view_id&&JSON.stringify(q.image_size)===JSON.stringify(r.image_size)&&dateMs(q.captured_at)!==null&&dateMs(r.captured_at)!==null&&dateMs(q.captured_at)<=dateMs(r.captured_at)).sort((a,b)=>dateMs(a.captured_at)-dateMs(b.captured_at));return eligible.length?r.leaf_pixels/eligible[0].leaf_pixels:1;}
 function buildScene(){
  scene=[];const r=current(),s=scenario(),ratio=referenceRatio(r);
- $('modelTitle').textContent=mode==='now'?'Modell zum Foto':mode==='compare'?'Zwei Annahmen vergleichen':'Mögliche Entwicklung';$('viewBadge').textContent=mode==='now'?'Vereinfachtes Modell':'Szenario · nur Annahme';
+ const projected=mode!=='now'&&s.planned!==null;
+ $('modelTitle').textContent=projected?(mode==='compare'?'Pflegewirkung im Vergleich':'Wachstumsszenario'):'Modell zum Foto';$('viewBadge').textContent=projected?'Nur Annahme':'Schematisch';
  if(!r||r.leaf_pixels===null||r.leaf_pixels<=0){pot(0);return;}
  if(mode==='compare'&&s.baseline!==null&&s.planned!==null){plant(ratio*s.baseline/r.leaf_pixels,-1.2,.75);plant(ratio*s.planned/r.leaf_pixels,1.2,.75);}
  else plant(ratio*(mode==='future'&&s.planned!==null?s.planned/r.leaf_pixels:1),0);
 }
-function transform(p){const x=p[0]*Math.cos(yaw)+p[2]*Math.sin(yaw),z=-p[0]*Math.sin(yaw)+p[2]*Math.cos(yaw),y=p[1]-.9;return [x,y*Math.cos(pitch)-z*Math.sin(pitch),y*Math.sin(pitch)+z*Math.cos(pitch)];}
+function transform(p,offset=0){const x=p[0]*Math.cos(yaw)+p[2]*Math.sin(yaw)+offset,z=-p[0]*Math.sin(yaw)+p[2]*Math.cos(yaw),y=p[1]-.78;return [x,y*Math.cos(pitch)-z*Math.sin(pitch),y*Math.sin(pitch)+z*Math.cos(pitch)];}
 function drawModel(now){
  if($('viewerRow').hidden)return;
  const dt=lastFrame?Math.min(.08,(now-lastFrame)/1000):0;lastFrame=now;if(rotate)yaw+=dt*.24;
  if(playing){const day=Math.floor((now-playStart)/450);if(day>=14){$('days').value='14';playing=false;$('play').textContent='Zeitraffer';updateScenario();}else if(Number($('days').value)!==day){$('days').value=String(day);updateScenario();}}
- const {ctx,w,h}=canvasSize($('plantCanvas'));ctx.clearRect(0,0,w,h);const lens=Math.min(w,h)*1.62*zoom,project=p=>{const q=transform(p),d=7+q[2];return [w/2+q[0]*lens/d,h*.57-q[1]*lens/d,q[2]];};
- ctx.fillStyle='#00000022';ctx.beginPath();ctx.ellipse(w/2,h*.83,Math.min(w*.28,180),23,0,0,Math.PI*2);ctx.fill();ctx.lineWidth=.6;ctx.strokeStyle='#799e7415';
- for(let k=-5;k<=5;k++){const a=project([k*.55,-.81,-2.6]),b=project([k*.55,-.81,2.6]),c=project([-2.6,-.81,k*.55]),d=project([2.6,-.81,k*.55]);ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.moveTo(c[0],c[1]);ctx.lineTo(d[0],d[1]);ctx.stroke();}
- const sorted=scene.map(f=>({...f,screen:f.points.map(project),depth:f.points.reduce((s,p)=>s+transform(p)[2],0)/f.points.length})).sort((a,b)=>b.depth-a.depth),light=unit([-.5,.8,1]);
+ const {ctx,w,h}=canvasSize($('plantCanvas'));ctx.clearRect(0,0,w,h);const lens=Math.min(w,h)*1.58*zoom,project=(p,offset)=>{const q=transform(p,offset),d=7+q[2];return [w/2+q[0]*lens/d,h*.52-q[1]*lens/d,q[2]];};
+ const r=current(),s=scenario(),comparison=mode==='compare'&&s.planned!==null;
+ ctx.fillStyle='#00000035';
+ for(const offset of comparison?[-1.2,1.2]:[0]){const floor=project([0,-.81,0],offset),size=lens/(7+floor[2]);ctx.beginPath();ctx.ellipse(floor[0],floor[1],.79*size,Math.max(3,.11*size),0,0,Math.PI*2);ctx.fill();}
+ const sorted=scene.map(f=>{const screen=f.points.map(p=>project(p,f.offset));return {...f,screen,depth:screen.reduce((sum,p)=>sum+p[2],0)/screen.length};}).sort((a,b)=>b.depth-a.depth),light=unit([-.5,.8,1]);
  for(const f of sorted){let shade=1;if(!f.line&&f.points.length>2){const normal=unit(cross(sub(f.points[1],f.points[0]),sub(f.points[2],f.points[0])));shade=.53+.44*Math.abs(dot(normal,light));}const color=f.color.map(v=>Math.round(clamp(v*shade,0,255)));ctx.globalAlpha=f.alpha;ctx.beginPath();ctx.moveTo(f.screen[0][0],f.screen[0][1]);for(const p of f.screen.slice(1))ctx.lineTo(p[0],p[1]);if(f.line){ctx.strokeStyle='rgb('+color.join(',')+')';ctx.lineWidth=.7;ctx.stroke();}else{ctx.closePath();ctx.fillStyle='rgb('+color.join(',')+')';ctx.fill();}}
- ctx.globalAlpha=1;ctx.fillStyle='#a8c0a3';ctx.textAlign='center';ctx.font='10px Arial';const r=current(),s=scenario();
- if(!r||r.leaf_pixels===null)ctx.fillText('JSON mit einer gültigen Blattfläche öffnen.',w/2,h*.28);
- else if(r.leaf_pixels===0)ctx.fillText('Keine Blattpixel erkannt · Maske und Originalfoto prüfen.',w/2,h*.28);
- if(mode!=='now'&&s.planned===null)ctx.fillText('Noch kein berechenbares Szenario · Aufnahmezustand wird gezeigt.',w/2,h*.23);
- if(mode==='compare'&&s.planned!==null){ctx.fillText('Ohne Pflegewirkung',w*.28,h-29);ctx.fillText('Mit angenommener Wirkung',w*.72,h-29);}
+ ctx.globalAlpha=1;ctx.fillStyle='#b5c9ad';ctx.textAlign='center';ctx.font='11px Arial';
+ if(!r||r.leaf_pixels===null)ctx.fillText('Noch keine Blattfläche geladen.',w/2,h*.29);
+ else if(r.leaf_pixels===0)ctx.fillText('Keine Blattpixel erkannt.',w/2,h*.29);
+ if(comparison){ctx.fillText('Ohne Wirkung',project([0,0,0],-1.2)[0],h-14);ctx.fillText('Mit Annahme',project([0,0,0],1.2)[0],h-14);}
 }
 function requestDraw(){if(drawPending!==null)return;drawPending=requestAnimationFrame(time=>{drawPending=null;drawModel(time);if(rotate||playing)requestDraw();});}
 $('plantCanvas').addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY};$('plantCanvas').setPointerCapture(e.pointerId);});
@@ -3809,20 +3826,20 @@ for(const event of ['pointerup','pointercancel'])$('plantCanvas').addEventListen
 $('plantCanvas').addEventListener('wheel',e=>{e.preventDefault();zoom=clamp(zoom*Math.exp(-e.deltaY*.001),.5,1.9);requestDraw();},{passive:false});
 $('plantCanvas').addEventListener('keydown',e=>{if(e.key==='ArrowLeft')yaw-=.15;else if(e.key==='ArrowRight')yaw+=.15;else if(e.key==='ArrowUp')pitch=clamp(pitch+.1,-.45,1.4);else if(e.key==='ArrowDown')pitch=clamp(pitch-.1,-.45,1.4);else if(e.key==='+')zoom=clamp(zoom+.1,.5,1.9);else if(e.key==='-')zoom=clamp(zoom-.1,.5,1.9);else return;e.preventDefault();requestDraw();});
 $('rotate').addEventListener('click',()=>{rotate=!rotate;$('rotate').setAttribute('aria-pressed',String(rotate));$('rotate').classList.toggle('active',rotate);requestDraw();});
-$('resetView').addEventListener('click',()=>{yaw=-.55;pitch=.18;zoom=1;requestDraw();});$('topView').addEventListener('click',()=>{pitch=1.35;requestDraw();});
+$('resetView').addEventListener('click',()=>{stopMotion();yaw=-.55;pitch=.29;zoom=1;requestDraw();});$('topView').addEventListener('click',()=>{pitch=1.35;requestDraw();});
 for(const button of document.querySelectorAll('[data-mode]'))button.addEventListener('click',()=>setMode(button.dataset.mode));
 for(const button of document.querySelectorAll('[data-tab]')){
  button.addEventListener('click',()=>setTab(button.dataset.tab));
  button.addEventListener('keydown',e=>{const tabs=[...document.querySelectorAll('[data-tab]')],index=tabs.indexOf(button);let next=null;if(e.key==='ArrowRight')next=(index+1)%tabs.length;else if(e.key==='ArrowLeft')next=(index+tabs.length-1)%tabs.length;else if(e.key==='Home')next=0;else if(e.key==='End')next=tabs.length-1;if(next!==null){e.preventDefault();setTab(tabs[next].dataset.tab,true);}});
 }
-$('goFuture').addEventListener('click',()=>setTab('future',true));$('editCarePlan').addEventListener('click',()=>setTab('plant',true));
+$('goFuture').addEventListener('click',()=>setTab('future',true));$('editCarePlan').addEventListener('click',()=>{setTab('plant');$('careDetails').open=true;$('careDetails').querySelector('summary').focus();});
 $('photoPrev').addEventListener('click',()=>stepPhoto(-1));$('photoNext').addEventListener('click',()=>stepPhoto(1));
 $('resetScenario').addEventListener('click',resetScenario);$('restoreRate').addEventListener('click',()=>{restoreRate();updateScenario();});
-$('shape').addEventListener('change',()=>{buildScene();requestDraw();});$('species').addEventListener('change',()=>{updateCare();updateScenario();});
 $('days').addEventListener('input',()=>{playing=false;$('play').textContent='Zeitraffer';updateScenario();});$('baseRate').addEventListener('input',()=>{manualRate=true;updateScenario();});$('effectRate').addEventListener('input',updateScenario);
 $('play').addEventListener('click',()=>{if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){$('days').value=String((Number($('days').value)+1)%15);updateScenario();return;}playing=!playing;playStart=performance.now();$('play').textContent=playing?'Anhalten':'Zeitraffer';requestDraw();});
 $('series').addEventListener('change',()=>{activeSeries=$('series').value;page=0;planned.clear();$('search').value='';$('onlyMissing').checked=false;refillPhotos();selectPhoto(latestIndex());});$('photo').addEventListener('change',()=>selectPhoto(Number($('photo').value)));
 for(const id of ['search','onlyMissing'])$(id).addEventListener('input',()=>{page=0;updateTable();});$('previousPage').addEventListener('click',()=>{page--;updateTable();});$('nextPage').addEventListener('click',()=>{page++;updateTable();});
+$('historyTools').addEventListener('toggle',drawHealth);
 $('healthChart').addEventListener('click',e=>{const rect=$('healthChart').getBoundingClientRect(),j=Math.floor((e.clientX-rect.left-36)/((rect.width-44)/Math.max(1,chartItems.length)));if(chartItems[j])openPhoto(chartItems[j].i);});
 $('exportScenario').addEventListener('click',()=>{const r=current(),s=scenario();if(!r||s.planned===null)return;const data={kind:'assumed_growth_scenario',schema_version:'1.0',created_at:new Date().toISOString(),series_id:r.series_id,source_file:r.file_name,as_of:r.captured_at,horizon_days:Number($('days').value),observed_leaf_pixels:r.leaf_pixels,baseline_rate_pct_per_day:inputRate('baseRate'),baseline_rate_origin:manualRate?'user_assumption':rateOrigin,additional_rate_percentage_points_per_day:planned.size?inputRate('effectRate'):0,planned_actions:care.filter(c=>planned.has(c.id)).map(c=>({id:c.id,title:c.title})),baseline_scenario_pixels:s.baseline,planned_scenario_pixels:s.planned,geometry:'schematic_not_reconstructed',biologically_validated:false,issued_forecast:false};const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='biobox_szenario.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
 $('importButton').addEventListener('click',()=>$('jsonFile').click());
