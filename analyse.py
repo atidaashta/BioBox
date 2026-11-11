@@ -28,7 +28,8 @@ Vorhandene Fotos werden neu ausgewertet und ohne doppelte Eintraege aktualisiert
 Die 100-Bilder-Grenze betrifft Kamera-JPEGs, nicht die Ergebnishistorie.
 Grafiken zeigen auch die gespeicherten Werte; alte Bilddateien werden nicht kopiert.
 Digital Twin: auswertung/digital_twin.json und grafiken/06_digital_twin.png.
-Persoenliche 3D-Ansicht: auswertung/digital_twin_3d.html (lokal, auch offline).
+Persoenliche 3D-Ansicht: auswertung/digital_twin_3d.html und digital_twin_3d.css.
+Beide Dateien bleiben fuer die lokale Ansicht im selben Ordner.
 Vorhandenes JSON ansehen: python analyse.py --3d
 Anderes JSON ansehen: python analyse.py --3d-aus-json auswertung/ergebnis.json
 Neue Analyse und Browser: python analyse.py --lokal bilder --3d
@@ -134,9 +135,10 @@ CHROMA_MIN = 4            # a*-Mindestabstand von Grau; darunter keine Pflanze
 RATE_MIN_MINUTEN = 30    # Kurzer Vergleich; hohe Schwankung moeglich
 RATE_STABIL_STUNDEN = 12  # Wenn verfuegbar, laengeren Abstand bevorzugen
 SCORING_VERSION = "4.1.0"
-ANALYSE_VERSION = "4.9.0"
-TWIN_3D_VERSION = "0.4.0"
+ANALYSE_VERSION = "4.9.1"
+TWIN_3D_VERSION = "0.4.1"
 TWIN_3D_DATEI = "digital_twin_3d.html"
+TWIN_3D_CSS_DATEI = "digital_twin_3d.css"
 OLLAMA_PFLEGEMODELL = "qwen2.5:3b"
 TWIN_VERSION = "0.1.0"
 TWIN_HORIZONT_STUNDEN = 24
@@ -2971,7 +2973,7 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
                             if path.is_dir():shutil.copytree(path,target,symlinks=True)
                             else:shutil.copy2(path,target,follow_symlinks=False)
             rows=_analysieren(pfade,fertig,manuell,einzelbilder,neue_referenz,historie,twin_historie)
-            required=['ergebnis.csv','ergebnis.json','digital_twin.json',TWIN_3D_DATEI,'masken','kontrolle','grafiken']
+            required=['ergebnis.csv','ergebnis.json','digital_twin.json',TWIN_3D_CSS_DATEI,TWIN_3D_DATEI,'masken','kontrolle','grafiken']
             if not all((fertig/name).exists() for name in required):
                 raise OSError('Neue Auswertung ist unvollstaendig; alte Ausgabe bleibt erhalten.')
             changes=[]
@@ -3376,16 +3378,20 @@ def twin_3d_daten(zeilen, twin, ausgabe=None, bildpfade=None):
 
 
 def twin_3d_speichern(zeilen, twin, ausgabe, bildpfade=None):
-    """Eine HTML-Datei; ohne Server, externe JavaScript-Dateien oder Netzabruf."""
+    """HTML und Stylesheet für die lokale Ansicht in denselben Ordner schreiben."""
     ausgabe = Path(ausgabe)
     ausgabe.mkdir(parents=True, exist_ok=True)
     daten = twin_3d_daten(zeilen, twin, ausgabe, bildpfade)
     # JSON darf ein HTML-script-Element auch bei fremden Dateinamen nicht beenden.
     inhalt = json.dumps(daten, ensure_ascii=False, allow_nan=False).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
     ziel = ausgabe/TWIN_3D_DATEI
-    tmp = ausgabe/("."+TWIN_3D_DATEI+".tmp")
-    tmp.write_text(TWIN_3D_HTML.replace("__BIOBOX_DATA__", inhalt), encoding="utf-8")
-    tmp.replace(ziel)
+    with tempfile.TemporaryDirectory(prefix=".biobox-3d-", dir=ausgabe) as ordner:
+        html = Path(ordner)/TWIN_3D_DATEI
+        css = Path(ordner)/TWIN_3D_CSS_DATEI
+        html.write_text(TWIN_3D_HTML.replace("__BIOBOX_DATA__", inhalt), encoding="utf-8")
+        css.write_text(TWIN_3D_CSS.strip()+"\n", encoding="utf-8")
+        css.replace(ausgabe/TWIN_3D_CSS_DATEI)
+        html.replace(ziel)
     return ziel
 
 
@@ -3423,7 +3429,7 @@ def twin_3d_oeffnen(pfad):
 
 
 
-# Gestaltung der lokalen Ansicht; beim Export wird sie in die HTML-Datei eingebettet.
+# Vorlage für die separate CSS-Datei der lokalen Ansicht.
 TWIN_3D_CSS = r"""
 :root{--ink:#203c30;--muted:#607268;--green:#246849;--line:#dce5de;--paper:#f4f6f1;--warm:#f8f2e5}
 *{box-sizing:border-box}
@@ -3564,11 +3570,9 @@ TWIN_3D_HTML = r"""<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <meta name="referrer" content="no-referrer">
-<meta name="biobox-viewer-version" content="0.4.0">
+<meta name="biobox-viewer-version" content="0.4.1">
 <title>BioBox · Basilikum</title>
-<style>
-__BIOBOX_CSS__
-</style>
+<link rel="stylesheet" href="__BIOBOX_CSS_DATEI__">
 </head>
 <body>
 <header class="brandbar"><div class="brandinner">
@@ -3996,7 +4000,7 @@ try{install(JSON.parse($('bioboxData').textContent));}catch(error){notify('Daten
 </script>
 </body>
 </html>
-""".replace("__BIOBOX_CSS__", TWIN_3D_CSS)
+""".replace("__BIOBOX_CSS_DATEI__", TWIN_3D_CSS_DATEI)
 
 
 def main():
@@ -4038,8 +4042,10 @@ def main():
         ziel = args.ausgabe or Path(quelle).expanduser().resolve().parent
         try:
             vorhanden = Path(ziel)/TWIN_3D_DATEI
+            stylesheet = Path(ziel)/TWIN_3D_CSS_DATEI
             quellen = [Path(quelle), Path(quelle).parent/"digital_twin.json", Path(__file__)]
-            aktuell = (not args.drei_d_json and vorhanden.is_file()
+            aktuell = (not args.drei_d_json and vorhanden.is_file() and stylesheet.is_file()
+                       and stylesheet.stat().st_size > 0
                        and all(not p.is_file() or vorhanden.stat().st_mtime_ns >= p.stat().st_mtime_ns for p in quellen))
             twin_3d_oeffnen(vorhanden if aktuell else twin_3d_aus_json(quelle, ziel))
         except (OSError, ValueError, TypeError) as fehler:

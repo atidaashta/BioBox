@@ -4,9 +4,9 @@
 | --- | --- |
 | Dokument-ID | BB-GUIDE-TWIN-001 |
 | Meilenstein | A-M4 |
-| Version | 1.2 |
+| Version | 1.3 |
 | Datum | 11.11.2026 |
-| Software | analyse.py 4.9.0 · 3D-Ansicht 0.4.0 |
+| Software | analyse.py 4.9.1 · 3D-Ansicht 0.4.1 |
 | Status | Prototyp für die lokale Darstellung und Szenarien |
 
 ## 1. Starten
@@ -23,7 +23,7 @@ Nach der Bildauswertung wird die Ansicht im Browser geöffnet. Sind bereits Mess
 python analyse.py --3d-aus-json auswertung/ergebnis.json
 ```
 
-Die erzeugte Datei `auswertung/digital_twin_3d.html` kann auch per Doppelklick geöffnet werden. Für das Anzeigen der Datei wird kein Webserver benötigt.
+Die erzeugte Datei `auswertung/digital_twin_3d.html` kann auch per Doppelklick geöffnet werden. Das Stylesheet `digital_twin_3d.css` muss dafür im selben Ordner liegen. Ein Webserver wird nicht benötigt.
 
 ## 2. Pflanze ansehen und drehen
 
@@ -94,9 +94,10 @@ Wenn Ollama oder das Modell nicht verfügbar ist, werden die Tipps aus den Messw
 | `auswertung/ergebnis.csv` | Ergebnisse als Tabelle, z. B. für Excel. |
 | `auswertung/digital_twin.json` | Letzter Modellzustand und gegebenenfalls die vorläufige 24-Stunden-Projektion. |
 | `auswertung/digital_twin_3d.html` | Die im Browser angezeigte Seite mit dem gespeicherten Datenstand. |
+| `auswertung/digital_twin_3d.css` | Farben, Abstände und Gestaltung der Seite. |
 | `auswertung/kontrolle/` | Kontrollbilder mit markierten Blattkonturen. |
 | `biobox_szenario.json` | Export der Annahmen aus einem Wachstumsszenario. |
 
 Nach neuen Aufnahmen wird `python analyse.py` erneut ausgeführt. Über **„Daten öffnen“** können `ergebnis.json` und die passende `digital_twin.json` auch im Browser lokal geladen werden. Für die vollständige Fotoliste wird `ergebnis.json` benötigt. Ein Szenarioexport kann über diese Funktion nicht importiert werden.
 
-Die Gestaltung steht in einem eigenen CSS-Abschnitt in `analyse.py`. Beim Export wird sie in die HTML-Datei eingefügt. Dadurch kann die Seite als einzelne Datei geöffnet und weitergegeben werden.
+Beim Export werden die HTML-Datei und das Stylesheet gemeinsam erzeugt. Beim Verschieben oder Weitergeben bleiben beide Dateien im selben Ordner. Änderungen direkt an der CSS-Datei sind nach dem Neuladen im Browser sichtbar. Beim nächsten Export wird das Stylesheet aus dem Abschnitt `TWIN_3D_CSS` in `analyse.py` neu geschrieben.
