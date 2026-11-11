@@ -4,13 +4,15 @@
 |---|---|
 | Dokument-ID | BB-REF-MERKMALE-001 |
 | Meilenstein | A-M2 · Computer-Vision-Pipeline |
-| Version | 3.7 |
+| Version | 3.8 |
 | Datum | 11.11.2026 |
 | Autorin | Atida Ashta |
-| Pipeline | analyse.py 4.10.0 |
+| Pipeline | analyse.py 4.10.1 |
 | Bewertung | Scoring 4.1.0 |
 
 ## 1 Ausgabeprinzip
+
+Wenn eine Aufnahme sowohl im JSON als auch in der CSV gespeichert ist, werden für die Historie die Messwerte aus JSON verwendet. CSV-Einträge ohne entsprechendes JSON werden weiter gelesen. Optionale Blattkonturen für den Browser werden separat berechnet; ein Fehler dabei verwirft die vorhandenen Messwerte nicht.
 
 Aus jedem Eingabebild wird ein Datensatz mit Messwerten oder einem Fehlerstatus erzeugt. Die Ausgabe verbindet diese Datensätze mit den bereits gespeicherten Aufnahmen. Kann ein bereits brauchbar ausgewertetes Foto bei einem späteren Lauf nicht mehr gelesen oder analysiert werden, kann sein gespeicherter Datensatz erhalten bleiben. Unbekannte Messwerte werden nicht mit 0 aufgefüllt.
 
@@ -20,7 +22,7 @@ Die Kontrollausgabe heißt `auswertung/ergebnis.csv`. CSV bedeutet Comma-Separat
 
 ## 2 Spalten und Zuordnung
 
-Die Tabelle enthält die 49 Standardspalten in der Reihenfolge von `SPALTEN` in `analyse.py` 4.10.0. Beim Einlesen älterer CSV-Dateien können vorhandene Zusatzspalten am Ende erhalten bleiben. `image_measurements` und `health_assessment` sind Objekte des JSON-Exports. Die Übernahme per HTTP ist getrennt abzustimmen.
+Die Tabelle enthält die 49 Standardspalten in der Reihenfolge von `SPALTEN` in `analyse.py` 4.10.1. Beim Einlesen älterer CSV-Dateien können vorhandene Zusatzspalten am Ende erhalten bleiben. `image_measurements` und `health_assessment` sind Objekte des JSON-Exports. Die Übernahme per HTTP ist getrennt abzustimmen.
 
 | CSV-Spalte | Einheit | Bedeutung | JSON-Zuordnung |
 |---|---|---|---|
@@ -193,6 +195,5 @@ Ein Pi-Abruffehler wird in der Konsole ausgegeben. Es wird dafür kein zusätzli
 
 ## 8 Maßgebliche Implementierung
 
-- [`analyse.py`](../analyse.py), Pipeline 4.10.0 und Scoring 4.1.0: `SPALTEN`, `API_MESSFELDER`, `API_GESUNDHEIT`, `api_datensatz`, `ergebnishistorie_verbinden` und `ergebnisse_speichern`.
+- [`analyse.py`](../analyse.py), Pipeline 4.10.1 und Scoring 4.1.0: `SPALTEN`, `API_MESSFELDER`, `API_GESUNDHEIT`, `api_datensatz`, `ergebnishistorie_verbinden` und `ergebnisse_speichern`.
 - [Bilderfassungssystem](BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md) und [Gesundheitsbewertung](BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md).
-- [Übergabe an die Plattform](../Atida-Handover.md).

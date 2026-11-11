@@ -1,8 +1,8 @@
 {
   "version": "0.1.0",
   "series_id": "pflanze-01",
-  "generated_at": "2026-11-11T08:51:57.041389Z",
-  "pipeline_version": "4.8.1",
+  "generated_at": "2026-11-11T16:17:00.355647Z",
+  "pipeline_version": "4.10.1",
   "scope": "visible_leaf_area_pixels",
   "status": "zu_wenige_vergleichbare_aufnahmen",
   "state": {
@@ -10,10 +10,16 @@
     "file_name": "basil03_20250208T120005Z.png",
     "leaf_pixels": 324503,
     "health_score": 77.3,
+    "leaf_area_cm2": null,
+    "diameter_mm": null,
+    "mm_per_px": null,
+    "scale_source": "nicht_kalibriert",
+    "growth_rate_pct_per_day": 1.743,
+    "growth_rate_cm2_per_day": null,
     "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
     "usable": true,
     "quality_flags": "gesundheit_ueber_blattfarbverteilung",
-    "age_hours": 15380.864,
+    "age_hours": 15388.282,
     "fresh": false
   },
   "forecast": null,
@@ -27,7 +33,7 @@
       "flaechensprung_pruefen": 2,
       "kamera_fuer_prognose_nicht_fest_genug": 2
     },
-    "comparison_group": "a6451123a91fadca0b441bb6390fa1b803394210d041fea36e9b65278e922860",
+    "comparison_group": "ae466afc4e0bb4a6a237bd835f0ddc162bdc89ca5846d82c2bf56eab40e4d4df",
     "first_at": "2025-02-08T12:00:05Z",
     "last_at": "2025-02-08T12:00:05Z"
   },
@@ -41,7 +47,7 @@
   "limitations": [
     "Technischer Prototyp; keine biologisch validierte Wachstumsprognose.",
     "Sichtbare Blattflaeche kann sich auch durch Blattstellung oder Maskenfehler aendern.",
-    "Die lokale 3D-Ansicht ist schematisch; Pflanzenhoehe und Tiefe sind nicht vermessen.",
+    "Die drehbare Ansicht nutzt sichtbare Blattkonturen; Pflanzenhoehe und Tiefe sind nicht vermessen.",
     "Pflegewirkungen sind ohne zugeordnete Sensor- und Aktionszeitreihen nicht gelernt."
   ]
 }

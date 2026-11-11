@@ -4,14 +4,14 @@
 | --- | --- |
 | Dokument-ID | BB-GUIDE-TWIN-001 |
 | Meilenstein | A-M4 · Digital-Twin-Modell |
-| Version | 1.5 |
+| Version | 1.6 |
 | Datum | 11.11.2026 |
-| Software | analyse.py 4.10.0 · Modell 0.1.0 · 3D-Ansicht 0.5.0 |
+| Software | analyse.py 4.10.1 · Modell 0.1.0 · 3D-Ansicht 0.5.1 |
 | Status | Prototyp für lokale Darstellung, Projektion und Szenarien |
 
 ## 1. Starten
 
-Mit `analyse.py` 4.10.0 wird im Projektordner folgender Befehl ausgeführt:
+Mit `analyse.py` 4.10.1 wird im Projektordner folgender Befehl ausgeführt:
 
 ```powershell
 python analyse.py
@@ -27,7 +27,7 @@ Die erzeugte Datei `auswertung/digital_twin_3d.html` kann auch per Doppelklick g
 
 ## 2. Pflanze ansehen und drehen
 
-Die Ansicht zeichnet die sichtbaren Blattkonturen des gewählten Fotos. Bei älteren Datensätzen ohne Konturen wird die Ansicht nach einer erneuten Analyse des Originals ergänzt. Zum Start wird die neueste Aufnahme ausgewählt. Über die Fotoauswahl und die Pfeile kann zwischen den Aufnahmen gewechselt werden. Bei mehreren Messreihen wird zusätzlich deren Auswahl angezeigt. Die Uhrzeiten werden in der Zeitzone Europe/Berlin dargestellt.
+Standardmäßig wird ein drehbares, schematisches 3D-Pflanzenmodell angezeigt. Über **Fotokonturen** wird zur sichtbaren Blattfläche aus dem gewählten Foto gewechselt. Bei älteren Datensätzen ohne Konturen bleibt das 3D-Modell nutzbar; die Konturen können aus einem verfügbaren Original neu berechnet werden. Zum Start wird die neueste Aufnahme ausgewählt. Über die Fotoauswahl und die Pfeile kann zwischen den Aufnahmen gewechselt werden. Bei mehreren Messreihen wird zusätzlich deren Auswahl angezeigt. Die Uhrzeiten werden in der Zeitzone Europe/Berlin dargestellt.
 
 | Bedienung | Wirkung |
 | --- | --- |
@@ -35,12 +35,12 @@ Die Ansicht zeichnet die sichtbaren Blattkonturen des gewählten Fotos. Bei ält
 | Umschalttaste halten und waagrecht ziehen | Das Modell zusätzlich seitlich kippen. |
 | Mausrad | Vergrößern oder verkleinern. |
 | „Drehen“ | Automatische Drehung starten oder anhalten. |
-| „Von oben“ | Projektion ohne Perspektivverzerrung mit der Ausrichtung des Fotos anzeigen. |
+| „Fotokonturen“ | Zur ebenen Ansicht des Fotos wechseln. Über „Zum 3D-Modell“ zurückkehren. |
 | „Ansicht zurück“ | Ausgangsperspektive und Vergrößerung wiederherstellen. |
 
 Nach einem Klick auf das Modell kann auch mit den Pfeiltasten gedreht werden. Umschalt mit Pfeil links oder rechts kippt das Modell seitlich. Plus und Minus ändern die Vergrößerung. Am Handy kann waagrecht über das Modell gewischt werden.
 
-Unter dem Modell stehen die Blattfläche im Foto und der **Gesundheitsscore**. **„Messdetails“** zeigt den Dateinamen, die Bewertung und ihre Teilwerte. Unter **„Foto, Blattmaske und Kontrolle“** stehen die verfügbaren Vorschauen der ausgewählten Aufnahme, soweit sie beim Export verfügbar sind. Das Kontrollbild zeigt die erkannten Blattkonturen auf dem Foto. In der HTML-Datei werden verkleinerte Vorschauen gespeichert. Zu älteren Aufnahmen können die gespeicherten Messwerte weiterhin angezeigt werden.
+Unter dem Modell stehen die Blattfläche im Foto und der **Gesundheitsscore**. Gültige Messwerte für Fläche in cm², Durchmesser in mm und Änderungsraten werden zusätzlich in den Messdetails angezeigt. **„Messdetails“** zeigt den Dateinamen, die Bewertung und ihre Teilwerte. Unter **„Foto, Blattmaske und Kontrolle“** stehen die verfügbaren Vorschauen der ausgewählten Aufnahme, soweit sie beim Export verfügbar sind. Das Kontrollbild zeigt die erkannten Blattkonturen auf dem Foto. In der HTML-Datei werden verkleinerte Vorschauen gespeichert. Zu älteren Aufnahmen können die gespeicherten Messwerte weiterhin angezeigt werden.
 
 ## 3. Wachstum testen
 
@@ -71,7 +71,7 @@ Unter **„Filter und Diagramm“** können Aufnahmen gesucht, nach fehlenden Sc
 | — | Ein Wert fehlt oder konnte nicht berechnet werden. Der Grund steht in der Bewertung. |
 | Referenzfoto | Ausgangsaufnahme für den Vergleich. |
 
-Die Konturen kommen aus der finalen Blattmaske. Für das automatische Aufteilen werden Blattkerne in der Maske gesucht und über Watershed getrennt. Der automatische Zählwert ist eine Schätzung: Besonders dichte, überlappende oder unvollständig maskierte Bereiche können zusammengefasst oder geteilt werden. In **Messdetails** stehen die sichtbaren Pixel je Blattbereich und ihr Anteil an der gesamten Maske. Breite und Höhe beziehen sich auf die sichtbare Ausdehnung im Bild. Das Modell übernimmt beide Achsen im gleichen Maßstab. Die Ansicht ist drehbar, zeigt aber nur die Fotoebene; tatsächliche Höhe, Tiefe und verdeckte Blattflächen werden nicht gemessen.
+Die Konturen kommen aus der finalen Blattmaske. Für das automatische Aufteilen werden Blattkerne in der Maske gesucht und über Watershed getrennt. Der automatische Zählwert ist eine Schätzung: Besonders dichte, überlappende oder unvollständig maskierte Bereiche können zusammengefasst oder geteilt werden. In **Messdetails** stehen die sichtbaren Pixel je Blattbereich und ihr Anteil an der gesamten Maske. Breite und Höhe beziehen sich auf die sichtbare Ausdehnung im Bild. Das Modell übernimmt beide Achsen im gleichen Maßstab. Die Fotokonturen zeigen die Fotoebene; tatsächliche Höhe, Tiefe und verdeckte Blattflächen werden nicht gemessen.
 
 Für einen geprüften sichtbaren Blattzählwert kann eine Graustufen-PNG in Originalgröße mit genau einer ID je Blatt eingelesen werden. Im Hintergrund ist der Wert 0, Blatt 1 hat den Wert 1, Blatt 2 den Wert 2 usw. Die positiven Pixel müssen gemeinsam genau die finale Blattmaske ergeben. Bei entzerrten Aufnahmen werden die Koordinaten der ausgegebenen Maske verwendet. Die Zuordnung wird an den Inhalt des Fotos gebunden:
 
