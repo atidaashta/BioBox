@@ -4,10 +4,10 @@
 |---|---|
 | Dokument-ID | BB-REF-MERKMALE-001 |
 | Meilenstein | A-M2 · Computer-Vision-Pipeline |
-| Version | 3.6 |
+| Version | 3.7 |
 | Datum | 11.11.2026 |
 | Autorin | Atida Ashta |
-| Pipeline | analyse.py 4.9.1 |
+| Pipeline | analyse.py 4.10.0 |
 | Bewertung | Scoring 4.1.0 |
 
 ## 1 Ausgabeprinzip
@@ -20,7 +20,7 @@ Die Kontrollausgabe heißt `auswertung/ergebnis.csv`. CSV bedeutet Comma-Separat
 
 ## 2 Spalten und Zuordnung
 
-Die Tabelle enthält die 49 Standardspalten in der Reihenfolge von `SPALTEN` in `analyse.py` 4.9.1. Beim Einlesen älterer CSV-Dateien können vorhandene Zusatzspalten am Ende erhalten bleiben. `image_measurements` und `health_assessment` sind Objekte des JSON-Exports. Die Übernahme per HTTP ist getrennt abzustimmen.
+Die Tabelle enthält die 49 Standardspalten in der Reihenfolge von `SPALTEN` in `analyse.py` 4.10.0. Beim Einlesen älterer CSV-Dateien können vorhandene Zusatzspalten am Ende erhalten bleiben. `image_measurements` und `health_assessment` sind Objekte des JSON-Exports. Die Übernahme per HTTP ist getrennt abzustimmen.
 
 | CSV-Spalte | Einheit | Bedeutung | JSON-Zuordnung |
 |---|---|---|---|
@@ -160,6 +160,10 @@ Bei erkannten Pi-Importen wird `image.storage_path` aus dem Sitzungsnamen als `r
 
 Im JSON stehen diese Zusatzinformationen unter `analysis`. `view_id` ist der SHA-256-Hash der Referenzdatei. Er kann sich mit dem 100-Bilder-Fenster oder der Bildauswahl ändern. Für die Modellhistorie können `twin_view_id` und `twin_camera_transform` eine nachgewiesene Ansichtsverbindung über mehrere Läufe abbilden. `series_id` trennt Messreihen; `image_size` wird als `[Höhe, Breite]` angegeben. `health_comparison_mode` kennzeichnet die Verfahren aus [A-M3](BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md).
 
+### Blattgeometrie für den Digital Twin
+
+`analysis.leaf_geometry` enthält die Konturen in gemeinsamen, auf die Bildgröße normierten Koordinaten. `width_px` und `height_px` beschreiben die Ausdehnung der sichtbaren Gesamtmaske; `leaves[].pixels` gibt die Fläche des jeweiligen Teilbereichs an. `method` unterscheidet `estimated` und `manual`. Ohne verfügbare Konturen ist das Objekt `null` oder fehlt in älteren Exporten. Die CSV-Spalten bleiben gleich. Der Zählwert betrifft nur sichtbare, voneinander getrennte oder manuell zugeordnete Flächen.
+
 ## 6 Diagramme und Dateien
 
 Alle Schritte werden durch `analyse.py` ausgeführt.
@@ -175,7 +179,7 @@ Alle Schritte werden durch `analyse.py` ausgeführt.
 
 Die Bildliste wird nach jedem normalen Abrufversuch frisch aus dem lokalen Ordner gebildet, unabhängig von dessen Erfolg. Auch selbst hinzugefügte Bilder werden erfasst. Die vorhandenen Originale werden neu ausgewertet. `--nur-bild` überspringt die Analyse. Automatische Masken und Kontrollen werden in `masken/` und `kontrolle/` aktualisiert; dateigenaue Korrekturen bleiben in `masken_korrektur/`. Die Diagramme werden auch bei fehlenden Einzelwerten mit dem jeweiligen Status ausgegeben. `digital_twin.json`, `digital_twin_3d.html` und `digital_twin_3d.css` werden im selben Analyselauf erzeugt. Modell und Browseransicht sind in [A-M4](BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) beschrieben.
 
-Blattanzahl, Pflanzenhöhe und eine absolute biologische Gesundheitswahrscheinlichkeit werden nicht zusätzlich erfunden. Die tatsächliche Datenquelle bleibt das Originalfoto mit der finalen sichtbaren Blattmaske.
+Die sichtbare Blattanzahl wird in der Browseransicht geschätzt oder aus manuellen Blattlabels übernommen. Pflanzenhöhe und eine absolute biologische Gesundheitswahrscheinlichkeit werden nicht berechnet. Die tatsächliche Datenquelle bleibt das Originalfoto mit der finalen sichtbaren Blattmaske.
 
 ## 7 Aufbewahrung und Herkunft
 
@@ -189,6 +193,6 @@ Ein Pi-Abruffehler wird in der Konsole ausgegeben. Es wird dafür kein zusätzli
 
 ## 8 Maßgebliche Implementierung
 
-- [`analyse.py`](../analyse.py), Pipeline 4.9.1 und Scoring 4.1.0: `SPALTEN`, `API_MESSFELDER`, `API_GESUNDHEIT`, `api_datensatz`, `ergebnishistorie_verbinden` und `ergebnisse_speichern`.
+- [`analyse.py`](../analyse.py), Pipeline 4.10.0 und Scoring 4.1.0: `SPALTEN`, `API_MESSFELDER`, `API_GESUNDHEIT`, `api_datensatz`, `ergebnishistorie_verbinden` und `ergebnisse_speichern`.
 - [Bilderfassungssystem](BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md) und [Gesundheitsbewertung](BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md).
 - [Übergabe an die Plattform](../Atida-Handover.md).
