@@ -4,7 +4,7 @@ Bildgestützte Beobachtung von Pflanzen als Teil der Diplomarbeit **BioBox**. Au
 
 Dieses Repository dokumentiert den Teilbereich **Bildaufnahme, Bildauswertung und Zustandsbewertung** von **Atida Ashta** an der HTL Shkodra. Einstiegspunkt für die Verarbeitung ist `analyse.py`.
 
-**Projektstatus:** Entwicklung und Validierung · Bildanalyse 4.11.0, Zustandsindex 4.1.0 · Stand 12.11.2026. Der Aufnahme- und Analyseablauf ist implementiert. Die Genauigkeit der Blattmasken und die fachliche Aussage des Zustandsindex werden weiter untersucht; die direkte Backend-Anbindung ist geplant.
+**Projektstatus:** Entwicklung und Validierung · Bildanalyse 4.12.0, Zustandsindex 4.1.0 · Stand 12.11.2026. Der Aufnahme- und Analyseablauf ist implementiert. Die Genauigkeit der Blattmasken und die fachliche Aussage des Zustandsindex werden weiter untersucht; die direkte Backend-Anbindung ist geplant.
 
 ## Inhalt
 
@@ -226,8 +226,11 @@ python analyse.py --3d
 python analyse.py --3d-aus-json auswertung/ergebnis.json
 ```
 
-Der Browser zeigt das Modell zur letzten Aufnahme. Ziehen dreht die Pflanze. Mit dem Regler werden 0 bis 14 Tage nach der Aufnahme ausgewählt. Die Zahl unter dem Modell zeigt die sichtbare Blattfläche in Pixeln oder, bei gültigem Maßstab, in cm². Für ein Szenario wird eine geeignete gemessene Änderungsrate verwendet, sofern vorhanden. Sonst wird die verwendete Annahme von 2 % pro Tag direkt am Regler angegeben. Die 3D-Form ist eine Illustration und die zukünftige Fläche ein Szenario.
+Der Browser zeigt die Pflanze aus der letzten Aufnahme. Aus den sichtbaren Konturen und Farben werden gewölbte Blattflächen aufgebaut. Ziehen dreht die Pflanze. Unter **Blätter zählen** werden dieselben Blätter einzeln und nummeriert angezeigt. Ein `≈` kennzeichnet die automatisch geschätzte Anzahl. Überlappende Blätter können bei der Erkennung zusammenfallen. Die Tiefe und verdeckte Pflanzenteile sind aus dem einzelnen Foto nicht messbar.
 
+Mit dem Regler werden 0 bis 14 Tage nach der Aufnahme ausgewählt. Das Szenario verändert die Größe anhand einer geeigneten gemessenen Änderungsrate oder ersatzweise einer Annahme von 2 % pro Tag. Die Anzahl der dargestellten Blätter bleibt gleich. Die gemessene sichtbare Blattfläche steht weiterhin in den Ergebnissen.
+
+Nach dem Austausch des Skripts werden vorhandene Fotos mit `python analyse.py --lokal bilder` neu ausgewertet. Ist die automatische Anzahl bei einem Foto ungenau, können die sichtbaren Blätter [einzeln markiert werden](docs/BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md#sichtbare-blätter-nachzählen).
 
 ## Messverfahren und Referenz
 
@@ -311,6 +314,7 @@ Die Grafiken `02_wachstumsrate.png` und `04_gesundheit.png` markieren jede Aufna
 | `auswertung/digital_twin_3d.html` mit `digital_twin_3d.js` und `digital_twin_3d.css` | Lokale Browseransicht, JavaScript und Gestaltung |
 | `auswertung/massstab.npz` | Gespeicherte Referenzstrecke, sofern eingerichtet |
 | `auswertung/masken_korrektur/` | Dateigenaue manuelle Maskenkorrekturen |
+| `auswertung/blattlabels/` | Optionale Blattmarkierungen und importierte Blattlabels |
 | `kamera_kalibrierung.json` | Objektivprofil, sofern erstellt |
 
 Die Ausgabeordner werden bei der Verarbeitung erzeugt. Beim Pi-Abruf gilt der konfigurierte `BILDER_ORDNER`; bei lokalen Aufrufen kann `--ausgabe` den Zielordner festlegen. Ohne diese Option liegt `auswertung/` neben dem ausgewählten Bilderordner. Maßstab und manuelle Korrekturen gehören zum jeweiligen Messaufbau. Frühere automatisch erzeugte Referenzdateien werden nach einem erfolgreichen Lauf gezielt entfernt.

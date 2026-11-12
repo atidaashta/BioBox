@@ -4,14 +4,14 @@
 | --- | --- |
 | Dokument-ID | BB-GUIDE-TWIN-001 |
 | Meilenstein | A-M4 · Digital-Twin-Modell |
-| Version | 1.7 |
-| Datum | 11.11.2026 |
-| Software | analyse.py 4.11.0 · Modell 0.1.0 · 3D-Ansicht 0.6.0 |
+| Version | 1.8 |
+| Datum | 12.11.2026 |
+| Software | analyse.py 4.12.0 · Modell 0.1.0 · 3D-Ansicht 0.7.0 |
 | Status | Prototyp für lokale Darstellung, Projektion und Szenarien |
 
 ## 1. Starten
 
-Mit `analyse.py` 4.11.0 wird im Projektordner folgender Befehl ausgeführt:
+Mit `analyse.py` 4.12.0 wird im Projektordner folgender Befehl ausgeführt:
 
 ```powershell
 python analyse.py
@@ -25,17 +25,30 @@ python analyse.py --3d-aus-json auswertung/ergebnis.json
 
 Die erzeugte Datei `auswertung/digital_twin_3d.html` kann auch per Doppelklick geöffnet werden. `digital_twin_3d.js` und `digital_twin_3d.css` müssen im selben Ordner liegen. JavaScript baut die Oberfläche auf und zeichnet die Pflanze. Ein Webserver wird nicht benötigt.
 
+Bei Ergebnissen einer älteren Version wird mit `python analyse.py --lokal bilder` aus den vorhandenen Originalen neu segmentiert. Werden nur die gespeicherten JSON-Daten geöffnet, bleiben deren frühere Blattkonturen und Zählwerte maßgeblich.
+
 ## 2. Ansicht bedienen
 
-Die Seite öffnet die letzte Aufnahme automatisch. Wenn das zugehörige Original vorliegt, erscheint daneben eine kleine Vorschau. Die Pflanze wird mit der Maus oder per Touch gedreht; mit den Pfeiltasten lässt sich die Ansicht ebenfalls bedienen.
+Es wird das Modell der letzten Aufnahme gezeigt. Die Pflanze wird mit der Maus oder per Touch gedreht. Mit den Pfeiltasten lässt sich die Ansicht ebenfalls drehen; Doppelklick oder die Taste `Pos1` stellen die Startperspektive wieder her.
 
-Der Regler zeigt die Pflanze zum Zeitpunkt der Aufnahme oder 1 bis 14 Tage später. Unter dem Modell steht die sichtbare Blattfläche. Ohne gültigen Maßstab wird sie in Pixeln angegeben. Wenn kein Bild brauchbar ausgewertet werden konnte, wird kein Pflanzenzustand geschätzt.
+Über **Blätter zählen** werden alle im Modell verwendeten Blätter getrennt und nummeriert gezeigt. `≈` steht für eine automatisch geschätzte Anzahl. Über **Zur Pflanze** wird in die drehbare Ansicht gewechselt. Der Regler zeigt die Pflanze zum Aufnahmezeitpunkt oder als Szenario für 1 bis 14 Tage danach. Fehlen brauchbare Blattkonturen, wird kein Ersatzmodell aus erfundenen Blättern aufgebaut.
+
+### Sichtbare Blätter nachzählen
+
+Wenn Blätter im Originalfoto erkennbar sind, aber vom Programm falsch getrennt wurden, kann je sichtbarem Blatt einmal auf eine Stelle innerhalb des Blatts geklickt werden:
+
+```powershell
+python analyse.py --blaetter-markieren "bilder/FOTO.jpg"
+python analyse.py --lokal bilder
+```
+
+`FOTO.jpg` wird durch den tatsächlichen Dateinamen ersetzt. Mit Rechtsklick oder `U` wird der letzte Punkt entfernt, mit `R` werden alle Punkte geleert und mit `F` wird zwischen Ausschnitt und ganzem Foto gewechselt. Gespeichert wird mit Enter. Beim nächsten Lauf wird je gültigem Punkt ein Blatt erzeugt. Liegt ein Punkt deutlich außerhalb der Messmaske, wird er bei der Prüfung gemeldet; dann kann die Markierung oder die Blattmaske korrigiert werden. Bereits importierte, passende Blattlabel-PNGs haben Vorrang.
 
 ## 3. Was das Modell darstellt
 
-Die räumliche Darstellung verwendet, soweit vorhanden, die geschätzte oder beschriftete Zahl sichtbarer Blätter und deren relative Flächen. Die räumliche Anordnung, Stiele und Höhe werden nur illustriert. Eine einzelne Aufnahme liefert keine dreidimensionale Vermessung.
+Für jede erkannte oder markierte Blattregion wird eine gewölbte Oberfläche aufgebaut. Position, Länge, Breite, Orientierung, sichtbare Kontur und Grundfarbe werden aus der zugehörigen Bildregion angenähert. Tiefe, Stiele und Blattwölbung werden modelliert. Für senkrecht von oben aufgenommene Bilder kann oben im Skript `TWIN_FOTOANSICHT = "oben"` gesetzt werden. Eine einzelne Aufnahme liefert keine dreidimensionale Vermessung und zeigt keine vollständig verdeckten Blätter.
 
-Für spätere Tage wird die Blattfläche mit einer verfügbaren geprüften Änderungsrate aus einem Vergleich über mindestens zwölf Stunden fortgeschrieben. Falls eine solche Rate fehlt, zeigt die Ansicht ein ausdrücklich als Annahme gekennzeichnetes Szenario mit 2 % pro Tag. Der Regler ändert keine Messwerte.
+Für spätere Tage wird die Modellgröße anhand einer verfügbaren geprüften Änderungsrate aus einem Vergleich über mindestens zwölf Stunden angepasst. Falls eine solche Rate fehlt, werden 2 % pro Tag als Annahme verwendet. Die Ansicht kennzeichnet spätere Tage als Szenario. Die Form wird nur in einem begrenzten Größenbereich skaliert; eine neue Blattanzahl und ein genauer späterer Wuchs werden daraus nicht abgeleitet. Der Regler ändert keine Messwerte.
 
 ## 4. Dateien
 

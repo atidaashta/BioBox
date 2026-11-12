@@ -17,6 +17,7 @@ Einzelbilder verschiedener Pflanzen: python analyse.py --lokal bilder --einzelbi
 Neue Pflanze / geaenderter Aufbau: eigener Bildordner (Referenz nur im RAM).
 Maske pruefen/korrigieren: python analyse.py --maske-korrigieren bilder/FOTO.jpg
 Import einer geprueften Originalmaske: zusaetzlich --korrekturmaske MASKE.png
+Sichtbare Blätter markieren: python analyse.py --blaetter-markieren bilder/FOTO.jpg
 
 Jeder Lauf berechnet alle ausgewaehlten Bilder erneut, auch alte Aufnahmen.
 Fotoabruf und lokale Auswertung sind unabhaengig: Auch bei einem SSH-Fehler
@@ -28,8 +29,8 @@ Vorhandene Fotos werden neu ausgewertet und ohne doppelte Eintraege aktualisiert
 Die 100-Bilder-Grenze betrifft Kamera-JPEGs, nicht die Ergebnishistorie.
 Grafiken zeigen auch die gespeicherten Werte; alte Bilddateien werden nicht kopiert.
 Digital Twin: auswertung/digital_twin.json und grafiken/06_digital_twin.png.
-Drehbare Ansicht der Blattkonturen: auswertung/digital_twin_3d.html und digital_twin_3d.css.
-Beide Dateien bleiben fuer die lokale Ansicht im selben Ordner.
+Drehbare Pflanze: auswertung/digital_twin_3d.html mit zugehoeriger JS- und CSS-Datei.
+Die drei Dateien bleiben fuer die lokale Ansicht im selben Ordner.
 Vorhandenes JSON ansehen: python analyse.py --3d
 Anderes JSON ansehen: python analyse.py --3d-aus-json auswertung/ergebnis.json
 Neue Analyse und Browser: python analyse.py --lokal bilder --3d
@@ -84,7 +85,6 @@ OpenCV: docs.opencv.org/4.x/d7/d1b/group__imgproc__misc.html (Otsu)
 """
 
 import argparse
-import base64
 import contextlib
 import copy
 import csv
@@ -130,13 +130,14 @@ KALIBRIERUNG = Path(__file__).resolve().with_name("kamera_kalibrierung.json")
 SCHACHBRETT = (9, 6)
 FELD_MM = 25.0
 ROI_NORMIERT = None  # Optional: (links, oben, rechts, unten), Werte 0..1.
+TWIN_FOTOANSICHT = "seite"  # "oben" für eine senkrechte Kamera über dem Topf.
 ARBEITSBREITE = 960
 CHROMA_MIN = 4            # a*-Mindestabstand von Grau; darunter keine Pflanze
 RATE_MIN_MINUTEN = 30    # Kurzer Vergleich; hohe Schwankung moeglich
 RATE_STABIL_STUNDEN = 12  # Wenn verfuegbar, laengeren Abstand bevorzugen
 SCORING_VERSION = "4.1.0"
-ANALYSE_VERSION = "4.11.0"
-TWIN_3D_VERSION = "0.6.0"
+ANALYSE_VERSION = "4.12.0"
+TWIN_3D_VERSION = "0.7.0"
 TWIN_3D_DATEI = "digital_twin_3d.html"
 TWIN_3D_CSS_DATEI = "digital_twin_3d.css"
 TWIN_3D_JS_DATEI = "digital_twin_3d.js"
@@ -3072,70 +3073,295 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
     return rows
 
 
-def twin_blattlabels(maske):
-    """Vorsichtige Instanzschätzung: markierte Kerne, Watershed, keine Tiefenschätzung."""
-    h, w = maske.shape
-    faktor = min(1., 520/max(h,w))
-    klein = cv2.resize(maske, (max(1,round(w*faktor)),max(1,round(h*faktor))),
-                       interpolation=cv2.INTER_AREA) > 127
-    fg = np.pad(klein.astype(np.uint8), 2)
-    n, komponenten, stats, _ = cv2.connectedComponentsWithStats(fg, connectivity=8)
-    d = cv2.distanceTransform(fg, cv2.DIST_L2, 5)
-    maxima = (d >= cv2.dilate(d, _kern(9))-1e-5) & (d >= 2.)
-    marker = np.zeros(fg.shape, np.int32)
-    marker[fg == 0] = 1
-    nr = 1
-    min_flaeche = max(8, round(.0025*np.count_nonzero(fg)))
-    for i in range(1,n):
-        x,y,b,hc,a = stats[i]
-        part = komponenten[y:y+hc,x:x+b] == i
-        lokal = d[y:y+hc,x:x+b]
-        tief = float(lokal[part].max())
-        if a < min_flaeche:
+TWIN_MAX_BLAETTER = 200
+
+
+def blattpunkte_pfad(ausgabe, sha, entzerrt):
+    # Derselbe Kamera-Koordinatenbezug wie bei der manuellen Blattmaske.
+    return Path(ausgabe)/"blattlabels"/(korrektur_pfad(ausgabe,sha,entzerrt).stem+".json")
+
+
+def blattpunkte_laden(pfad, form):
+    daten = json.loads(pfad.read_text(encoding="utf-8"))
+    punkte = daten.get("punkte") if isinstance(daten,dict) and daten.get("form")==list(form) else None
+    h,w = form
+    if (not isinstance(punkte,list) or not 1 <= len(punkte) <= TWIN_MAX_BLAETTER
+            or any(not isinstance(p,list) or len(p)!=2 or any(type(n) is not int for n in p)
+                   or not (0 <= p[0] < w and 0 <= p[1] < h) for p in punkte)
+            or len(set(map(tuple,punkte)))!=len(punkte)):
+        raise ValueError("Blattmarkierungen haben unpassende Koordinaten oder doppelte Punkte.")
+    return [tuple(p) for p in punkte]
+
+
+def blattpunkte_speichern(pfad, form, punkte):
+    pfad.parent.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=pfad.parent) as tmp:
+        datei = Path(tmp)/"punkte.json"
+        datei.write_text(json.dumps({"form":list(form),"punkte":punkte},ensure_ascii=False),encoding="utf-8")
+        blattpunkte_laden(datei,form)
+        datei.replace(pfad)
+
+
+def blaetter_markieren(foto, ausgabe, einzelbilder=False):
+    """Je Blatt eine bewusste Markierung im Original, ohne die Messmaske zu verändern."""
+    raw = foto.read_bytes()
+    bild = cv2.imdecode(np.frombuffer(raw,np.uint8),cv2.IMREAD_COLOR)
+    if bild is None:
+        raise ValueError("Originalbild nicht lesbar.")
+    entzerrt = KALIBRIERUNG.is_file() and not einzelbilder
+    if entzerrt:
+        bild = objektiv_entzerren(bild,json.loads(KALIBRIERUNG.read_text(encoding="utf-8")))
+    if ((sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")))
+            or (hasattr(cv2,"currentUIFramework") and not cv2.currentUIFramework())):
+        raise ValueError("Kein OpenCV-Bildfenster verfügbar. Desktop mit opencv-contrib-python verwenden.")
+    sha = hashlib.sha256(raw).hexdigest()
+    pfad = blattpunkte_pfad(ausgabe,sha,entzerrt)
+    punkte = blattpunkte_laden(pfad,bild.shape[:2]) if pfad.is_file() else []
+    maske = korrektur_laden(ausgabe,sha,bild.shape[:2],entzerrt)
+    if maske is None:
+        maske = maske_verfeinern(bild,segmentieren(kleiner(bild)))
+    h,w = bild.shape[:2]
+    ganz = (0,0,w,h)
+    x,y,mw,mh = cv2.boundingRect(maske)
+    rand = max(16,round(.09*max(mw,mh)))
+    nah = (max(0,x-rand),max(0,y-rand),min(w,x+mw+rand),min(h,y+mh+rand)) if mw and mh else ganz
+    ansicht = {}
+    def rahmen(bbox):
+        x0,y0,x1,y1 = bbox
+        faktor = min(1.,1250/(x1-x0),740/(y1-y0))
+        b,hc = max(1,round((x1-x0)*faktor)),max(1,round((y1-y0)*faktor))
+        ansicht.update(bild=cv2.resize(bild[y0:y1,x0:x1],(b,hc),interpolation=cv2.INTER_AREA),
+                       bbox=bbox, sx=b/(x1-x0), sy=hc/(y1-y0))
+    def klicken(event,px,py,flags,param):
+        if event==cv2.EVENT_RBUTTONDOWN and punkte:
+            punkte.pop()
+        elif event==cv2.EVENT_LBUTTONDOWN and len(punkte)<TWIN_MAX_BLAETTER:
+            x0,y0,x1,y1 = ansicht["bbox"]
+            punkt = (min(x1-1,x0+int((px+.5)/ansicht["sx"])),min(y1-1,y0+int((py+.5)/ansicht["sy"])))
+            if px>=0 and py>=0 and all(math.dist(p,punkt)>2 for p in punkte):
+                punkte.append(punkt)
+    titel = "BioBox - Sichtbare Blaetter markieren"
+    print("Ein Klick pro sichtbarem Blatt. Rechts/U: zurück, R: leeren, F: ganzes Foto, Enter: speichern, Esc: abbrechen.")
+    rahmen(nah)
+    try:
+        cv2.namedWindow(titel,cv2.WINDOW_AUTOSIZE)
+        cv2.setMouseCallback(titel,klicken)
+        while True:
+            vorschau = ansicht["bild"].copy()
+            x0,y0,x1,y1 = ansicht["bbox"]
+            for i,(px,py) in enumerate(punkte,1):
+                if not (x0<=px<x1 and y0<=py<y1):
+                    continue
+                bx = min(vorschau.shape[1]-1,int((px-x0+.5)*ansicht["sx"]))
+                by = min(vorschau.shape[0]-1,int((py-y0+.5)*ansicht["sy"]))
+                cv2.circle(vorschau,(bx,by),4,(16,19,14),-1,cv2.LINE_AA)
+                cv2.circle(vorschau,(bx,by),2,(151,252,233),-1,cv2.LINE_AA)
+                for farbe,dicke in [((18,21,18),3),((235,254,242),1)]:
+                    cv2.putText(vorschau,str(i),(bx+5,by-4),cv2.FONT_HERSHEY_SIMPLEX,.43,farbe,dicke,cv2.LINE_AA)
+            cv2.imshow(titel,vorschau)
+            key = cv2.waitKey(35)&255
+            if key==27 or cv2.getWindowProperty(titel,cv2.WND_PROP_VISIBLE)<1:
+                return None
+            if key in (10,13) and punkte:
+                blattpunkte_speichern(pfad,bild.shape[:2],punkte)
+                return len(punkte)
+            if key in (ord('u'),ord('U')) and punkte:
+                punkte.pop()
+            if key in (ord('r'),ord('R')):
+                punkte.clear()
+            if key in (ord('f'),ord('F')):
+                rahmen(ganz if ansicht["bbox"]==nah else nah)
+    except cv2.error as fehler:
+        raise ValueError("Bildfenster nicht verfügbar. Alternativ --blattlabels FOTO LABEL_PNG verwenden.") from fehler
+    finally:
+        try:cv2.destroyAllWindows()
+        except cv2.error:pass
+
+
+def twin_blatt_zuordnung(fg, punkte, bild=None):
+    """Jeder Kern bleibt erhalten; nur nahe Bildkanten dürfen die Teilung verschieben."""
+    kerne = np.ones(fg.shape,np.uint8)
+    ys,xs = np.asarray(punkte,np.int32).T
+    kerne[ys,xs] = 0
+    _, ids = cv2.distanceTransformWithLabels(kerne,cv2.DIST_L2,5,labelType=cv2.DIST_LABEL_PIXEL)
+    lut = np.zeros(int(ids.max())+1,np.uint16)
+    lut[ids[ys,xs]] = np.arange(1,len(punkte)+1,dtype=np.uint16)
+    labels = lut[ids]
+    if bild is not None and len(punkte)>1:
+        # Watershed allein verschluckte bei dichter Krone kleine Blattregionen.
+        # Die nächstgelegenen Kerne bilden deshalb feste Inseln im Farbbild.
+        d = cv2.distanceTransform(kerne,cv2.DIST_L2,5)
+        marker = np.where(fg,np.where(d<=2.4,labels+1,0),1).astype(np.int32)
+        marker[ys,xs] = np.arange(2,len(punkte)+2,dtype=np.int32)
+        topo = cv2.GaussianBlur(bild,(3,3),.65)
+        cv2.watershed(topo,marker)
+        py,px = np.nonzero(fg & (marker>1) & (d>2.4))
+        idx = marker[py,px]-2
+        abstand = np.hypot(py-ys[idx],px-xs[idx])
+        nah = abstand <= 1.27*d[py,px]+2.3
+        labels[py[nah],px[nah]] = idx[nah]+1
+    labels[~fg] = 0
+    return labels
+
+
+def twin_farbkerne(fg, farben, punkte, labels, dist):
+    """Zusätzliche Kerne nur in großen Teilflächen mit sichtbaren Farbkanten."""
+    if len(punkte)<8 or len(punkte)>=TWIN_MAX_BLAETTER:
+        return punkte
+    zaehler = np.bincount(labels.ravel(),minlength=len(punkte)+1)
+    typisch = max(18.,float(np.median(zaehler[1:])))
+    gross = zaehler>2.9*typisch
+    gross[0] = False
+    if not np.any(gross):
+        return punkte
+    l,a,b = cv2.split(cv2.cvtColor(farben,cv2.COLOR_BGR2LAB))
+    e1 = cv2.Canny(cv2.GaussianBlur(l,(5,5),1.),20,42)
+    e2 = cv2.Canny(cv2.GaussianBlur(a,(5,5),1.),12,24)
+    kanten = cv2.morphologyEx(e1|e2,cv2.MORPH_CLOSE,_kern(3))>0
+    kantenzahl = np.bincount(labels[kanten&fg],minlength=len(zaehler))
+    gross &= kantenzahl>=.055*zaehler
+    chroma = cv2.absdiff(a,128).astype(np.uint16)+cv2.absdiff(b,128)
+    innen = fg & ~kanten & (chroma>=9)
+    d = cv2.distanceTransform(innen.astype(np.uint8),cv2.DIST_L2,5)
+    r = max(2.5,min(4.2,.0051*max(fg.shape)))
+    maxima = (d>=cv2.dilate(d,_kern(9))-1e-5)&(d>=r)&(dist>=r*.75)&gross[labels]
+    neue = list(punkte)
+    anzahl = np.zeros(len(zaehler),dtype=int)
+    for y,x in sorted(zip(*np.nonzero(maxima)),key=lambda p:-d[p]):
+        ident = labels[y,x]
+        if anzahl[ident]>=min(7,int(zaehler[ident]/(typisch*1.75))-1):
             continue
-        kandidaten = np.argwhere(part & maxima[y:y+hc,x:x+b] & (lokal >= max(2., .24*tief)))
-        if not len(kandidaten):
-            kandidaten = np.array([np.unravel_index(np.argmax(np.where(part,lokal,0)),lokal.shape)])
-        kerne = []
-        for cy,cx in sorted(kandidaten,key=lambda p:-lokal[tuple(p)]):
-            cy,cx = int(cy)+y,int(cx)+x
-            r = d[cy,cx]
-            getrennt = True
-            for ay,ax in kerne:
-                if np.hypot(ay-cy,ax-cx) <= .95*(d[ay,ax]+r):
-                    getrennt = False
-                    break
-                ys = np.rint(np.linspace(ay,cy,11)).astype(int)
-                xs = np.rint(np.linspace(ax,cx,11)).astype(int)
-                if d[ys,xs].min() >= .77*r:
-                    getrennt = False
-                    break
-            if getrennt:
-                nr += 1
-                marker[cy,cx] = nr
-                kerne.append((cy,cx))
-                if nr > 201:
-                    return None
-    if nr == 1:
+        if any(math.hypot(y-ay,x-ax)<max(6.,.87*(d[y,x]+d[ay,ax])) for ay,ax in neue):
+            continue
+        neue.append((int(y),int(x)))
+        anzahl[ident] += 1
+        if len(neue)==TWIN_MAX_BLAETTER:
+            break
+    return neue
+
+
+def twin_geometriemaske(maske):
+    """Entfernte kleine Splitter nur für die Blattform ignorieren."""
+    n,komps,stats,_ = cv2.connectedComponentsWithStats(maske,connectivity=8)
+    if n<=2:
+        return maske
+    total = int(stats[1:,4].sum())
+    gross = [s for s in stats[1:] if s[4]>=.012*total]
+    if not gross:
+        return maske
+    _,_,w,h = cv2.boundingRect(maske)
+    behalten = np.ones(n,np.uint8)*255
+    behalten[0] = 0
+    for i,(x,y,b,hc,area) in enumerate(stats[1:],1):
+        if area<.0045*total and all(math.hypot(max(0,u-x-b,x-u-bu),max(0,v-y-hc,y-v-hv))>
+                                    .078*max(w,h) for u,v,bu,hv,_ in gross):
+            behalten[i] = 0
+    return behalten[komps] if np.any(behalten[1:]==0) else maske
+
+
+def twin_blattlabels(maske, bild=None, markierungen=None):
+    """Kerne in der Blattmaske finden und entlang der Foto-Kanten trennen."""
+    x,y,w,h = cv2.boundingRect(maske)
+    if not w or not h:
         return None
-    # Der Abstand zur Maskenkante definiert die Topographie.
-    relief = np.rint(255*(1-d/max(float(d.max()),1.))).astype(np.uint8)
-    cv2.watershed(cv2.cvtColor(relief,cv2.COLOR_GRAY2BGR),marker)
-    valid = (marker>1)&(fg>0)
-    if not valid.any():
-        return None
-    # Watershed-Grenzpixel und kleine Splitter anhand des nächsten Segments
-    # zuordnen. Die endgültige Gesamtfläche kommt immer aus der Originalmaske.
-    _, next_id = cv2.distanceTransformWithLabels((~valid).astype(np.uint8), cv2.DIST_L2, 5,
-                                                 labelType=cv2.DIST_LABEL_PIXEL)
-    lut = np.zeros(int(next_id.max())+1,np.uint16)
-    lut[next_id[valid]] = marker[valid]-1
-    labels = cv2.resize(lut[next_id][2:-2,2:-2], (w,h), interpolation=cv2.INTER_NEAREST)
+    skala = min(1.,820/max(w,h))
+    groesse = (max(1,round(w*skala)),max(1,round(h*skala)))
+    roh = maske[y:y+h,x:x+w]>0
+    fg = cv2.resize(roh.astype(np.uint8),groesse,interpolation=cv2.INTER_AREA)>0
+    if markierungen is not None:
+        punkte = []
+        toleranz = max(3,round(.003*max(w,h)))
+        for nr,(px,py) in enumerate(markierungen,1):
+            rx,ry = px-x,py-y
+            if not (0<=ry<h and 0<=rx<w and roh[ry,rx]):
+                x1,x2 = max(0,rx-toleranz),min(w,rx+toleranz+1)
+                y1,y2 = max(0,ry-toleranz),min(h,ry+toleranz+1)
+                if x1>=x2 or y1>=y2:
+                    raise ValueError(f"Blattpunkt {nr} liegt außerhalb der Maske.")
+                gy,gx = np.nonzero(roh[y1:y2,x1:x2]); gy,gx = gy+y1,gx+x1
+                if not len(gy):
+                    raise ValueError(f"Blattpunkt {nr} liegt außerhalb der Maske.")
+                i = np.argmin((gy-ry)**2+(gx-rx)**2)
+                ry,rx = int(gy[i]),int(gx[i])
+            punkte.append((ry,rx))
+        if len(set(punkte))!=len(punkte):
+            raise ValueError("Zwei Blattpunkte liegen auf demselben Maskenpixel.")
+        klein = [(int((py+.5)*groesse[1]/h),int((px+.5)*groesse[0]/w)) for py,px in punkte]
+        if len(set(klein))==len(klein):
+            punkte = klein
+        else:
+            fg,groesse = roh,(w,h)
+        for py,px in punkte:
+            fg[py,px] = True
+    else:
+        pad = np.pad(fg.astype(np.uint8),2)
+        d = cv2.distanceTransform(pad,cv2.DIST_L2,5)
+        dist = d[2:-2,2:-2]
+        n, komps, stats, _ = cv2.connectedComponentsWithStats(fg.astype(np.uint8),connectivity=8)
+        radius = max(1.5,min(2.8,.0042*max(groesse)))
+        kern = _kern(max(5,min(13,2*round(.006*max(groesse))+1)))
+        maxima = (dist>=cv2.dilate(d,kern)[2:-2,2:-2]-1e-5)&(dist>=radius)
+        min_px = max(6,round(np.count_nonzero(fg)*.00033))
+        kandidaten = []
+        for i in range(1,n):
+            cx,cy,cw,ch,a = stats[i]
+            if a<min_px:
+                continue
+            lokal = dist[cy:cy+ch,cx:cx+cw]
+            part = komps[cy:cy+ch,cx:cx+cw]==i
+            tief = float(lokal[part].max())
+            if tief<radius:
+                continue
+            ys,xs = np.nonzero(part&maxima[cy:cy+ch,cx:cx+cw])
+            if not len(ys):
+                ys,xs = np.array(np.unravel_index(np.argmax(np.where(part,lokal,0)),lokal.shape)).reshape(2,1)
+            kandidaten.extend((int(py)+cy,int(px)+cx) for py,px in zip(ys,xs))
+        punkte = []
+        for py,px in sorted(kandidaten,key=lambda p:-dist[p]):
+            r = dist[py,px]
+            nah = False
+            for ay,ax in punkte:
+                abstand = math.hypot(py-ay,px-ax)
+                ra = dist[ay,ax]
+                if abstand<=max(5.,.68*(min(ra,20)+min(r,20))):
+                    nah = True
+                    break
+                if abstand<=2.4*(ra+r):
+                    ys = np.rint(np.linspace(ay,py,9)).astype(int)
+                    xs = np.rint(np.linspace(ax,px,9)).astype(int)
+                    if dist[ys,xs].min()>=.85*min(ra,r):
+                        nah = True
+                        break
+            if not nah:
+                punkte.append((py,px))
+            if len(punkte)==TWIN_MAX_BLAETTER:
+                break
+        if not punkte:
+            if not np.count_nonzero(fg)>=5:
+                return None
+            punkte = [np.unravel_index(dist.argmax(),dist.shape)]
+    farben = cv2.resize(bild[y:y+h,x:x+w],groesse,interpolation=cv2.INTER_AREA) if bild is not None else None
+    if markierungen is None and farben is not None:
+        punkte = twin_farbkerne(fg,farben,punkte,twin_blatt_zuordnung(fg,punkte),dist)
+    klein = twin_blatt_zuordnung(fg,punkte,farben)
+    labels = np.zeros(maske.shape,np.uint16)
+    labels[y:y+h,x:x+w] = cv2.resize(klein,(w,h),interpolation=cv2.INTER_NEAREST_EXACT)
+    # Jeder Original-Maskenpixel hat einen gültigen Nachbarkern, auch an dünnen Rändern.
+    bereich = labels[y:y+h,x:x+w]
+    luecken = roh&(bereich==0)
+    if luecken.any():
+        vorhanden = bereich>0
+        if not vorhanden.any():
+            return None
+        _, ids = cv2.distanceTransformWithLabels((~vorhanden).astype(np.uint8),cv2.DIST_L2,5,labelType=cv2.DIST_LABEL_PIXEL)
+        lut = np.zeros(int(ids.max())+1,np.uint16)
+        lut[ids[vorhanden]] = bereich[vorhanden]
+        bereich[luecken] = lut[ids[luecken]]
     labels[maske==0] = 0
     return labels
 
 
-def twin_blattgeometrie(bild, maske, labelpfad):
+def twin_blattgeometrie(bild, maske, labelpfad, punktpfad=None):
     """Konturen in einheitlichen Foto-Koordinaten; null ohne belastbare Maske."""
     if not np.any(maske):
         return None
@@ -3145,14 +3371,26 @@ def twin_blattgeometrie(bild, maske, labelpfad):
     if labelpfad.is_file():
         labels = cv2.imdecode(np.fromfile(labelpfad,dtype=np.uint8),cv2.IMREAD_UNCHANGED)
         if (labels is None or labels.ndim != 2 or labels.shape != maske.shape or
-                not np.array_equal(labels>0,maske>0) or len(np.unique(labels)) > 201):
+                labels.dtype not in (np.uint8,np.uint16) or not np.array_equal(labels>0,maske>0)
+                or len(np.unique(labels))>TWIN_MAX_BLAETTER+1):
             hinweis = "Blattlabels passen nicht zur aktuellen Maske."
             labels = None
         else:
             quelle = "manual"
+    if labels is None and punktpfad is not None and punktpfad.is_file():
+        try:
+            punkte = blattpunkte_laden(punktpfad,maske.shape)
+            labels = twin_blattlabels(maske,bild,punkte)
+            if labels is None or np.count_nonzero(np.bincount(labels.ravel())[1:])!=len(punkte):
+                raise ValueError("Mindestens ein Blattpunkt konnte keiner eigenen Maskenregion zugeordnet werden.")
+            quelle = "manual"
+            hinweis = "Blattanzahl manuell markiert; Grenzverläufe wurden geschätzt."
+        except (OSError,ValueError,TypeError,cv2.error) as fehler:
+            labels = None
+            hinweis = "Blattmarkierungen nicht übernommen: "+str(fehler).splitlines()[0]
     if labels is None:
         hinweis = hinweis or "Bei verdeckten oder zusammenhängenden Blättern ist der Zählwert unsicher."
-        labels = twin_blattlabels(maske)
+        labels = twin_blattlabels(twin_geometriemaske(maske),bild)
     if labels is None:
         return None
     x,y,w,h = cv2.boundingRect(maske)
@@ -3160,29 +3398,39 @@ def twin_blattgeometrie(bild, maske, labelpfad):
     cx,cy = x+(w-1)/2,y+(h-1)/2
     regions = labels[y:y+h,x:x+w]
     farben = bild[y:y+h,x:x+w]
+    ry,rx = np.nonzero(regions)
+    if not len(ry):
+        return None
+    ids = regions[ry,rx]
+    n = int(ids.max())+1
+    minx,miny = np.full(n,w),np.full(n,h)
+    maxx,maxy = np.zeros(n,dtype=int),np.zeros(n,dtype=int)
+    np.minimum.at(minx,ids,rx); np.minimum.at(miny,ids,ry)
+    np.maximum.at(maxx,ids,rx); np.maximum.at(maxy,ids,ry)
     blaetter = []
-    for ident in np.unique(regions):
-        if ident == 0:
-            continue
-        segment = (regions==ident).astype(np.uint8)
+    for ident in np.unique(ids):
+        x0,x1,y0,y1 = minx[ident],maxx[ident]+1,miny[ident],maxy[ident]+1
+        segment = (regions[y0:y1,x0:x1]==ident).astype(np.uint8)
         konturen,_ = cv2.findContours(segment,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
         ringe = []
-        for k in konturen:
+        for k in sorted(konturen,key=cv2.contourArea,reverse=True):
             if len(k)<3:
                 continue
             k = cv2.approxPolyDP(k,max(.65,cv2.arcLength(k,True)*.001),True).reshape(-1,2)
-            if len(k)>=3:
-                ringe.append([[round((int(a)+x-cx)/teiler,6),round((int(b)+y-cy)/teiler,6)] for a,b in k])
+            if len(k)>=3 and cv2.contourArea(k)>0:
+                ringe.append([[round((int(a)+x0+x-cx)/teiler,6),round((int(b)+y0+y-cy)/teiler,6)] for a,b in k])
         if not ringe:
-            continue
-        b,g,r,_ = cv2.mean(farben,mask=segment)
-        blaetter.append({"rings":ringe,"rgb":[round(r),round(g),round(b)],
-                         "pixels":cv2.countNonZero(segment)})
+            if quelle!="manual":
+                continue
+            # Auch ein manuell beschriftetes sehr kleines Blatt behält seine ID.
+            ringe = [[[round((a+x-cx)/teiler,6),round((b+y-cy)/teiler,6)] for a,b in
+                      ((x0-.5,y0-.5),(x1-.5,y0-.5),(x1-.5,y1-.5),(x0-.5,y1-.5))]]
+        b,g,r,_ = cv2.mean(farben[y0:y1,x0:x1],mask=segment)
+        blaetter.append({"rings":ringe,"rgb":[round(r),round(g),round(b)],"pixels":cv2.countNonZero(segment)})
     if not blaetter:
         return None
-    if sum(b["pixels"] for b in blaetter) != cv2.countNonZero(maske):
-        hinweis = "Einige Teilflächen waren für eigene Konturen zu klein."
-        quelle = "estimated"
+    if sum(b["pixels"] for b in blaetter)!=cv2.countNonZero(maske):
+        hinweis = hinweis or "Einige Teilflächen waren für eigene Konturen zu klein."
     return {"method":quelle,"width_px":w,"height_px":h,"extent":max(w,h)/teiler,
             "count":len(blaetter),"leaves":blaetter,"note":hinweis}
 
@@ -3339,8 +3587,10 @@ def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz
             stamm = f"{nummer:05d}_{pfad.stem}"
             png_speichern(masken/(stamm+"_maske.png"),maske)
             try:
+                sha = z["_sha256"]
                 z["_blattgeometrie"] = twin_blattgeometrie(
-                    bild,maske,ausgabe/"blattlabels"/(z["_sha256"]+".png"))
+                    bild,maske,ausgabe/"blattlabels"/(sha+".png"),
+                    blattpunkte_pfad(ausgabe,sha,kalibrierung is not None))
             except (OSError,ValueError,cv2.error) as fehler:
                 # Optionale Ansichtsgeometrie darf keine Bildmessung verwerfen.
                 z["_blattgeometrie"] = None
@@ -3348,6 +3598,9 @@ def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz
             if z["_blattgeometrie"] is not None:
                 z["sichtbare_blaetter"] = z["_blattgeometrie"]["count"]
                 z["blattzaehlung_quelle"] = z["_blattgeometrie"]["method"]
+                hinweis = z["_blattgeometrie"].get("note") or ""
+                if hinweis.startswith("Blattmarkierungen nicht übernommen:"):
+                    print(f"{pfad.name}: {hinweis}")
             z["_ausgabe_stamm"] = stamm
             erzeugt.add(stamm)
             # Erst nach der zeitlichen Glaettung den Score ins Kontrollbild setzen.
@@ -3400,7 +3653,7 @@ def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz
     grafiken(zeilen,ausgabe/"grafiken")
     twin = digital_twin(zeilen, twin_historie, einzelbilder)
     twin_speichern(twin, zeilen, ausgabe)
-    twin_3d_speichern(zeilen, twin, ausgabe, pfade)
+    twin_3d_speichern(zeilen, ausgabe)
     print("Digital Twin:", twin["status"], f"| {twin['training']['points']} vergleichbare Aufnahmen")
     if twin.get("forecast"):
         p = twin["forecast"]
@@ -3530,8 +3783,76 @@ def twin_pflege_einbetten(aufnahmen, ausgabe, auswahl=None):
         datei.replace(ziel)
 
 
-def twin_3d_daten(zeilen, twin, ausgabe=None, bildpfade=None, pflege_auswahl=None):
-    """Browser erhält nur die letzte Aufnahme und eine belegte Rate, sofern vorhanden."""
+def twin_blattnetz(blatt, extent):
+    """Ein 2D-Fotoquerschnitt pro Blatt, in gemeinsamen Kronenkoordinaten."""
+    konturen = []
+    for ring in blatt.get("rings") or ():
+        try:
+            p = np.asarray(ring,dtype=np.float32)
+            if p.ndim==2 and p.shape[1]==2 and len(p)>=3 and np.isfinite(p).all():
+                konturen.append(p)
+        except (ValueError,TypeError):
+            continue
+    if not konturen:
+        return None
+    p = max(konturen,key=cv2.contourArea)/extent
+    mom = cv2.moments(p)
+    if mom['m00']<=1e-11:
+        return None
+    mitte = np.array([mom['m10'],mom['m01']])/mom['m00']
+    cov = np.array([[mom['mu20'],mom['mu11']],[mom['mu11'],mom['mu02']]])/mom['m00']
+    eigen, achsen = np.linalg.eigh(cov)
+    achse = achsen[:,-1]
+    # Die Richtung folgt normalerweise vom Kroneninneren zur Blattspitze.
+    richtung = mitte-np.array([0.,0. if TWIN_FOTOANSICHT=="oben" else .16])
+    if eigen[1]<1.2*eigen[0] and np.linalg.norm(richtung)>.08:
+        achse = richtung/np.linalg.norm(richtung)
+    if np.dot(achse,richtung)<0:
+        achse = -achse
+    quer = np.array([-achse[1],achse[0]])
+    laengs = (p-mitte)@achse
+    seitlich = (p-mitte)@quer
+    naechst = np.roll(laengs,-1)
+    qs = np.roll(seitlich,-1)
+    minimum,maximum = float(laengs.min()),float(laengs.max())
+    if maximum-minimum<1e-5:
+        return None
+    def schnitt(stelle):
+        e = (np.minimum(laengs,naechst)<=stelle)&(stelle<np.maximum(laengs,naechst))
+        v = np.sort(seitlich[e]+(qs[e]-seitlich[e])*(stelle-laengs[e])/(naechst[e]-laengs[e]))
+        if not len(v):
+            i = int(np.argmin(abs(laengs-stelle)))
+            return float(seitlich[i]),float(seitlich[i])
+        return float(v[0]),float(v[-1])
+    # Geringe schmale Ausläufer (häufig Stielreste) beeinflussen die Länge weniger.
+    raster = np.linspace(minimum,maximum,66)
+    schnitte = [schnitt(float(v)) for v in (raster[1:]+raster[:-1])/2]
+    cum = np.cumsum([max(0.,hi-lo) for lo,hi in schnitte])
+    if cum[-1]>0:
+        a,b = np.searchsorted(cum,[.017*cum[-1],.983*cum[-1]])
+        minimum,maximum = float(raster[a]),float(raster[min(b+1,len(raster)-1)])
+    mitte = mitte+(minimum+maximum)*.5*achse
+    profile = []
+    for i in range(15):
+        u = i/14
+        t = minimum+(maximum-minimum)*min(.99999,max(.00001,u))
+        lo,hi = schnitt(t)
+        if i in (0,14):
+            lo = hi = (lo+hi)*.5
+        profile.append([round(lo,6),round(hi,6)])
+    rgb = blatt.get("rgb")
+    if not isinstance(rgb,(list,tuple)) or len(rgb)!=3 or any(not isinstance(v,(float,int)) or not math.isfinite(v) for v in rgb):
+        rgb = [75,118,48]
+    geglaettet = [profile[0]]+[
+        [round(.18*a+.64*b+.18*c,6) for a,b,c in zip(vor,jetzt,nach)]
+        for vor,jetzt,nach in zip(profile,profile[1:],profile[2:])]+[profile[-1]]
+    return {"center":mitte.round(6).tolist(),"axis":achse.round(6).tolist(),
+            "length":round(maximum-minimum,6),"profile":geglaettet,
+            "rgb":[round(min(255,max(0,v))) for v in rgb]}
+
+
+def twin_3d_daten(zeilen, ausgabe=None, pflege_auswahl=None):
+    """Nur die Konturen der letzten Aufnahme und eine belegte Rate an den Browser geben."""
     if pflege_auswahl is not None:
         # Der explizite CLI-Aufruf bleibt nutzbar; Tipps gelangen nicht in die Website.
         pflege = [{"file_name": z["bild"], "captured_at": z.get("captured_at"),
@@ -3546,54 +3867,38 @@ def twin_3d_daten(zeilen, twin, ausgabe=None, bildpfade=None, pflege_auswahl=Non
                 for tipp in r["care"]["schritte"]:
                     print("- "+tipp)
     if not zeilen:
-        return {"latest": (twin or {}).get("state"), "rate": None, "viewer_version": TWIN_3D_VERSION}
+        return {"latest":None,"rate":None,"viewer_version":TWIN_3D_VERSION}
     z = max(enumerate(zeilen), key=lambda pair: (
         historienzeit(pair[1].get("captured_at")) or datetime.min.replace(tzinfo=timezone.utc), pair[0]))[1]
-    satz = api_datensatz(z)
-    info = satz["analysis"]
-    geo = info.get("leaf_geometry")
-    foto = None
-    # Höchstens eine kleine Vorschau, ausschließlich zur eindeutig passenden Aufnahme.
-    kandidaten = [Path(p) for p in (bildpfade or ()) if Path(p).name == z["bild"]]
-    if not kandidaten and ausgabe is not None and Path(z["bild"]).name == z["bild"]:
-        kandidaten = [Path(ausgabe).parent/"bilder"/z["bild"]]
-    for pfad in kandidaten:
-        try:
-            raw = pfad.read_bytes()
-            if hashlib.sha256(raw).hexdigest() != z.get("_sha256"):
-                continue
-            bild = cv2.imdecode(np.frombuffer(raw,dtype=np.uint8),cv2.IMREAD_COLOR)
-            if bild is None:
-                continue
-            h,w = bild.shape[:2]
-            skala = min(1.,420/max(h,w))
-            klein = cv2.resize(bild,(max(1,round(w*skala)),max(1,round(h*skala))),interpolation=cv2.INTER_AREA)
-            ok,kodiert = cv2.imencode(".jpg",klein,[cv2.IMWRITE_JPEG_QUALITY,82])
-            if ok:
-                foto = "data:image/jpeg;base64,"+base64.b64encode(kodiert).decode("ascii")
-                break
-        except (OSError,cv2.error):
-            continue
+    info = z.get("_historie_export",{}).get("analysis",{}) if z.get("_historie_export") else {}
+    geo = z.get("_blattgeometrie") or info.get("leaf_geometry")
+    extent = geo.get("extent") if isinstance(geo,dict) else None
+    records = geo.get("leaves") if isinstance(geo,dict) else None
+    leavedata = []
+    if (isinstance(extent,(int,float)) and math.isfinite(extent) and 0<extent<=1
+            and isinstance(records,list) and len(records)<=TWIN_MAX_BLAETTER and z.get("brauchbar")):
+        for blatt in records:
+            form = twin_blattnetz(blatt,extent) if isinstance(blatt,dict) else None
+            if form is not None:
+                leavedata.append(form)
+    manuell = bool(leavedata and geo.get("method")=="manual" and len(leavedata)==geo.get("count"))
+    if not manuell:
+        leavedata.sort(key=lambda b:(round(b['center'][1],2),b['center'][0]))
     rate = z.get("wachstumsrate_pct_pro_tag")
     stunden = z.get("wachstum_abstand_stunden")
-    rate = rate if (z.get("brauchbar") and stunden is not None and stunden >= 12
-                    and rate is not None and -50 <= rate <= 100) else None
-    return json_sicher({
-        "latest": {"file_name": z["bild"], "captured_at": z.get("captured_at"),
-                   "usable": bool(z.get("brauchbar")), "leaf_pixels": z.get("pflanzen_pixel"),
-                   "leaf_area_cm2": z.get("blattflaeche_cm2"), "diameter_px": z.get("durchmesser_px"),
-                   "diameter_mm": z.get("durchmesser_mm"), "image_size": info.get("image_size"),
-                   "leaf_sizes": [b["pixels"] for b in geo["leaves"]] if geo else None,
-                   "leaf_count_method": geo.get("method") if geo else None, "photo": foto},
-        "rate": rate, "viewer_version": TWIN_3D_VERSION,
-    })
+    rate = rate if (leavedata and stunden is not None and stunden>=12
+                    and rate is not None and -50<=rate<=100) else None
+    return json_sicher({"latest":{"file_name":z["bild"],"captured_at":z.get("captured_at"),
+                                  "leaves":leavedata,"count_estimated":not manuell,
+                                  "view":"top" if TWIN_FOTOANSICHT=="oben" else "side"},
+                        "rate":rate,"viewer_version":TWIN_3D_VERSION})
 
 
-def twin_3d_speichern(zeilen, twin, ausgabe, bildpfade=None, pflege_auswahl=None):
-    """HTML und Stylesheet für die lokale Ansicht in denselben Ordner schreiben."""
+def twin_3d_speichern(zeilen, ausgabe, pflege_auswahl=None):
+    """HTML, JavaScript und Stylesheet der lokalen Ansicht zusammen erzeugen."""
     ausgabe = Path(ausgabe)
     ausgabe.mkdir(parents=True, exist_ok=True)
-    daten = twin_3d_daten(zeilen, twin, ausgabe, bildpfade, pflege_auswahl)
+    daten = twin_3d_daten(zeilen, ausgabe, pflege_auswahl)
     # JSON darf ein HTML-script-Element auch bei fremden Dateinamen nicht beenden.
     inhalt = json.dumps(daten, ensure_ascii=False, allow_nan=False).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
     ziel = ausgabe/TWIN_3D_DATEI
@@ -3633,7 +3938,7 @@ def twin_3d_aus_json(quelle, ausgabe, pflege_auswahl=None):
         raise ValueError("Bitte ergebnis.json oder digital_twin.json auswählen")
     if not isinstance(twin, dict):
         raise ValueError("digital_twin.json muss ein JSON-Objekt enthalten")
-    return twin_3d_speichern(zeilen, twin, ausgabe, pflege_auswahl=pflege_auswahl)
+    return twin_3d_speichern(zeilen, ausgabe, pflege_auswahl=pflege_auswahl)
 
 
 def twin_3d_oeffnen(pfad):
@@ -3646,28 +3951,32 @@ def twin_3d_oeffnen(pfad):
 
 # Vorlage für die separate CSS-Datei der lokalen Ansicht.
 TWIN_3D_CSS = r"""
-:root{color-scheme:light;--ink:#1e3129;--muted:#596e64;--line:#d8e2db;--accent:#2c694d;font-family:system-ui,sans-serif}
+:root{color-scheme:light;--ink:#203328;--muted:#536b5f;--line:#d9e4dc;--accent:#2c694d;font-family:system-ui,sans-serif}
 *{box-sizing:border-box}
 body{margin:0;background:#f6f8f5;color:var(--ink)}
-main{width:min(880px,100% - 32px);margin:38px auto}
-header{display:flex;justify-content:space-between;align-items:end;gap:12px;margin-bottom:14px}
-h1{font-size:clamp(24px,4vw,34px);letter-spacing:-.04em;margin:0}
-time{font-size:.83rem;color:var(--muted);text-align:right}
-.capture{display:flex;align-items:center;gap:10px}
-.capture img{width:72px;height:52px;object-fit:cover;border-radius:6px}
-.viewer{background:white;border:1px solid var(--line);border-radius:14px;overflow:hidden}
-canvas{display:block;width:100%;height:clamp(300px,55vh,520px);background:#e6eee7;touch-action:none;cursor:grab}
-canvas:active{cursor:grabbing}
-.controls{display:grid;gap:11px;padding:18px 22px}
-label,.measurements{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
-label{font-weight:600}
+main{width:min(940px,100% - 32px);margin:32px auto}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:14px}
+h1{font-size:clamp(24px,4vw,34px);letter-spacing:-.045em;margin:0}
+time{font-size:.82rem;color:var(--muted);text-align:right}
+.viewer{border:1px solid var(--line);border-radius:16px;background:#fff;overflow:hidden}
+.stage{height:clamp(325px,66vh,680px);position:relative;background:radial-gradient(ellipse at 46% 34%,#f8faf5,#e8f0e8 73%,#dce8df)}
+#plant{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+#plant:active{cursor:grabbing}
+#leaves-button{position:absolute;z-index:1;top:12px;right:12px;display:flex;align-items:center;gap:8px;padding:8px 11px;border:1px solid #cbd9ce;border-radius:10px;color:var(--ink);background:#fbfdf9;font:600 .83rem system-ui,sans-serif;cursor:pointer}
+#leaves-button:hover{background:#eaf3e9}
+.leaf-count{padding:1px 5px;background:#e4efe4;border-radius:5px;color:#30543d;font-variant-numeric:tabular-nums}
+.leaf-tray{position:absolute;inset:0;overflow:auto;padding:56px 14px 14px;overscroll-behavior:contain;background:#eef4ed}
+.leaf-tray ol{list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(68px,1fr));gap:6px;margin:0;padding:0}
+.leaf-tray li{min-width:0;display:grid;justify-items:center;gap:1px;padding:3px 0 5px;background:#fafcf8;border:1px solid #dce7dc;border-radius:8px;color:#3b594a;font-size:.72rem;font-variant-numeric:tabular-nums}
+.leaf-tray canvas{width:100%;max-width:78px;height:auto;display:block}
+.empty{position:absolute;inset:0;display:grid;place-items:center;margin:0;color:var(--muted);font-size:.9rem;pointer-events:none}
+.controls{display:grid;gap:11px;padding:16px 20px}
+.controls label{display:flex;justify-content:space-between;gap:12px;align-items:baseline;font-weight:600;font-size:.91rem}
+.controls output{color:var(--muted);font-weight:500;text-align:right}
 input[type=range]{width:100%;margin:0;accent-color:var(--accent)}
-.measurements{border-top:1px solid var(--line);padding-top:10px;color:var(--muted);font-size:.87rem}
-.measurements output{font-weight:700;color:var(--ink)}
-small{display:block;color:var(--muted);font-size:.79rem}
 [hidden]{display:none!important}
-:focus-visible{outline:3px solid var(--accent);outline-offset:-3px}
-@media(max-width:520px){main{margin:18px auto}.controls{padding:14px}.measurements{flex-wrap:wrap}}
+:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+@media(max-width:520px){main{margin:18px auto}.controls{padding:14px}.leaf-tray{padding-inline:8px}.leaf-tray ol{grid-template-columns:repeat(auto-fill,minmax(54px,1fr))}}
 """
 
 TWIN_3D_HTML = """<!doctype html>
@@ -3676,7 +3985,7 @@ TWIN_3D_HTML = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<meta name="biobox-viewer-version" content="0.6.0">
+<meta name="biobox-viewer-version" content="0.7.0">
 <title>BioBox</title>
 <link rel="stylesheet" href="digital_twin_3d.css">
 <script src="digital_twin_3d.js" defer></script>
@@ -3690,142 +3999,293 @@ TWIN_3D_HTML = """<!doctype html>
 
 TWIN_3D_JS = r"""
 'use strict';
-function element(tag, attrs={}, ...children){
- const e=document.createElement(tag);
- for(const [key,val] of Object.entries(attrs))e.setAttribute(key,val);
- e.append(...children);return e;
-}
-const r=BIOBOX_DATA.latest;
-const measured=r?.usable&&Number.isFinite(r.leaf_pixels)&&r.leaf_pixels>0?r.leaf_pixels:null;
-const rate=Number.isFinite(BIOBOX_DATA.rate)?BIOBOX_DATA.rate:null;
-const assumption=.02;
-const fmt=(n,d=0)=>Number.isFinite(n)?n.toLocaleString('de-DE',{maximumFractionDigits:d}):'—';
-const date=r?.captured_at||r?.observed_at;
-const timestamp=date&&Number.isFinite(Date.parse(date))?new Intl.DateTimeFormat('de-DE',
- {dateStyle:'medium',timeStyle:'short',timeZone:'Europe/Berlin'}).format(new Date(date)):'Aufnahmezeit unbekannt';
-const canvas=element('canvas',{tabindex:'0','aria-label':'Drehbares Pflanzenmodell'});
-const slider=element('input',{id:'days',type:'range',min:'0',max:'14',value:'0'});
-const dayText=element('output',{for:'days'});
-const area=element('output',{id:'area'});
-const note=element('small',{id:'projection-note','aria-live':'polite'});
-const controls=element('div',{class:'controls'},
- element('label',{for:'days'},'Tage nach der Aufnahme',dayText),slider,
- element('div',{class:'measurements'},element('span',{},'Sichtbare Blattfläche'),area),note);
-const photoInfo=element('div',{class:'capture'},element('time',{},timestamp));
-if(typeof r?.photo==='string'&&r.photo.startsWith('data:image/jpeg;base64,'))
- photoInfo.append(element('img',{src:r.photo,alt:'Letzte Pflanzenaufnahme'}));
-document.getElementById('app').append(element('main',{},
- element('header',{},element('h1',{},'BioBox'),photoInfo),
- element('section',{class:'viewer'},canvas,controls)));
-slider.disabled=measured===null;
-
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-let scene=[];
- const add=(a,b)=>a.map((v,i)=>v+b[i]),sub=(a,b)=>a.map((v,i)=>v-b[i]),mul=(a,s)=>a.map(v=>v*s),dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0),cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],unit=a=>mul(a,1/(Math.hypot(...a)||1));
-let yaw=-.55,pitch=.29,zoom=1,drag=null;
-const wrapAngle=a=>Math.atan2(Math.sin(a),Math.cos(a));
-function face(points,color,offset=0,alpha=1,line=false){scene.push({points,color,offset,alpha,line});}
-function tube(a,b,radius,color,offset){const axis=unit(sub(b,a)),u=unit(cross(axis,Math.abs(axis[1])>.9?[1,0,0]:[0,1,0])),v=cross(axis,u);for(let j=0;j<6;j++){const point=(p,k)=>add(p,add(mul(u,Math.cos(k*Math.PI/3)*radius),mul(v,Math.sin(k*Math.PI/3)*radius)));face([point(a,j),point(b,j),point(b,j+1),point(a,j+1)],color,offset);}}
-function pot(offset){for(let j=0;j<40;j++){const point=(rad,y,k)=>[Math.cos(k*Math.PI/20)*rad,y,Math.sin(k*Math.PI/20)*rad];face([point(.53,-.8,j),point(.71,-.03,j),point(.71,-.03,j+1),point(.53,-.8,j+1)],[137,115,87],offset);face([point(.72,-.09,j),point(.72,.015,j),point(.72,.015,j+1),point(.72,-.09,j+1)],[167,145,112],offset);face([[0,-.015,0],point(.66,-.015,j),point(.66,-.015,j+1)],[47,43,32],offset);}}
-function leaf(root,angle,length,width,offset,index){
- const dir=[Math.cos(angle),0,Math.sin(angle)],side=[-Math.sin(angle),0,Math.cos(angle)];
- const at=(u,v)=>{
-  const arc=Math.sin(Math.PI*u),envelope=Math.pow(arc,.82)*(1.15-.30*u);
-  const height=length*(.20*arc-.22*u*u+.12*(1-v*v)*arc);
-  return add(root,add(mul(dir,length*u),add(mul(side,width*envelope*v),[0,height,0])));
+(() => {
+ const el=(tag,attrs={},...children)=>{
+  const e=document.createElement(tag);
+  for(const [key,val] of Object.entries(attrs))e.setAttribute(key,val);
+  e.append(...children);return e;
  };
- const color=[58+(index%4)*7,135+(index%5)*6,57+(index%3)*5],vein=[128,166,91];
- for(let u=0;u<8;u++)for(let v=0;v<4;v++){const a=u/8,b=(u+1)/8,c=-1+v/2,d=c+.5;face([at(a,c),at(b,c),at(b,d),at(a,d)],color,offset);}
- const raised=(u,v)=>add(at(u,v),[0,.006,0]);
- for(let u=0;u<8;u++)face([raised(u/8,0),raised((u+1)/8,0)],vein,offset,.8,true);
- for(const u of [.28,.50,.70])for(const side of [-1,1])face([raised(u,0),raised(u+.09,side*.77)],vein,offset,.4,true);
-}
+ const record=BIOBOX_DATA.latest;
+ const leaves=record?.leaves||[],count=leaves.length,topView=record?.view==='top';
+ const rate=Number.isFinite(BIOBOX_DATA.rate)?BIOBOX_DATA.rate/100:.02;
+ const canvas=el('canvas',{id:'plant',tabindex:'0','aria-label':'Drehbare Basilikumpflanze. Mit Maus, Touch oder Pfeiltasten drehen.'});
+ const slider=el('input',{id:'days',type:'range',min:'0',max:'14',value:'0'});
+ const dayText=el('output',{for:'days'});
+ const countText=el('span',{},'Blätter zählen');
+ const countBadge=el('span',{class:'leaf-count'},(record?.count_estimated?'≈':'')+count);
+ const toggle=el('button',{id:'leaves-button',type:'button','aria-controls':'leaf-tray','aria-pressed':'false'},countText,countBadge);
+ const list=el('ol',{role:'list','aria-label':'Einzeln dargestellte Blätter'});
+ const tray=el('div',{class:'leaf-tray',id:'leaf-tray',tabindex:'0',role:'region','aria-label':'Blattzählung'},list);
+ tray.hidden=true;toggle.hidden=!count;canvas.hidden=!count;slider.disabled=!count;
+ if(record?.count_estimated)toggle.title='Blattanzahl automatisch geschätzt';
+ const date=record?.captured_at;
+ const time=el('time');
+ if(date&&Number.isFinite(Date.parse(date))){
+  time.setAttribute('datetime',date);
+  time.textContent=new Intl.DateTimeFormat('de-DE',{dateStyle:'medium',timeStyle:'short',timeZone:'Europe/Berlin'}).format(new Date(date));
+ }else time.hidden=true;
+ const stage=el('div',{class:'stage'},canvas,tray,toggle);
+ if(!count)stage.append(el('p',{class:'empty'},'Keine auswertbaren Blattkonturen'));
+ document.getElementById('app').append(el('main',{},el('header',{},el('h1',{},'BioBox'),time),
+  el('section',{class:'viewer'},stage,el('div',{class:'controls'},
+   el('label',{for:'days'},'Tage nach der Aufnahme',dayText),slider))));
 
-function drawPlant(factor){
- pot(0);
- if(measured===null)return;
- const sizes=Array.isArray(r.leaf_sizes)?r.leaf_sizes.filter(x=>Number.isFinite(x)&&x>0):[];
- const count=clamp(sizes.length||18,1,200);
- const stems=Math.min(7,Math.max(1,Math.round(Math.sqrt(count))));
- const sorted=[...sizes].sort((a,b)=>b-a);
- const mean=sizes.length?measured/sizes.length:1;
- const height=1.46*clamp(Math.pow(factor,.55),.68,1.68);
- const spread=clamp(factor,.56,2.1);
- for(let branch=0;branch<stems;branch++){
-  const az=branch*2.3999632;
-  const n=Math.floor((count-1-branch)/stems)+1;
-  const root=[0,0,0];
-  const length=height*(.75+.24*Math.cos(branch*.91));
-  let last=root;
-  for(let j=0;j<n;j++){
-   const t=(j+1)/(n+.18);
-   const stem=[Math.cos(az)*.44*spread*t,t*length,Math.sin(az)*.44*spread*t];
-   tube(last,stem,.018-.009*t,[93,127,63],0);
-   const k=j*stems+branch;
-   const l=.38*spread*clamp(Math.sqrt((sorted[k]||mean)/mean),.48,1.65);
-   const angle=az+j*2.2;
-   const start=add(stem,[Math.cos(angle)*.075,.012,Math.sin(angle)*.075]);
-   tube(stem,start,.007,[89,133,63],0);
-   leaf(start,angle,l,l*.39,0,k);
-   last=stem;
+ const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+ const mix=(a,b,t)=>a+(b-a)*t;
+ const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+ const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+ const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+ const unit=a=>{const d=Math.hypot(...a)||1;return [a[0]/d,a[1]/d,a[2]/d];};
+ const tau=Math.PI*2,light=unit([-.62,.76,-.46]);
+ const css=c=>'rgb('+c.map(v=>Math.round(clamp(v,0,255))).join(',')+')';
+ const lift=(color,n)=>color.map((v,i)=>v*n+(i===1?1.6:1));
+ const seed=(a,b)=>{const v=Math.sin(a*125.1+b*63.9)*43758.5453;return v-Math.floor(v);};
+ function surface(faces,points,color,options={}){
+  const {twoSided=false,gloss=0,line=false,width=.6,opacity=1}=options;
+  let shade=1, shine=0;
+  if(!line){
+   let normal=cross(sub(points[1],points[0]),sub(points[2],points[0]));
+   if(Math.hypot(...normal)<1e-10&&points.length===4)normal=cross(sub(points[2],points[0]),sub(points[3],points[0]));
+   normal=unit(normal);
+   const l=dot(normal,light), diff=twoSided?Math.abs(l):Math.max(0,l);
+   shade=.69+.29*diff;
+   shine=gloss*Math.pow(diff,6);
+  }
+  const colorCss=css(color.map((v,i)=>v*shade+shine*(i===1?1:.8)));
+  faces.push({points,color:colorCss,line,width,opacity});
+ }
+ function tube(faces,a,b,ra,rb,color,sides=6){
+  const dir=unit(sub(b,a));
+  if(Math.hypot(...dir)<.01)return;
+  const u=unit(cross(dir,Math.abs(dir[1])>.85?[1,0,0]:[0,1,0])),v=cross(dir,u);
+  const p=(c,r,k)=>{const t=k*tau/sides;return c.map((x,i)=>x+r*(u[i]*Math.cos(t)+v[i]*Math.sin(t)));};
+  for(let k=0;k<sides;k++)surface(faces,[p(a,ra,k+1),p(b,rb,k+1),p(b,rb,k),p(a,ra,k)],color);
+ }
+ function pot(faces,r,h){
+  const dark=[60,62,56],rim=[70,72,63],soil=[76,58,42];
+  const n=48;
+  const rings=[[-h,.77,dark],[-h+.025,.80,dark],[-h*.20,.96,dark],[-h*.18,.97,[46,48,43]],[-h*.16,1.012,rim],
+   [-.026,1.022,rim],[.013,1.003,rim],[.021,.982,rim],[.021,.947,rim],[-.035,.929,[46,46,39]],[-.058,.925,[48,43,35]]];
+  const p=(a,y,k)=>[r*a*Math.cos(k*tau/n),y,r*a*Math.sin(k*tau/n)];
+  for(let k=0;k<n;k++){
+   for(let i=1;i<rings.length;i++){
+    const [y0,r0]=rings[i-1],[y1,r1,color]=rings[i];
+    surface(faces,[p(r0,y0,k),p(r1,y1,k),p(r1,y1,k+1),p(r0,y0,k+1)],color,{gloss:i>=5?12:5});
+   }
+   const pebble=seed(k,17);
+   surface(faces,[[0,-.056,0],p(.927,-.058,k+1),p(.927,-.058,k)],soil);
+   for(let j=0;j<2;j++){
+    const angle=k*tau/n+seed(k,j)*tau/n, rr=Math.sqrt(seed(k,j+9))*.87*r;
+    const x=Math.cos(angle)*rr,z=Math.sin(angle)*rr,y=-.054+pebble*.002,sz=r*(.008+seed(k,j+7)*.021);
+    surface(faces,[[x-sz,y,z],[x,y+.003,z+sz*.75],[x+sz*.7,y,z-sz*.7]],lift(soil,.74+seed(k,j+13)*.72),{twoSided:true});
+   }
   }
  }
-}
-function transform(p){
- const x=p[0]*Math.cos(yaw)+p[2]*Math.sin(yaw),z=-p[0]*Math.sin(yaw)+p[2]*Math.cos(yaw),y=p[1]-.58;
- return [x,y*Math.cos(pitch)-z*Math.sin(pitch),y*Math.sin(pitch)+z*Math.cos(pitch)];
-}
-function render(){
- const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
- const w=rect.width,h=rect.height;
- if(!w||!h)return;
- if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){
-  canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);
+ function samples(s,u){
+  const j=u*(s.profile.length-1),i=Math.floor(j),a=s.profile[i],b=s.profile[Math.min(i+1,s.profile.length-1)];
+  const lo=mix(a[0],b[0],j-i),hi=mix(a[1],b[1],j-i);
+  const chord=mix((s.profile[0][0]+s.profile[0][1])*.5,(s.profile.at(-1)[0]+s.profile.at(-1)[1])*.5,u);
+  return [lo,mix((lo+hi)*.5,clamp(chord,lo,hi),.30),hi];
  }
- const ctx=canvas.getContext('2d');
- ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
- const lens=Math.min(w,h)*1.66*zoom,project=p=>{
-  const q=transform(p),d=6+q[2];return [w/2+q[0]*lens/d,h*.56-q[1]*lens/d,q[2]];
- };
- const floor=project([0,-.81,0]);
- ctx.fillStyle='#45574732';ctx.beginPath();ctx.ellipse(floor[0],floor[1],.74*lens/6,.16*lens/6,0,0,Math.PI*2);ctx.fill();
-  const sorted=scene.map(f=>{const screen=f.points.map(p=>project(p,f.offset));return {...f,screen,depth:screen.reduce((sum,p)=>sum+p[2],0)/screen.length};}).sort((a,b)=>b.depth-a.depth),light=unit([-.5,.8,1]);
- for(const f of sorted){let shade=1;if(!f.line&&f.points.length>2){const normal=unit(cross(sub(f.points[1],f.points[0]),sub(f.points[2],f.points[0])));shade=.53+.44*Math.abs(dot(normal,light));}const color=f.color.map(v=>Math.round(clamp(v*shade,0,255)));ctx.globalAlpha=f.alpha;ctx.beginPath();ctx.moveTo(f.screen[0][0],f.screen[0][1]);for(const p of f.screen.slice(1))ctx.lineTo(p[0],p[1]);if(f.line){ctx.strokeStyle='rgb('+color.join(',')+')';ctx.lineWidth=.7;ctx.stroke();}else{ctx.closePath();ctx.fillStyle='rgb('+color.join(',')+')';ctx.fill();}}
-
- ctx.globalAlpha=1;
-}
-function update(){
- const days=Number(slider.value);
- dayText.textContent=days===0?'Aufnahme':days===1?'+1 Tag':'+'+days+' Tage';
- const factor=Math.pow(1+(rate===null?assumption:rate/100),days);
- const maxPixels=Array.isArray(r?.image_size)?r.image_size[0]*r.image_size[1]:Infinity;
- const projected=measured===null?null:Math.min(maxPixels,measured*factor);
- area.textContent=projected===null?'—':Number.isFinite(r?.leaf_area_cm2)?
-  fmt(r.leaf_area_cm2*projected/measured,2)+' cm²':fmt(projected)+' px';
- note.textContent=measured===null?'Keine auswertbare Blattfläche.':days===0?'3D-Modell zur Aufnahme':
-  rate===null?'Szenario · angenommene Änderung: 2 % pro Tag':'Szenario · aus '+fmt(rate,2)+' % pro Tag fortgeschrieben';
- scene=[];drawPlant(projected===null?1:Math.sqrt(projected/measured));render();
-}
-slider.addEventListener('input',update);
-canvas.addEventListener('pointerdown',e=>{
- if(e.button!==0)return;drag={id:e.pointerId,x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId);
-});
-canvas.addEventListener('pointermove',e=>{
- if(!drag||drag.id!==e.pointerId)return;
- yaw+=(e.clientX-drag.x)*.01;pitch=clamp(pitch+(e.clientY-drag.y)*.01,-.55,1.22);
- drag.x=e.clientX;drag.y=e.clientY;render();
-});
-for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,()=>{drag=null;});
-canvas.addEventListener('keydown',e=>{
- if(e.key==='ArrowLeft')yaw-=.13;
- else if(e.key==='ArrowRight')yaw+=.13;
- else if(e.key==='ArrowUp')pitch=clamp(pitch+.08,-.55,1.22);
- else if(e.key==='ArrowDown')pitch=clamp(pitch-.08,-.55,1.22);
- else return;
- e.preventDefault();render();
-});
-new ResizeObserver(render).observe(canvas);
-update();
+ function blade(s,plane){
+  const [cx,cy]=s.center,[ax,ay]=s.axis;
+  return (u,v)=>{
+   const [lo,mid,hi]=samples(s,u);
+   const side=v<0?mix(mid,lo,-v):mix(mid,hi,v);
+   const t=(u-.5)*s.length;
+   return plane(cx+ax*t-ay*side,cy+ay*t+ax*side,u,v,hi-lo);
+  };
+ }
+ function leafMaterial(s){
+  // Take the hue from the visible blade. Simulated light adds shape, without repainting discoloured leaves green.
+  const [r,g,b]=s.rgb;
+  return [clamp(.90*r+7,21,224),clamp(1.04*g+11,38,235),clamp(.86*b+7,17,212)];
+ }
+ function leafFaces(faces,s,at,veins=true){
+  const color=leafMaterial(s),rows=s.profile.length-1,cols=count>85?4:6;
+  const grid=Array.from({length:rows+1},(_,j)=>Array.from({length:cols+1},(_,k)=>at(j/rows,2*k/cols-1)));
+  for(let j=0;j<rows;j++)for(let k=0;k<cols;k++){
+   const t=(j+.5)/rows,edge=Math.abs((k+.5)/cols*2-1),jitter=seed(j+13*s.center[0],k+17*s.center[1])-.5;
+   const rgb=lift(color,.94+.11*Math.sin(Math.PI*t)-.07*edge+.045*jitter+(k<cols/2?.05:0));
+   surface(faces,[grid[j][k],grid[j+1][k],grid[j+1][k+1],grid[j][k+1]],rgb,{twoSided:true,gloss:14});
+  }
+  if(!veins)return;
+  const vein=css(color.map((v,i)=>mix(v,i===0?190:i===1?206:124,.46)));
+  const rib=(path,width,opacity)=>faces.push({points:path,color:vein,line:true,width,opacity});
+  for(let j=0;j<rows;j++)rib([at(j/rows,0),at((j+1)/rows,0)],.60,.77-.40*j/rows);
+  for(let j=0;j<6;j++)for(const sign of [-1,1]){
+   const u=.15+j*.12, tip=Math.min(.974,u+.18-j*.01), edge=.82+seed(j,sign)*.13;
+   const path=[at(u,0),at(mix(u,tip,.4),sign*.38),at(mix(u,tip,.72),sign*.70),at(tip,sign*edge)];
+   for(let i=1;i<path.length;i++)rib([path[i-1],path[i]],.42,.46);
+  }
+ }
+ function cameraPaint(ctx,faces,project){
+  const drawn=faces.map(f=>{
+   const q=f.points.map(project);
+   return {f,q,d:q.reduce((sum,p)=>sum+p[2],0)/q.length-(f.line?.0025:0)};
+  }).sort((a,b)=>b.d-a.d);
+  ctx.lineJoin='round';ctx.lineCap='round';
+  for(const {f,q} of drawn){
+   ctx.globalAlpha=f.opacity;ctx.beginPath();ctx.moveTo(q[0][0],q[0][1]);
+   for(let i=1;i<q.length;i++)ctx.lineTo(q[i][0],q[i][1]);
+   if(f.line){ctx.strokeStyle=f.color;ctx.lineWidth=f.width;ctx.stroke();}
+   else{
+    ctx.closePath();ctx.fillStyle=f.color;ctx.fill();
+    // Cover antialiasing seams between adjacent facets.
+    ctx.strokeStyle=f.color;ctx.lineWidth=.42;ctx.stroke();
+   }
+  }
+  ctx.globalAlpha=1;
+ }
+ const outlines=leaves.flatMap(s=>{
+  const at=blade(s,(x,y)=>[x,y]);
+  return s.profile.flatMap((_,i)=>[at(i/(s.profile.length-1),-1),at(i/(s.profile.length-1),1)]);
+ });
+ const xs=outlines.map(p=>p[0]),ys=outlines.map(p=>p[1]);
+ const xlo=count?Math.min(...xs):-.5,xhi=count?Math.max(...xs):.5;
+ const ylo=count?Math.min(...ys):-.5,yhi=count?Math.max(...ys):.5;
+ const xmid=(xlo+xhi)*.5,ymid=(ylo+yhi)*.5;
+ const scale=2.65/Math.max(.1,xhi-xlo,yhi-ylo),spread=Math.max(.5,(xhi-xlo)*scale);
+ const canopyHeight=topView?1.78:Math.max(.48,(yhi-ylo)*scale+.08);
+ const potR=clamp(spread*.379,.38,1.03),potH=clamp(.35*canopyHeight,.48,1.08);
+ const ordered=[...leaves].sort((a,b)=>a.center[0]-b.center[0]);
+ function stemAt(stem,y){
+  const t=clamp(y/stem.top,0,1),ease=t*(1.18-.18*t);
+  return [mix(stem.x0,stem.x1,ease)+Math.sin(t*Math.PI)*stem.lean,y,mix(stem.z0,stem.z1,ease)];
+ }
+ function grow(factor){
+  const faces=[], height=canopyHeight*Math.pow(factor,.63);
+  pot(faces,potR,potH);
+  const stems=[],n=Math.min(12,Math.max(1,Math.round(Math.sqrt(count)*1.14)));
+  for(let i=0;i<n;i++){
+   const b=ordered[Math.min(count-1,Math.floor((i+.5)*count/n))];
+   const ax=(b.center[0]-xmid)*scale,depth=seed(i,2)-.5;
+   const stem={x0:ax*.48,x1:ax*.95*factor,z0:depth*potR*.91,z1:depth*potR*2.05*factor,
+    lean:(seed(i,8)-.5)*.19,top:height,max:0};
+   stems.push(stem);
+  }
+  for(const s of leaves){
+   const mapXY=(x,y)=>[(x-xmid)*scale*factor,topView?(y-ymid)*scale*factor:(yhi-y)*scale*Math.pow(factor,.63)+.055];
+   const base=blade(s,mapXY)(0,0),c=s.center;
+   const r=seed(c[0],c[1]),rnd=seed(c[1],c[0]);
+   const nodeY=topView?height*(.36+.61*r):Math.max(.035,base[1]-.028-s.length*scale*.12);
+   let chosen=stems[0],dist=Infinity;
+   for(const stem of stems){
+    const p=stemAt(stem,nodeY),d=Math.abs(p[0]-base[0])+(topView?.42*Math.abs(p[2]-base[1]):0);
+    if(d<dist){dist=d;chosen=stem;}
+   }
+   chosen.max=Math.max(chosen.max,nodeY);
+   const node=stemAt(chosen,nodeY);
+   const fold=(.18+.23*r)*(rnd<.45?-1:1);
+   const at=blade(s,(x,y,u,v,w)=>{
+    const [X,Y]=mapXY(x,y),arc=Math.sin(Math.PI*u);
+    const bend=scale*factor*(s.length*(.14*arc-.12*u*u)+w*(.16*(1-v*v)*arc+fold*v));
+    return topView?[X,nodeY+.038+bend,Y]:[X,Y,node[2]+(rnd-.5)*potR*.81+bend+(u-.5)*s.length*scale*fold];
+   });
+   const root=at(0,0);
+   const elbow=node.map((v,i)=>mix(v,root[i],.61)+(i===1?.021:0));
+   const stalk=clamp(s.length*scale*.028,.003,.013);
+   tube(faces,node,elbow,stalk,stalk*.80,[101,133,68]);
+   tube(faces,elbow,root,stalk*.80,stalk*.56,[104,137,70]);
+   leafFaces(faces,s,at,s.length*scale>.035);
+  }
+  for(const stem of stems){
+   let last=stemAt(stem,-.052);
+   const end=stem.max+.024;
+   for(let j=1;j<=9;j++){
+    const t=j/9,p=stemAt(stem,end*t),r=.0165*(1-.74*t);
+    tube(faces,last,p,r+.0014,r,[92,119,61],7);last=p;
+   }
+  }
+  return {faces,height};
+ }
+ const homeYaw=topView?-.26:-.12,homePitch=topView?.86:.17;
+ let yaw=homeYaw,pitch=homePitch,drag=null,scene=null,queued=false,requestedSize=1,drawnSize=0;
+ function render(){
+  if(canvas.hidden)return;
+  const {width:w,height:h}=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
+  if(!w||!h)return;
+  if(drawnSize!==requestedSize){scene=grow(requestedSize);drawnSize=requestedSize;}
+  const cw=Math.round(w*dpr),ch=Math.round(h*dpr);
+  if(canvas.width!==cw||canvas.height!==ch){canvas.width=cw;canvas.height=ch;}
+  const ctx=canvas.getContext('2d');
+  if(!ctx)return;
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
+  const focal=Math.min((w-24)/Math.max(2.8,spread*1.19),(h-20)/Math.max(2.78,(canopyHeight+potH)*1.20));
+  const targetY=(scene.height-potH)*.47;
+  const c=Math.cos(yaw),s=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const project=p=>{
+   const x=p[0]*c+p[2]*s,z=-p[0]*s+p[2]*c,y=p[1]-targetY;
+   const ry=y*cp+z*sp,rz=-y*sp+z*cp,f=7.5/(7.5+rz)*focal;
+   return [w/2+x*f,h*.51-ry*f,rz];
+  };
+  const floor=project([0,-potH-.025,0]),rw=potR*focal*.93,rh=rw*(.16+.46*Math.abs(sp));
+  ctx.save();ctx.translate(floor[0],floor[1]+2);ctx.scale(rw,rh);
+  const shadow=ctx.createRadialGradient(.12,.04,.1,.12,.04,1.22);
+  shadow.addColorStop(0,'rgba(38,54,41,.30)');shadow.addColorStop(.49,'rgba(51,70,56,.20)');shadow.addColorStop(1,'rgba(51,70,56,0)');
+  ctx.fillStyle=shadow;ctx.fillRect(-1.15,-1.22,2.5,2.44);ctx.restore();
+  cameraPaint(ctx,scene.faces,project);
+ }
+ function requestRender(){
+  if(!queued){queued=true;requestAnimationFrame(()=>{queued=false;render();});}
+ }
+ function update(){
+  const days=Number(slider.value);
+  dayText.textContent=!days?'Aufnahme':'Szenario · +'+days+(days===1?' Tag':' Tage');
+  if(!count)return;
+  requestedSize=clamp(Math.pow(1+rate,days*.5),.44,1.53);
+  requestRender();
+ }
+ function drawTiles(){
+  for(const [i,s] of leaves.entries()){
+   const tile=el('canvas',{width:'132',height:'84','aria-hidden':'true'});
+   const item=el('li',{'aria-label':'Blatt '+(i+1)},tile,el('span',{'aria-hidden':'true'},String(i+1)));
+   list.append(item);
+   const ctx=tile.getContext('2d');if(!ctx)continue;
+   const [ax,ay]=s.axis,faces=[];
+   const at=blade(s,(x,y,u,v,w)=>{
+    const dx=x-s.center[0],dy=y-s.center[1];
+    return [dx*ax+dy*ay,dy*ax-dx*ay,-w*(1-v*v)*.16+Math.sin(Math.PI*u)*s.length*.14];
+   });
+   const sizeX=Math.max(.0001,s.length),sizeY=Math.max(.0001,...s.profile.map(a=>a[1]-a[0]));
+   const f=Math.min(94/sizeX,53/sizeY)*clamp(.78+Math.sqrt(s.length)*.44,.78,1.0);
+   leafFaces(faces,s,at);
+   cameraPaint(ctx,faces,p=>[66+(p[0]*.96-p[1]*.27)*f,42+(p[0]*.27+p[1]*.96)*f,p[2]]);
+  }
+ }
+ function toggleTray(){
+  const show=tray.hidden;
+  if(show&&!list.childElementCount)drawTiles();
+  tray.hidden=!show;canvas.hidden=show;
+  toggle.setAttribute('aria-pressed',String(show));
+  countText.textContent=show?'Zur Pflanze':'Blätter zählen';
+  if(!show)requestRender();
+ }
+ toggle.addEventListener('click',toggleTray);
+ slider.addEventListener('input',update);
+ canvas.addEventListener('pointerdown',e=>{
+  if(e.button!==0)return;
+  drag={id:e.pointerId,x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId);
+ });
+ canvas.addEventListener('pointermove',e=>{
+  if(drag?.id!==e.pointerId)return;
+  yaw+=(e.clientX-drag.x)*.011;pitch=clamp(pitch+(e.clientY-drag.y)*.010,-.48,1.34);
+  drag.x=e.clientX;drag.y=e.clientY;requestRender();
+ });
+ for(const type of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(type,()=>{drag=null;});
+ canvas.addEventListener('dblclick',()=>{yaw=homeYaw;pitch=homePitch;requestRender();});
+ canvas.addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft')yaw-=.13;
+  else if(e.key==='ArrowRight')yaw+=.13;
+  else if(e.key==='ArrowUp')pitch=clamp(pitch+.08,-.48,1.34);
+  else if(e.key==='ArrowDown')pitch=clamp(pitch-.08,-.48,1.34);
+  else if(e.key==='Home'){yaw=homeYaw;pitch=homePitch;}
+  else return;
+  e.preventDefault();requestRender();
+ });
+ new ResizeObserver(requestRender).observe(canvas);
+ update();
+})();
 """
 
 def main():
@@ -3849,7 +4309,9 @@ def main():
     parser.add_argument("--mm-pro-pixel", type=float, default=MM_PRO_PIXEL_MANUELL, help="Verifizierter Massstab der Blattebene")
     parser.add_argument("--kalibrieren", metavar="ORDNER", help="Objektiv mit Schachbrettbildern kalibrieren")
     parser.add_argument("--maske-korrigieren",type=Path,metavar="JPG",help="Blattmaske eines Originalfotos mit Pinsel korrigieren")
-    parser.add_argument("--blattlabels", nargs=2, type=Path, metavar=("FOTO", "LABEL_PNG"), help="Manuelle Blattlabels für ein Originalfoto übernehmen")
+    blattkorrektur = parser.add_mutually_exclusive_group()
+    blattkorrektur.add_argument("--blattlabels", nargs=2, type=Path, metavar=("FOTO", "LABEL_PNG"), help="Manuelle Blattlabels für ein Originalfoto übernehmen")
+    blattkorrektur.add_argument("--blaetter-markieren", type=Path, metavar="FOTO", help="Je sichtbares Blatt einmal im Originalfoto klicken")
     parser.add_argument("--korrekturmaske",type=Path,metavar="PNG",help="Statt Fenster: binaere Maske mit Originalpixelgroesse importieren")
     skala = parser.add_mutually_exclusive_group()
     skala.add_argument("--massstab-bild", type=Path, metavar="JPG", help="Foto mit Lineal auf Blatthoehe: bekannte Strecke markieren und speichern")
@@ -3858,17 +4320,21 @@ def main():
     parser.add_argument("--punkte", nargs=4, type=float, metavar=("X1", "Y1", "X2", "Y2"), help="Messpunkte im Originalbild; ohne Angabe zwei Klicks im Bildfenster")
     args = parser.parse_args()
     if args.pflege_ki:
-        if args.lokal or args.ordner or args.abholen or args.nur_bild or args.blattlabels or args.kalibrieren or args.maske_korrigieren or args.massstab or args.massstab_bild or any(getattr(args,"stundenaufnahme_"+a) for a in ("einrichten","status","ausschalten")):
+        if args.lokal or args.ordner or args.abholen or args.nur_bild or args.blattlabels or args.blaetter_markieren or args.kalibrieren or args.maske_korrigieren or args.massstab or args.massstab_bild or any(getattr(args,"stundenaufnahme_"+a) for a in ("einrichten","status","ausschalten")):
             parser.error("--pflege-ki liest vorhandene Ergebnisse; separat von Analyse und Aufnahme ausführen")
         args.drei_d_json = args.drei_d_json or (args.ausgabe or BILDER_ORDNER.parent/"auswertung")/"ergebnis.json"
     if args.ohne_browser and (args.drei_d or args.drei_d_json) and not args.pflege_ki:
         parser.error("--ohne-browser nicht mit --3d oder --3d-aus-json kombinieren")
-    speziell = (args.nur_bild or args.massstab or args.massstab_bild or args.maske_korrigieren or args.blattlabels or args.kalibrieren
+    speziell = (args.nur_bild or args.massstab or args.massstab_bild or args.maske_korrigieren or args.blattlabels or args.blaetter_markieren or args.kalibrieren
                 or args.stundenaufnahme_einrichten or args.stundenaufnahme_status or args.stundenaufnahme_ausschalten)
     if (args.drei_d or args.drei_d_json) and speziell:
         parser.error("3D-Ansicht separat von Download, Kalibrierung, Maskenkorrektur und Pi-Zeitplan öffnen")
     if args.drei_d_json and (args.lokal or args.ordner or args.abholen):
         parser.error("--3d-aus-json liest vorhandene JSONs; nicht mit einem Bilderordner oder --abholen kombinieren")
+    if args.blaetter_markieren and (args.lokal or args.ordner or args.abholen or args.nur_bild
+            or args.maske_korrigieren or args.kalibrieren or args.massstab_bild or args.massstab
+            or args.stundenaufnahme_einrichten or args.stundenaufnahme_status or args.stundenaufnahme_ausschalten):
+        parser.error("--blaetter-markieren separat von Analyse, Aufnahme und Kalibrierung ausführen")
     if args.drei_d_json or (args.drei_d and not (args.lokal or args.ordner or args.abholen)):
         quelle = args.drei_d_json or (args.ausgabe or BILDER_ORDNER.parent/"auswertung")/"ergebnis.json"
         ziel = args.ausgabe or Path(quelle).expanduser().resolve().parent
@@ -3902,6 +4368,18 @@ def main():
     if args.kalibrieren:
         kalibrieren(args.kalibrieren)
         return 0
+    if args.blaetter_markieren:
+        foto = args.blaetter_markieren.expanduser().resolve()
+        ziel = Path(args.ausgabe or foto.parent.parent/"auswertung").expanduser().resolve()
+        try:
+            with auswertung_sperren(ziel):
+                zahl = blaetter_markieren(foto,ziel,args.einzelbilder)
+            if zahl is not None:
+                print(f"{zahl} Blattmarkierungen gespeichert. Jetzt python analyse.py --lokal bilder ausführen.")
+        except (OSError,ValueError,RuntimeError,cv2.error) as fehler:
+            print("Blattmarkierungen nicht gespeichert:",fehler)
+            return 1
+        return 0
     if args.blattlabels:
         foto, label = (p.expanduser().resolve() for p in args.blattlabels)
         ziel = args.ausgabe or foto.parent.parent/"auswertung"
@@ -3911,7 +4389,8 @@ def main():
             bild = cv2.imdecode(np.frombuffer(bild_raw,np.uint8),cv2.IMREAD_COLOR)
             lab = cv2.imdecode(np.frombuffer(label_raw,np.uint8),cv2.IMREAD_UNCHANGED)
             if (label.suffix.lower()!=".png" or bild is None or lab is None or lab.ndim!=2
-                    or lab.shape!=bild.shape[:2] or not np.any(lab) or len(np.unique(lab))>201):
+                    or lab.shape!=bild.shape[:2] or not np.any(lab)
+                    or np.count_nonzero(np.bincount(lab.ravel())[1:])>TWIN_MAX_BLAETTER):
                 raise ValueError("Eine nichtleere Graustufen-PNG in Originalgröße mit bis zu 200 Blatt-IDs wird benötigt.")
             ziel = ziel/"blattlabels"
             ziel.mkdir(parents=True,exist_ok=True)
