@@ -29,7 +29,7 @@
       "image_brightness": 166.1,
       "largest_component_pct": 100.0,
       "color_hex": "#8ca24e",
-      "pipeline_version": "4.10.1",
+      "pipeline_version": "4.11.0",
       "overexposed_pct": 3.15,
       "quality_flags": "",
       "usable": true
@@ -49,9 +49,9 @@
       "score_hue": null
     },
     "analysis": {
-      "version": "4.10.1",
+      "version": "4.11.0",
       "health_status": "referenzfoto_start_der_ansicht",
-      "pipeline_sha256": "ff55c91eab84ee12c43c4b8bfa182611eebaf51793ff1557f595d11bd26a7723",
+      "pipeline_sha256": "334e5840ccad6f0013005f8d405500556e9cdfe95610d771606dd8b9bdc8bc3b",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -1768,6 +1768,7 @@
         ],
         "note": "Bei verdeckten oder zusammenhängenden Blättern ist der Zählwert unsicher."
       },
+      "leaf_diameter_px": 656.0,
       "capture_time_source": "name",
       "hours_since_start": 0.0,
       "view_number": 1,
@@ -1847,7 +1848,7 @@
       "image_brightness": 104.7,
       "largest_component_pct": 90.0,
       "color_hex": "#4d5c29",
-      "pipeline_version": "4.10.1",
+      "pipeline_version": "4.11.0",
       "overexposed_pct": 0.0,
       "quality_flags": "",
       "usable": true
@@ -1867,9 +1868,9 @@
       "score_hue": 88.6
     },
     "analysis": {
-      "version": "4.10.1",
+      "version": "4.11.0",
       "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche",
-      "pipeline_sha256": "ff55c91eab84ee12c43c4b8bfa182611eebaf51793ff1557f595d11bd26a7723",
+      "pipeline_sha256": "334e5840ccad6f0013005f8d405500556e9cdfe95610d771606dd8b9bdc8bc3b",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -7076,6 +7077,7 @@
         ],
         "note": "Bei verdeckten oder zusammenhängenden Blättern ist der Zählwert unsicher."
       },
+      "leaf_diameter_px": 649.9,
       "capture_time_source": "name",
       "hours_since_start": 72.0,
       "view_number": 1,
@@ -7147,7 +7149,7 @@
       "image_brightness": 104.8,
       "largest_component_pct": 96.1,
       "color_hex": "#51602a",
-      "pipeline_version": "4.10.1",
+      "pipeline_version": "4.11.0",
       "overexposed_pct": 0.0,
       "quality_flags": "gesundheit_ueber_blattfarbverteilung",
       "usable": true
@@ -7167,9 +7169,9 @@
       "score_hue": 94.2
     },
     "analysis": {
-      "version": "4.10.1",
+      "version": "4.11.0",
       "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche;blattfarbverteilung",
-      "pipeline_sha256": "ff55c91eab84ee12c43c4b8bfa182611eebaf51793ff1557f595d11bd26a7723",
+      "pipeline_sha256": "334e5840ccad6f0013005f8d405500556e9cdfe95610d771606dd8b9bdc8bc3b",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -13560,6 +13562,7 @@
         ],
         "note": "Bei verdeckten oder zusammenhängenden Blättern ist der Zählwert unsicher."
       },
+      "leaf_diameter_px": 701.4,
       "capture_time_source": "name",
       "hours_since_start": 120.0,
       "view_number": 1,
@@ -13631,7 +13634,7 @@
       "image_brightness": 108.7,
       "largest_component_pct": 85.7,
       "color_hex": "#55642e",
-      "pipeline_version": "4.10.1",
+      "pipeline_version": "4.11.0",
       "overexposed_pct": 0.0,
       "quality_flags": "gesundheit_ueber_blattfarbverteilung;flaechensprung_pruefen",
       "usable": true
@@ -13651,9 +13654,9 @@
       "score_hue": 95.1
     },
     "analysis": {
-      "version": "4.10.1",
+      "version": "4.11.0",
       "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche;blattfarbverteilung",
-      "pipeline_sha256": "ff55c91eab84ee12c43c4b8bfa182611eebaf51793ff1557f595d11bd26a7723",
+      "pipeline_sha256": "334e5840ccad6f0013005f8d405500556e9cdfe95610d771606dd8b9bdc8bc3b",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -22332,6 +22335,7 @@
         ],
         "note": "Bei verdeckten oder zusammenhängenden Blättern ist der Zählwert unsicher."
       },
+      "leaf_diameter_px": 746.0,
       "capture_time_source": "name",
       "hours_since_start": 192.0,
       "view_number": 1,
@@ -22404,7 +22408,7 @@
       "image_brightness": 150.0,
       "largest_component_pct": 96.6,
       "color_hex": "#7a8d43",
-      "pipeline_version": "4.10.1",
+      "pipeline_version": "4.11.0",
       "overexposed_pct": 0.0,
       "quality_flags": "",
       "usable": true
@@ -22424,9 +22428,9 @@
       "score_hue": 83.7
     },
     "analysis": {
-      "version": "4.10.1",
+      "version": "4.11.0",
       "health_status": "vorlaeufige_referenz",
-      "pipeline_sha256": "ff55c91eab84ee12c43c4b8bfa182611eebaf51793ff1557f595d11bd26a7723",
+      "pipeline_sha256": "334e5840ccad6f0013005f8d405500556e9cdfe95610d771606dd8b9bdc8bc3b",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -26271,6 +26275,7 @@
         ],
         "note": "Bei verdeckten oder zusammenhängenden Blättern ist der Zählwert unsicher."
       },
+      "leaf_diameter_px": 887.9,
       "capture_time_source": "name",
       "hours_since_start": 239.9997,
       "view_number": 1,
@@ -26341,7 +26346,7 @@
       "image_brightness": 103.6,
       "largest_component_pct": 85.1,
       "color_hex": "#4e5b28",
-      "pipeline_version": "4.10.1",
+      "pipeline_version": "4.11.0",
       "overexposed_pct": 0.0,
       "quality_flags": "zu_wenig_bestaetigte_farbteilflaeche",
       "usable": true
@@ -26361,9 +26366,9 @@
       "score_hue": null
     },
     "analysis": {
-      "version": "4.10.1",
+      "version": "4.11.0",
       "health_status": "zu_wenig_bestaetigte_farbteilflaeche",
-      "pipeline_sha256": "ff55c91eab84ee12c43c4b8bfa182611eebaf51793ff1557f595d11bd26a7723",
+      "pipeline_sha256": "334e5840ccad6f0013005f8d405500556e9cdfe95610d771606dd8b9bdc8bc3b",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -39740,6 +39745,7 @@
         ],
         "note": "Bei verdeckten oder zusammenhängenden Blättern ist der Zählwert unsicher."
       },
+      "leaf_diameter_px": 773.2,
       "capture_time_source": "name",
       "hours_since_start": 311.9994,
       "view_number": 1,
@@ -39817,7 +39823,7 @@
       "image_brightness": 159.0,
       "largest_component_pct": 95.7,
       "color_hex": "#82964d",
-      "pipeline_version": "4.10.1",
+      "pipeline_version": "4.11.0",
       "overexposed_pct": 5.33,
       "quality_flags": "flaechensprung_pruefen",
       "usable": true
@@ -39837,9 +39843,9 @@
       "score_hue": 78.6
     },
     "analysis": {
-      "version": "4.10.1",
+      "version": "4.11.0",
       "health_status": "vorlaeufige_referenz",
-      "pipeline_sha256": "ff55c91eab84ee12c43c4b8bfa182611eebaf51793ff1557f595d11bd26a7723",
+      "pipeline_sha256": "334e5840ccad6f0013005f8d405500556e9cdfe95610d771606dd8b9bdc8bc3b",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -47526,6 +47532,7 @@
         ],
         "note": "Bei verdeckten oder zusammenhängenden Blättern ist der Zählwert unsicher."
       },
+      "leaf_diameter_px": 828.1,
       "capture_time_source": "name",
       "hours_since_start": 360.0,
       "view_number": 1,
@@ -47597,7 +47604,7 @@
       "image_brightness": 147.1,
       "largest_component_pct": 97.6,
       "color_hex": "#7b8d4d",
-      "pipeline_version": "4.10.1",
+      "pipeline_version": "4.11.0",
       "overexposed_pct": 0.0,
       "quality_flags": "gesundheit_ueber_blattfarbverteilung",
       "usable": true
@@ -47617,9 +47624,9 @@
       "score_hue": 81.0
     },
     "analysis": {
-      "version": "4.10.1",
+      "version": "4.11.0",
       "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
-      "pipeline_sha256": "ff55c91eab84ee12c43c4b8bfa182611eebaf51793ff1557f595d11bd26a7723",
+      "pipeline_sha256": "334e5840ccad6f0013005f8d405500556e9cdfe95610d771606dd8b9bdc8bc3b",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -55018,6 +55025,7 @@
         ],
         "note": "Bei verdeckten oder zusammenhängenden Blättern ist der Zählwert unsicher."
       },
+      "leaf_diameter_px": 960.2,
       "capture_time_source": "name",
       "hours_since_start": 432.0,
       "view_number": 1,
@@ -55088,7 +55096,7 @@
       "image_brightness": 151.1,
       "largest_component_pct": 94.1,
       "color_hex": "#819548",
-      "pipeline_version": "4.10.1",
+      "pipeline_version": "4.11.0",
       "overexposed_pct": 0.05,
       "quality_flags": "gesundheit_ueber_blattfarbverteilung",
       "usable": true
@@ -55108,9 +55116,9 @@
       "score_hue": 100.0
     },
     "analysis": {
-      "version": "4.10.1",
+      "version": "4.11.0",
       "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
-      "pipeline_sha256": "ff55c91eab84ee12c43c4b8bfa182611eebaf51793ff1557f595d11bd26a7723",
+      "pipeline_sha256": "334e5840ccad6f0013005f8d405500556e9cdfe95610d771606dd8b9bdc8bc3b",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -61169,6 +61177,7 @@
         ],
         "note": "Bei verdeckten oder zusammenhängenden Blättern ist der Zählwert unsicher."
       },
+      "leaf_diameter_px": 1023.1,
       "capture_time_source": "name",
       "hours_since_start": 480.0,
       "view_number": 1,
@@ -61239,7 +61248,7 @@
       "image_brightness": 147.7,
       "largest_component_pct": 97.3,
       "color_hex": "#809350",
-      "pipeline_version": "4.10.1",
+      "pipeline_version": "4.11.0",
       "overexposed_pct": 0.02,
       "quality_flags": "gesundheit_ueber_blattfarbverteilung",
       "usable": true
@@ -61259,9 +61268,9 @@
       "score_hue": 86.5
     },
     "analysis": {
-      "version": "4.10.1",
+      "version": "4.11.0",
       "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
-      "pipeline_sha256": "ff55c91eab84ee12c43c4b8bfa182611eebaf51793ff1557f595d11bd26a7723",
+      "pipeline_sha256": "334e5840ccad6f0013005f8d405500556e9cdfe95610d771606dd8b9bdc8bc3b",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -67328,6 +67337,7 @@
         ],
         "note": "Bei verdeckten oder zusammenhängenden Blättern ist der Zählwert unsicher."
       },
+      "leaf_diameter_px": 1029.7,
       "capture_time_source": "name",
       "hours_since_start": 552.0,
       "view_number": 1,

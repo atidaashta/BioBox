@@ -4,7 +4,7 @@ Bildgestützte Beobachtung von Pflanzen als Teil der Diplomarbeit **BioBox**. Au
 
 Dieses Repository dokumentiert den Teilbereich **Bildaufnahme, Bildauswertung und Zustandsbewertung** von **Atida Ashta** an der HTL Shkodra. Einstiegspunkt für die Verarbeitung ist `analyse.py`.
 
-**Projektstatus:** Entwicklung und Validierung · Bildanalyse 4.10.1, Zustandsindex 4.1.0 · Stand 11.11.2026. Der Aufnahme- und Analyseablauf ist implementiert. Die Genauigkeit der Blattmasken und die fachliche Aussage des Zustandsindex werden weiter untersucht; die direkte Backend-Anbindung ist geplant.
+**Projektstatus:** Entwicklung und Validierung · Bildanalyse 4.11.0, Zustandsindex 4.1.0 · Stand 12.11.2026. Der Aufnahme- und Analyseablauf ist implementiert. Die Genauigkeit der Blattmasken und die fachliche Aussage des Zustandsindex werden weiter untersucht; die direkte Backend-Anbindung ist geplant.
 
 ## Inhalt
 
@@ -38,7 +38,7 @@ Der lokale digitale Zwilling stellt die gespeicherten Bildmesswerte je Aufnahme 
 - Blattpixel, kalibrierte Flächen und Ausdehnungen sowie Farb- und Qualitätsmerkmale bestimmen.
 - Einen relativen Zustandsindex von 0 bis 100 mit Teilbewertungen und zeitlichem Verlauf berechnen.
 - Ergebnisse als CSV und JSON sowie in fünf Analysediagrammen ausgeben.
-- Messwerte im Browser ansehen, ein schematisches Pflanzenmodell drehen und separat die Fotokonturen vergleichen.
+- Messwerte im Browser ansehen, das Pflanzenmodell zur letzten Aufnahme drehen und seine Entwicklung für einen gewählten Zeitraum ansehen.
 - Bereits vorhandene Aufnahmen mit einer neuen Skriptversion vollständig neu auswerten.
 
 > Der Zustandsindex beschreibt sichtbare Veränderungen gegenüber der Referenz derselben Pflanze. **100 Punkte bedeuten eine geringe Abweichung zur Referenz.** Eine biologisch gesunde Pflanze oder eine bestimmte Krankheit wird damit nicht nachgewiesen.
@@ -226,9 +226,8 @@ python analyse.py --3d
 python analyse.py --3d-aus-json auswertung/ergebnis.json
 ```
 
-Das **3D-Modell** ist eine Illustration. Unter **Fotokonturen** werden die im gewählten Foto sichtbaren Blattkonturen in der Bildansicht gezeigt. Aus einer Aufnahme werden keine Tiefe und keine verdeckten Blätter abgeleitet. Unter **Messdetails** stehen die gespeicherte Fläche, der Durchmesser und die Änderungsrate, soweit gültige Messungen vorliegen. Alte Datensätze ohne Konturen können weiterhin geöffnet werden.
+Der Browser zeigt das Modell zur letzten Aufnahme. Ziehen dreht die Pflanze. Mit dem Regler werden 0 bis 14 Tage nach der Aufnahme ausgewählt. Die Zahl unter dem Modell zeigt die sichtbare Blattfläche in Pixeln oder, bei gültigem Maßstab, in cm². Für ein Szenario wird eine geeignete gemessene Änderungsrate verwendet, sofern vorhanden. Sonst wird die verwendete Annahme von 2 % pro Tag direkt am Regler angegeben. Die 3D-Form ist eine Illustration und die zukünftige Fläche ein Szenario.
 
-Für optionale Pflegetipps kann das lokale Ollama-Modell `qwen2.5:3b` verwendet werden. Das neueste brauchbare Foto wird beim normalen Lauf berücksichtigt, sofern es die neueste Aufnahme ist. Einzelne gespeicherte Aufnahmen lassen sich mit `python analyse.py --pflege-ki "DATEINAME.png"` auswählen.
 
 ## Messverfahren und Referenz
 
@@ -279,6 +278,19 @@ Aufnahmezeiten werden aus eindeutigen Zeitangaben im Dateinamen oder aus Foto-Me
 
 Wachstumsraten für die sichtbare Blattfläche sind bei vergleichbaren Aufnahmen ab 30 Minuten Abstand möglich. Abstände ab zwölf Stunden werden bevorzugt; kürzere werden gekennzeichnet, weil Maskenschwankungen stark ins Gewicht fallen. Leicht verschobene, bestätigte Ansichten können über ihren gemeinsamen Bildausschnitt verglichen werden. Bei einem Wechsel der Kameraansicht wird keine Wachstumsrate über den Wechsel berechnet. Die direkt gemessene Änderung in Blattpixeln pro Tag ist bei gleicher Bildauflösung trotzdem sichtbar und separat gekennzeichnet. Der 24-Stunden-Trend benötigt einen passenden Vergleich im selben Bewertungsmodus vor 22 bis 26 Stunden. Fehlt diese Grundlage, bleibt die entsprechende Angabe unbekannt. Kurze Zeitabstände können kleine Masken- oder Blattstellungsänderungen zu großen Tagesraten hochrechnen.
 
+Wenn die tatsächliche Aufnahmezeit bekannt ist, aber nicht im Dateinamen oder in den Bildmetadaten steht, kann eine CSV-Datei mit den Spalten `bild;captured_at` verwendet werden. Beispiel:
+
+```csv
+bild;captured_at
+foto.png;2026-11-12T10:30:00+01:00
+```
+
+```powershell
+python analyse.py --lokal bilder --aufnahmezeiten aufnahmezeiten.csv
+```
+
+Die Zeitdatei ordnet bekannte Zeiten zu; ein Dateiänderungsdatum wird nicht als Aufnahmezeit angenommen.
+
 ## Ausgaben und Datenmodell
 
 Die Grafiken `02_wachstumsrate.png` und `04_gesundheit.png` markieren jede Aufnahme im Statusbereich unter der Messkurve. Die Aufnahmenummer entspricht der Zeile in `ergebnis.csv` ohne Kopfzeile. Ein Kreuz ist ein fehlender Messwert mit Grund. Referenzstarts und reine Farbteilvergleiche werden im Zustandsindex gesondert markiert. Teilbewertungen werden in Grafik 05 je Aufnahme angezeigt. Die Konsole nennt nach der Auswertung die Anzahl berechneter Werte.
@@ -296,7 +308,7 @@ Die Grafiken `02_wachstumsrate.png` und `04_gesundheit.png` markieren jede Aufna
 | `auswertung/ergebnis.csv` | Tabellarische Kontrollausgabe |
 | `auswertung/ergebnis.json` | Strukturierte Datensätze für die weitere Verarbeitung |
 | `auswertung/digital_twin.json` | Modellzustand, 24-Stunden-Projektion und Prognosehistorie, sofern verfügbar |
-| `auswertung/digital_twin_3d.html` und `digital_twin_3d.css` | Lokale Browseransicht und zugehöriges Stylesheet |
+| `auswertung/digital_twin_3d.html` mit `digital_twin_3d.js` und `digital_twin_3d.css` | Lokale Browseransicht, JavaScript und Gestaltung |
 | `auswertung/massstab.npz` | Gespeicherte Referenzstrecke, sofern eingerichtet |
 | `auswertung/masken_korrektur/` | Dateigenaue manuelle Maskenkorrekturen |
 | `kamera_kalibrierung.json` | Objektivprofil, sofern erstellt |
@@ -321,7 +333,7 @@ Bei vorhandenen Originalen werden die Messungen neu berechnet. Für ältere Aufn
 
 Pro ausgewähltem Eingabebild wird ein Datensatz erzeugt. Auch eine unlesbare oder nicht auswertbare Datei bleibt mit ihrem Fehlerstatus enthalten.
 
-CSV bedeutet Comma-Separated Values, ein tabellarisches Textformat. Die Kontrollausgabe verwendet hier Semikolon, Dezimalkomma und UTF-8 mit Byte Order Mark (BOM), einer Codierungskennung für Tabellenprogramme. Fehlende Werte stehen als `NULL` darin.
+CSV bedeutet Comma-Separated Values, ein tabellarisches Textformat. Die Kontrollausgabe verwendet hier Semikolon, Dezimalkomma und UTF-8 mit Byte Order Mark (BOM), einer Codierungskennung für Tabellenprogramme. Fehlende Werte stehen als `—` darin. Der Grund steht in `fehlende_werte`. Im JSON bleibt ein fehlender Messwert `null`; ein echter Nullwert bleibt die Zahl `0`.
 
 JSON bedeutet JavaScript Object Notation. `ergebnis.json` enthält eine Liste mit einem Datensatz je Bild. Verwendet werden echte Zahlen, boolesche Werte und `null`. Die API — Application Programming Interface, also Programmierschnittstelle — soll später diese strukturierten Daten übernehmen; ein Einlesen der CSV ist dafür nicht vorgesehen.
 
@@ -415,7 +427,7 @@ CSV kann als lokale Kontrollansicht erhalten bleiben. Die spätere Datenbankübe
 | SSH-Verbindung scheitert | Vorhandene lokale Bilder werden trotzdem ausgewertet. Für neue Pi-Fotos Erreichbarkeit, Tailscale, Benutzer und SSH-Schlüssel prüfen. |
 | Schlüsseldatei fehlt oder Agent kann sie nicht verwenden | `PI_SSH_KEY` prüfen und den eingerichteten Schlüssel mit `ssh-add` laden; lokal bleibt `--lokal bilder` verfügbar. |
 | Stundenauftrag wird nicht eingerichtet | Ausgabe der Testaufnahme prüfen; auf dem Pi Verfügbarkeit, Aktivität und Startfreigabe von cron prüfen |
-| cm² oder mm bleiben `NULL` | Tatsächliche Referenzstrecke in der Blattebene einrichten und passenden Maßstab prüfen |
+| cm² oder mm fehlen | Tatsächliche Referenzstrecke in der Blattebene einrichten und passenden Maßstab prüfen |
 | Scores ändern sich nach dem Wegfall alter Fotos | Die aktuelle Auswahl bildet die Referenz neu. Referenzdateiname im Datensatz prüfen. |
 | Ergebnisdateien können nicht ersetzt werden | `ergebnis.csv` in Excel und offene Ausgabedateien schließen; Analyse erneut starten |
 | Maske enthält Hintergrund oder lässt Blätter aus | Original und Kontrollbild vergleichen; gegebenenfalls die dateigenaue Korrekturfunktion nutzen |
@@ -431,9 +443,17 @@ Für einen Fehlerbericht helfen der verwendete Befehl, Python- und Paketversione
 | [Bildaufnahme-Spezifikation](docs/BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md) | Aufnahmebetrieb, Segmentierung und physische Messung |
 | [Gesundheitsbewertung](docs/BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md) | Referenz, Lichtausgleich, Teilbewertungen und Zustandsindex |
 | [Merkmalsverzeichnis](docs/BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md) | Datentypen, Einheiten, fehlende Werte und Exportzuordnung |
-| [Digital-Twin-Modell](docs/BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) | Browseransicht, Fotokonturen und Projektion |
+| [Digital-Twin-Modell](docs/BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) | Browseransicht, Messwerte und Projektion |
 
 Änderungen sollen an passenden Originalbildern überprüft und in verständlichen, zusammengehörigen Commits dokumentiert werden. Bei Änderungen des Messverfahrens oder der Bewertung werden die zugehörigen Versionsfelder und Spezifikationen gepflegt.
+
+Wenn erzeugte Viewer-Dateien unter `auswertung/` im Repository liegen, können sie über diese Einträge in `.gitattributes` von GitHubs Sprachstatistik ausgeschlossen werden:
+
+```gitattributes
+auswertung/digital_twin_3d.html linguist-generated=true
+auswertung/digital_twin_3d.js linguist-generated=true
+auswertung/digital_twin_3d.css linguist-generated=true
+```
 
 Große Bilddatensätze, automatisch erzeugte Ausgaben und die virtuelle Python-Umgebung werden von der Quellcode-Versionierung getrennt gehalten. Kleine gezielte Prüfdaten und ihre Herkunft können die spätere Regressionstest-Sammlung ergänzen. Gerätebezogene Kalibrierdaten und geprüfte Maskenkorrekturen gehören zum jeweiligen Messaufbau. Automatische Pflanzenreferenzen bestehen nur während eines Analyselaufs.
 

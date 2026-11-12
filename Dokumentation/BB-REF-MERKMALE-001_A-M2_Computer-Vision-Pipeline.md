@@ -4,10 +4,10 @@
 |---|---|
 | Dokument-ID | BB-REF-MERKMALE-001 |
 | Meilenstein | A-M2 · Computer-Vision-Pipeline |
-| Version | 3.8 |
+| Version | 3.9 |
 | Datum | 11.11.2026 |
 | Autorin | Atida Ashta |
-| Pipeline | analyse.py 4.10.1 |
+| Pipeline | analyse.py 4.11.0 |
 | Bewertung | Scoring 4.1.0 |
 
 ## 1 Ausgabeprinzip
@@ -16,13 +16,13 @@ Wenn eine Aufnahme sowohl im JSON als auch in der CSV gespeichert ist, werden f�
 
 Aus jedem Eingabebild wird ein Datensatz mit Messwerten oder einem Fehlerstatus erzeugt. Die Ausgabe verbindet diese Datensätze mit den bereits gespeicherten Aufnahmen. Kann ein bereits brauchbar ausgewertetes Foto bei einem späteren Lauf nicht mehr gelesen oder analysiert werden, kann sein gespeicherter Datensatz erhalten bleiben. Unbekannte Messwerte werden nicht mit 0 aufgefüllt.
 
-Die Kontrollausgabe heißt `auswertung/ergebnis.csv`. CSV bedeutet Comma-Separated Values, ein tabellarisches Dateiformat. Für deutsche Tabellenprogramme werden hier Semikolon als Trennzeichen, Dezimalkomma und UTF-8 mit Byte Order Mark (BOM, Kennung der Textcodierung) verwendet. Fehlende Werte werden ausdrücklich als `NULL` geschrieben. `True` und `False` sind boolesche Angaben.
+Die Kontrollausgabe heißt `auswertung/ergebnis.csv`. CSV bedeutet Comma-Separated Values, ein tabellarisches Dateiformat. Für deutsche Tabellenprogramme werden hier Semikolon als Trennzeichen, Dezimalkomma und UTF-8 mit Byte Order Mark (BOM, Kennung der Textcodierung) verwendet. Fehlende Werte werden ausdrücklich als `—` geschrieben. `True` und `False` sind boolesche Angaben.
 
 `ergebnis.json` verwendet JavaScript Object Notation (JSON), ein strukturiertes Datenaustauschformat. Dort stehen echte Zahlen, boolesche Werte und `null`, keine Dezimalkomma-Zahlen als Text. Beide Ausgaben und die Diagramme werden aus denselben gerundeten Datensätzen aufgebaut. Die spätere Programmierschnittstelle, Application Programming Interface (API), muss deshalb keine CSV-Datei einlesen.
 
 ## 2 Spalten und Zuordnung
 
-Die Tabelle enthält die 49 Standardspalten in der Reihenfolge von `SPALTEN` in `analyse.py` 4.10.1. Beim Einlesen älterer CSV-Dateien können vorhandene Zusatzspalten am Ende erhalten bleiben. `image_measurements` und `health_assessment` sind Objekte des JSON-Exports. Die Übernahme per HTTP ist getrennt abzustimmen.
+Die Tabelle enthält die 52 Standardspalten in der Reihenfolge von `SPALTEN` in `analyse.py` 4.11.0. Beim Einlesen älterer CSV-Dateien können vorhandene Zusatzspalten am Ende erhalten bleiben. `image_measurements` und `health_assessment` sind Objekte des JSON-Exports. Die Übernahme per HTTP ist getrennt abzustimmen.
 
 | CSV-Spalte | Einheit | Bedeutung | JSON-Zuordnung |
 |---|---|---|---|
@@ -75,6 +75,9 @@ Die Tabelle enthält die 49 Standardspalten in der Reihenfolge von `SPALTEN` in 
 | `score_braun` | 0–100 | Zusätzliche Braun-/Warmfärbung | `health_assessment.score_brown` |
 | `score_saettigung` | 0–100 | Änderung der Farbsättigung nach Lichtkorrektur | `health_assessment.score_saturation` |
 | `score_farbton` | 0–100 | Farbton- und Lab-Farbänderung nach Lichtkorrektur | `health_assessment.score_hue` |
+| `durchmesser_px` | Pixel | Größter Abstand über die Blattmaske; benötigt keinen Maßstab | `analysis.leaf_diameter_px` |
+| `sichtbare_blaetter` | Anzahl | Erkannte oder manuell beschriftete sichtbare Blätter | `analysis.leaf_geometry.count` |
+| `blattzaehlung_quelle` | Text | `estimated` für Schätzung oder `manual` für manuelle Beschriftung | `analysis.leaf_geometry.method` |
 
 ## 3 Bedeutung der wichtigsten Messwerte
 
@@ -86,7 +89,7 @@ Das Foto wird eingelesen und bei passender Objektivkalibrierung entzerrt. Die Bl
 
 `pflanzen_pixel` zählt weiße Pixel der endgültigen Blattmaske. Es wird keine Fläche des Topfes oder eine konvexe Hülle der gesamten Pflanze gemessen. Für `blattflaeche_cm2` wird mit dem Quadrat des verifizierten Millimeter-pro-Pixel-Maßstabs umgerechnet. `durchmesser_mm` ist die größte Ausdehnung der maskierten Pixeloberfläche einschließlich der äußeren Pixelgrenzen.
 
-Ohne passenden Maßstab bleiben die physischen Werte `NULL`. Eine gültige Pixelmaske kann trotzdem ausgewertet werden. Eine nicht erkannte Blattmaske ist kein Nachweis dafür, dass biologisch keine Pflanze vorhanden ist. Bei unlesbaren Bildern bleibt sogar die Pixelzahl unbekannt.
+Ohne passenden Maßstab bleiben die physischen Werte `—`. Eine gültige Pixelmaske kann trotzdem ausgewertet werden. Eine nicht erkannte Blattmaske ist kein Nachweis dafür, dass biologisch keine Pflanze vorhanden ist. Bei unlesbaren Bildern bleibt sogar die Pixelzahl unbekannt.
 
 `kompaktheit` wird aus `4 × pi × Fläche / Umfang²` berechnet. Die Umfänge der erfassten Blattbereiche und vorhandener innerer Lücken werden berücksichtigt. Eine Änderung kann auf eine andere Blattstellung oder eine andere Maske zurückgehen und ist keine sichere Diagnose einer Welke.
 
@@ -122,6 +125,8 @@ Die Einheit pro Tag ist eine zeitliche Umrechnung, keine über einen ganzen Tag 
 
 ## 4 Fehlende Werte und Meldungen
 
+Bekannte Aufnahmezeiten können über `--aufnahmezeiten` aus einer CSV mit den Spalten `bild;captured_at` übernommen werden. Die Uhrzeit muss eine Zeitzone enthalten. Ohne Maßstab kann eine gültige Blattmaske in Pixeln vermessen werden. Physische Maße oder ein fehlender Vergleichswert werden nicht geschätzt.
+
 | Situation | Ergebnis |
 |---|---|
 | Datei nicht lesbar | Status `datei_nicht_lesbar`, Qualitätsmeldung `nicht_lesbar`, Messwerte unbekannt |
@@ -133,7 +138,7 @@ Die Einheit pro Tag ist eine zeitliche Umrechnung, keine über einen ganzen Tag 
 | verschiedene Pflanzen mit `--einzelbilder` | keine gemeinsame Gesundheits- oder Wachstumszeitreihe |
 | Pi-Abruf mit Timeout oder anderem Fehler, lokale Bilder vorhanden | Alle lokalen Bilder werden trotzdem neu analysiert; kein Gesundheitsabschlag wegen der Verbindung. |
 | Keine lokalen Bilder vorhanden | Vorhandene Auswertung bleibt erhalten. |
-| Referenzaufnahme einer Ansicht | Status `referenzfoto_start_der_ansicht`; Score und Teilwerte `NULL`; im Diagramm Referenzmarke bei 100. |
+| Referenzaufnahme einer Ansicht | Status `referenzfoto_start_der_ansicht`; Score und Teilwerte `—`; im Diagramm Referenzmarke bei 100. |
 | CSV oder andere Ausgabedatei gesperrt | Vorherige Ausgabe wird wiederhergestellt; bei blockierter Wiederherstellung bleibt eine Sicherung am gemeldeten Pfad. |
 
 Mehrere Qualitätsmeldungen werden mit Semikolon getrennt. Der CSV-Schreiber setzt die nötigen Anführungszeichen, damit dadurch keine Spalten verschoben werden. Ein Hinweis wie `blatt_am_bildrand` ist eine Auffälligkeit und verhindert den Strukturvergleich dieser Aufnahme. Ein Farbvergleich kann bei ausreichender Überlappung weiterhin möglich sein.
@@ -164,7 +169,7 @@ Im JSON stehen diese Zusatzinformationen unter `analysis`. `view_id` ist der SHA
 
 ### Blattgeometrie für den Digital Twin
 
-`analysis.leaf_geometry` enthält die Konturen in gemeinsamen, auf die Bildgröße normierten Koordinaten. `width_px` und `height_px` beschreiben die Ausdehnung der sichtbaren Gesamtmaske; `leaves[].pixels` gibt die Fläche des jeweiligen Teilbereichs an. `method` unterscheidet `estimated` und `manual`. Ohne verfügbare Konturen ist das Objekt `null` oder fehlt in älteren Exporten. Die CSV-Spalten bleiben gleich. Der Zählwert betrifft nur sichtbare, voneinander getrennte oder manuell zugeordnete Flächen.
+`analysis.leaf_geometry` enthält die Konturen in gemeinsamen, auf die Bildgröße normierten Koordinaten. `width_px` und `height_px` beschreiben die Ausdehnung der sichtbaren Gesamtmaske; `leaves[].pixels` gibt die Fläche des jeweiligen Teilbereichs an. `method` unterscheidet `estimated` und `manual`. Ohne verfügbare Konturen ist das Objekt `null` oder fehlt in älteren Exporten. Die CSV enthält zusätzlich den Durchmesser in Pixeln und die Blattzählung mit Quelle. Der Zählwert betrifft nur sichtbare, voneinander getrennte oder manuell zugeordnete Flächen.
 
 ## 6 Diagramme und Dateien
 
@@ -179,7 +184,7 @@ Alle Schritte werden durch `analyse.py` ausgeführt.
 | `05_teilscores.png` | Heatmap der fünf Teilbewertungen für jede Aufnahme; Referenzstarts und fehlende Werte bleiben erkennbar |
 | `06_digital_twin.png` | Modellreihe der sichtbaren Blattfläche und gegebenenfalls die 24-Stunden-Projektion |
 
-Die Bildliste wird nach jedem normalen Abrufversuch frisch aus dem lokalen Ordner gebildet, unabhängig von dessen Erfolg. Auch selbst hinzugefügte Bilder werden erfasst. Die vorhandenen Originale werden neu ausgewertet. `--nur-bild` überspringt die Analyse. Automatische Masken und Kontrollen werden in `masken/` und `kontrolle/` aktualisiert; dateigenaue Korrekturen bleiben in `masken_korrektur/`. Die Diagramme werden auch bei fehlenden Einzelwerten mit dem jeweiligen Status ausgegeben. `digital_twin.json`, `digital_twin_3d.html` und `digital_twin_3d.css` werden im selben Analyselauf erzeugt. Modell und Browseransicht sind in [A-M4](BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) beschrieben.
+Die Bildliste wird nach jedem normalen Abrufversuch frisch aus dem lokalen Ordner gebildet, unabhängig von dessen Erfolg. Auch selbst hinzugefügte Bilder werden erfasst. Die vorhandenen Originale werden neu ausgewertet. `--nur-bild` überspringt die Analyse. Automatische Masken und Kontrollen werden in `masken/` und `kontrolle/` aktualisiert; dateigenaue Korrekturen bleiben in `masken_korrektur/`. Die Diagramme werden auch bei fehlenden Einzelwerten mit dem jeweiligen Status ausgegeben. `digital_twin.json`, `digital_twin_3d.html`, `digital_twin_3d.js` und `digital_twin_3d.css` werden im selben Analyselauf erzeugt. Modell und Browseransicht sind in [A-M4](BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) beschrieben.
 
 Die sichtbare Blattanzahl wird in der Browseransicht geschätzt oder aus manuellen Blattlabels übernommen. Pflanzenhöhe und eine absolute biologische Gesundheitswahrscheinlichkeit werden nicht berechnet. Die tatsächliche Datenquelle bleibt das Originalfoto mit der finalen sichtbaren Blattmaske.
 
@@ -195,5 +200,5 @@ Ein Pi-Abruffehler wird in der Konsole ausgegeben. Es wird dafür kein zusätzli
 
 ## 8 Maßgebliche Implementierung
 
-- [`analyse.py`](../analyse.py), Pipeline 4.10.1 und Scoring 4.1.0: `SPALTEN`, `API_MESSFELDER`, `API_GESUNDHEIT`, `api_datensatz`, `ergebnishistorie_verbinden` und `ergebnisse_speichern`.
+- [`analyse.py`](../analyse.py), Pipeline 4.11.0 und Scoring 4.1.0: `SPALTEN`, `API_MESSFELDER`, `API_GESUNDHEIT`, `api_datensatz`, `ergebnishistorie_verbinden` und `ergebnisse_speichern`.
 - [Bilderfassungssystem](BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md) und [Gesundheitsbewertung](BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md).
