@@ -4,10 +4,10 @@
 |---|---|
 | Dokument-ID | BB-REF-MERKMALE-001 |
 | Meilenstein | A-M2 · Computer-Vision-Pipeline |
-| Version | 3.13 |
+| Version | 3.15 |
 | Datum | 13.11.2026 |
 | Autorin | Atida Ashta |
-| Pipeline | analyse.py 4.13.0 |
+| Pipeline | computer_vision_pipeline.py 4.13.0 |
 | Bewertung | Scoring 4.1.0 |
 
 ## 1 Ausgabeprinzip
@@ -22,7 +22,7 @@ Die Kontrollausgabe heißt `auswertung/ergebnis.csv`. CSV bedeutet Comma-Separat
 
 ## 2 Spalten und Zuordnung
 
-Die Tabelle enthält die 52 Standardspalten in der Reihenfolge von `SPALTEN` in `analyse.py` 4.13.0. Beim Einlesen älterer CSV-Dateien können vorhandene Zusatzspalten am Ende erhalten bleiben. `image_measurements` und `health_assessment` sind Objekte des JSON-Exports. Die Übernahme per HTTP ist getrennt abzustimmen.
+Die Tabelle enthält die 52 Standardspalten in der Reihenfolge von `SPALTEN` in `computer_vision_pipeline.py` 4.13.0. Beim Einlesen älterer CSV-Dateien können vorhandene Zusatzspalten am Ende erhalten bleiben. `image_measurements` und `health_assessment` sind Objekte des JSON-Exports. Die Übernahme per HTTP ist getrennt abzustimmen.
 
 | CSV-Spalte | Einheit | Bedeutung | JSON-Zuordnung |
 |---|---|---|---|
@@ -149,7 +149,7 @@ Mehrere Qualitätsmeldungen werden mit Semikolon getrennt. Der CSV-Schreiber set
 - `image`: Dateiname mit Endung, Aufnahmezeit, relativer Bildpfad und SHA-256-Prüfsumme. SHA-256 bedeutet Secure Hash Algorithm mit 256 Bit und dient hier zur eindeutigen Prüfung der Dateiinhalte.
 - `image_measurements`: Bildmesswerte mit den in der Tabelle aufgeführten englischen Feldnamen.
 - `health_assessment`: Score, Kategorie, Teilbewertungen, Status und Scoring-Version.
-- `analysis`: Herkunft der Maske, Maßstabsstatus, Objektivstatus, Referenzdatei und -zeit, Lichtkorrektur, Anteil des gemeinsamen Blattgewebes (`illumination.common_leaf_pct`, bezogen auf die kleinere Rand-bereinigte Maske) und Gründe für fehlende Werte. `pipeline_sha256` kennzeichnet den vollständigen Skriptstand und ist ein technisches Herkunftsmerkmal, kein zusätzlicher Pflanzenmesswert.
+- `analysis`: Herkunft der Maske, Maßstabsstatus, Objektivstatus, Referenzdatei und -zeit, Lichtkorrektur, Anteil des gemeinsamen Blattgewebes (`illumination.common_leaf_pct`, bezogen auf die kleinere Rand-bereinigte Maske) und Gründe für fehlende Werte. `pipeline_sha256` kennzeichnet den gemeinsamen Stand der vier Meilensteindateien und ist ein technisches Herkunftsmerkmal, kein zusätzlicher Pflanzenmesswert.
 
 `mm_per_px`, `image_brightness`, `largest_component_pct`, `color_hex` und `pipeline_version` entsprechen den bekannten Projektfeldnamen. Die früher verwendeten Aliasnamen `mm_per_pixel` und `brightness` werden nicht zusätzlich als doppelte Messwerte ausgegeben. Die genauen Datenbank-IDs und der HTTP-Vertrag sind weiterhin abzugleichen.
 
@@ -175,7 +175,7 @@ Die automatische Trennung beginnt mit Blattkernen, die aus dem Abstand zum Maske
 
 ## 6 Diagramme und Dateien
 
-Alle Schritte werden durch `analyse.py` ausgeführt.
+Die Messwerte und Diagramme werden in `computer_vision_pipeline.py` erzeugt. Der gesamte Ablauf wird mit `python analyse.py` gestartet; mit `python computer_vision_pipeline.py bilder` werden nur lokale Fotos verarbeitet.
 
 | Datei unter `grafiken/` | Inhalt |
 |---|---|
@@ -185,9 +185,9 @@ Alle Schritte werden durch `analyse.py` ausgeführt.
 | `04_gesundheit.png` | relative Bewertung vor und nach zeitlicher Glättung, Referenzfoto und Status je Aufnahme |
 | `05_teilscores.png` | Heatmap der fünf Teilbewertungen für jede Aufnahme; Referenzstarts und fehlende Werte bleiben erkennbar |
 
-Die Galerie `grafiken/grafiken.html` zeigt die Diagramme einzeln. `grafiken.css`, `grafiken.js` und `grafiken.json` werden im selben Ordner erzeugt. Mit `python analyse.py --grafiken` wird die Galerie aus den vorhandenen PNG-Dateien geöffnet. Bei der Umstellung werden ältere Grafiken aus `auswertung/grafiken/` übernommen. Die Ergebnisdateien werden bei diesem Aufruf nicht neu berechnet.
+Die Galerie `grafiken/grafiken.html` zeigt die Diagramme einzeln. `grafiken.html`, `grafiken.css` und `grafiken.js` sind feste Projektdateien. Die Analyse erzeugt im selben Ordner die fünf PNGs und `grafiken.json` mit der Liste der verfügbaren Diagramme. Mit `python computer_vision_pipeline.py --grafiken` oder `python analyse.py --grafiken` wird die Galerie lokal aus den vorhandenen PNG-Dateien geöffnet. Ältere Grafiken aus `auswertung/grafiken/` werden dabei übernommen. Die Ergebnisdateien werden bei diesem Aufruf nicht neu berechnet.
 
-Die Bildliste wird nach jedem normalen Abrufversuch frisch aus dem lokalen Ordner gebildet, unabhängig von dessen Erfolg. Auch selbst hinzugefügte Bilder werden erfasst. Die vorhandenen Originale werden neu ausgewertet. `--nur-bild` überspringt die Analyse. Automatische Masken und Kontrollen werden in `masken/` und `kontrolle/` aktualisiert; dateigenaue Korrekturen bleiben in `masken_korrektur/`. Die Diagramme werden auch bei fehlenden Einzelwerten mit dem jeweiligen Status ausgegeben. Die vier Modell- und Viewer-Dateien werden unter `digital twin/` erzeugt, die vier Gesundheitsdateien unter `gesundheitssystem/`. Die Browseransichten werden in [A-M4](BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) und [A-M3](BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md) beschrieben.
+Die Bildliste wird nach jedem normalen Abrufversuch frisch aus dem lokalen Ordner gebildet, unabhängig von dessen Erfolg. Auch selbst hinzugefügte Bilder werden erfasst. Die vorhandenen Originale werden neu ausgewertet. `--nur-bild` überspringt die Analyse. Automatische Masken und Kontrollen werden in `masken/` und `kontrolle/` aktualisiert; dateigenaue Korrekturen bleiben in `masken_korrektur/`. Die Diagramme werden auch bei fehlenden Einzelwerten mit dem jeweiligen Status ausgegeben. Für die weiteren Ansichten werden `digital twin/digital_twin.json` und `gesundheitssystem/gesundheitssystem.json` aktualisiert. Die Seiten lesen die Daten mit JavaScript; ihre Quelldateien bleiben unverändert. Die Browseransichten werden in [A-M4](BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) und [A-M3](BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md) beschrieben.
 
 Die sichtbare Blattanzahl wird bei der Analyse geschätzt oder anhand manueller Markierungen ermittelt. In der Zählansicht werden die daraus erzeugten Blätter einzeln dargestellt. Pflanzenhöhe und eine absolute biologische Gesundheitswahrscheinlichkeit werden nicht berechnet. Die tatsächliche Datenquelle bleibt das Originalfoto mit der finalen sichtbaren Blattmaske.
 
@@ -203,5 +203,5 @@ Ein Pi-Abruffehler wird in der Konsole ausgegeben. Es wird dafür kein zusätzli
 
 ## 8 Maßgebliche Implementierung
 
-- [`analyse.py`](../analyse.py), Pipeline 4.13.0 und Scoring 4.1.0: `SPALTEN`, `API_MESSFELDER`, `API_GESUNDHEIT`, `api_datensatz`, `ergebnishistorie_verbinden` und `ergebnisse_speichern`.
+- [`computer_vision_pipeline.py`](../computer_vision_pipeline.py), Pipeline 4.13.0: `SPALTEN`, `API_MESSFELDER`, `API_GESUNDHEIT`, `api_datensatz`, `ergebnishistorie_verbinden` und `ergebnisse_speichern`.
 - [Bilderfassungssystem](BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md) und [Gesundheitsbewertung](BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md).

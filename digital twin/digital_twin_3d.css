@@ -24,3 +24,5 @@ input[type=range]{width:100%;margin:0;accent-color:var(--accent)}
 [hidden]{display:none!important}
 :focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 @media(max-width:520px){main{margin:18px auto}.controls{padding:14px}.leaf-tray{padding-inline:8px}.leaf-tray ol{grid-template-columns:repeat(auto-fill,minmax(54px,1fr))}}
+.data-load{margin-top:14px;display:grid;gap:7px;color:var(--muted);font-size:.85rem}
+.data-load input{max-width:100%}

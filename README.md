@@ -54,10 +54,10 @@ flowchart TD
     Bestand --> Auswahl{"Lokale Bilder vorhanden?"}
     Auswahl -->|Ja| Analyse["Masken, Kontrollbilder und Messwerte neu berechnen"]
     Auswahl -->|Nein| Ende["Vorhandene Auswertung behalten"]
-    Analyse --> Ausgabe["Messwerte, Diagramme und Browseransicht aktualisieren"]
+    Analyse --> Ausgabe["Messwerte, Diagramme und JSON für die Ansichten aktualisieren"]
 ```
 
-Der Fotoabruf und die lokale Analyse sind **zwei unabhängige Arbeitsschritte innerhalb desselben Skripts**. Sie werden nacheinander ausgeführt. Ein Timeout, ein fehlender SSH-Schlüssel oder eine abgelehnte Verbindung beendet nur den Abruf. Danach wird der konfigurierte lokale Bilderordner vollständig neu eingelesen und ausgewertet. Eine erfolgreiche Verbindung liefert ebenfalls keine eingeschränkte Analyseliste: Selbst hinzugefügte lokale Fotos werden mitverarbeitet.
+Der Fotoabruf und die lokale Analyse sind zwei unabhängige Arbeitsschritte. `analyse.py` ruft die Bilderfassung und die Auswertung nacheinander auf. Ein Timeout, ein fehlender SSH-Schlüssel oder eine abgelehnte Verbindung beendet nur den Abruf. Danach wird der konfigurierte lokale Bilderordner vollständig neu eingelesen und ausgewertet. Selbst hinzugefügte lokale Fotos werden mitverarbeitet.
 
 Der Pi kann nach der Einrichtung selbstständig stündlich fotografieren. Die Übertragung und Bildanalyse werden auf dem auswertenden Computer gestartet. Eine stündliche Aufnahme auf dem Pi startet keine automatische Windows-Auswertung. Der geplante Backend-Versand ist noch nicht Bestandteil dieses Ablaufs.
 
@@ -217,34 +217,42 @@ Für eine andere Pflanze wird eine eigene Bildserie und eine eigene Kennung in `
 python analyse.py --lokal bilder --neue-referenz --ausgabe auswertung
 ```
 
+### Browseransichten
+
+HTML, CSS und JavaScript liegen als feste Projektdateien in `digital twin/`, `gesundheitssystem/` und `grafiken/`. Beim Analyselauf werden die JSON-Daten und PNG-Diagramme aktualisiert. JavaScript lädt diese Daten; die Webseiten bleiben als feste Dateien im Projekt.
+
+Die folgenden Befehle öffnen die Seiten über einen lokalen Server (`127.0.0.1`). Die JSON-Dateien werden automatisch geladen. Wird eine HTML-Datei per Doppelklick geöffnet, kann JavaScript die JSON-Datei aufgrund der Browserregeln für lokale Dateien nicht automatisch lesen. Für Digital Twin und Gesundheit werden daher die Python-Befehle verwendet. Internet und Pi-Verbindung sind dafür nicht erforderlich. Nach 15 Minuten ohne Zugriff beendet sich der Server. `--ohne-browser` aktualisiert nur die Daten.
+
 ### Gesundheitsansicht öffnen
 
-Nach der Analyse kann `gesundheitssystem/gesundheitssystem.html` per Doppelklick geöffnet werden. Alternativ wird die Seite aus vorhandenen Ergebnissen ohne Pi-Abruf geöffnet:
+Die Seite wird aus vorhandenen Ergebnissen ohne Pi-Abruf geöffnet:
 
 ```powershell
-python analyse.py --gesundheit
+python gesundheitsbewertung.py
 ```
 
-Neben dem neuesten Foto werden der Gesundheitsscore, die fünf farbbezogenen Teilbewertungen und die Blattmerkmale gezeigt. Die Ergebnishistorie bleibt in `auswertung/`. Eine nicht bewertbare letzte Aufnahme bleibt als solche sichtbar. Die vier Dateien werden automatisch erzeugt; beim Doppelklick wird kein Webserver benötigt.
+Neben dem neuesten Foto werden der Gesundheitsscore, die fünf farbbezogenen Teilbewertungen und die Blattmerkmale gezeigt. Die Ergebnishistorie bleibt in `auswertung/`. Eine nicht bewertbare letzte Aufnahme bleibt als solche sichtbar. Der bisherige Befehl `python analyse.py --gesundheit` funktioniert ebenfalls.
 
 ### Grafiken öffnen
 
 Die Datei `grafiken/grafiken.html` kann per Doppelklick geöffnet werden. Über die Reiter wird das Diagramm ausgewählt; **PNG öffnen** zeigt die Grafik in einem eigenen Browser-Tab. Die Seite funktioniert auch ohne Internetverbindung.
 
 ```powershell
-python analyse.py --grafiken
+python computer_vision_pipeline.py --grafiken
 ```
 
-Der Befehl erzeugt die Seite aus vorhandenen PNG-Dateien. Liegen sie noch unter `auswertung/grafiken/`, werden sie in den Projektordner `grafiken/` übernommen. Fotos und Messwerte werden dabei nicht neu ausgewertet.
+Der Befehl öffnet die feste Galerie mit den vorhandenen PNG-Dateien. Liegen sie noch unter `auswertung/grafiken/`, werden sie in den Projektordner `grafiken/` übernommen. Fotos und Messwerte werden dabei nicht neu ausgewertet. Der bisherige Befehl `python analyse.py --grafiken` funktioniert ebenfalls.
 
 ### Digital Twin öffnen
 
 Nach der Analyse wird die lokale Browseransicht geöffnet. Vorhandene Ergebnisse lassen sich auch ohne neue Analyse öffnen:
 
 ```powershell
-python analyse.py --3d
-python analyse.py --3d-aus-json auswertung/ergebnis.json
+python digital_twin.py
+python digital_twin.py --3d-aus-json auswertung/ergebnis.json
 ```
+
+`--3d-aus-json` aktualisiert die Daten für die Ansicht aus dem gespeicherten Ergebnis, ohne Fotos neu auszuwerten. `python analyse.py --3d` und `python analyse.py --3d-aus-json` bleiben als Einstieg verfügbar.
 
 Der Browser zeigt die Pflanze aus der letzten Aufnahme. Aus den sichtbaren Konturen und Farben werden gewölbte Blattflächen aufgebaut. Ziehen dreht die Pflanze. Unter **Blätter zählen** werden dieselben Blätter einzeln und nummeriert angezeigt. Ein `≈` kennzeichnet die automatisch geschätzte Anzahl. Überlappende Blätter können bei der Erkennung zusammenfallen. Die Tiefe und verdeckte Pflanzenteile sind aus dem einzelnen Foto nicht messbar.
 
@@ -322,15 +330,19 @@ Die Grafiken `02_wachstumsrate.png` und `04_gesundheit.png` markieren jede Aufna
 
 | Pfad | Inhalt |
 |---|---|
-| `analyse.py` | Zentraler Einstieg für Aufnahmeabruf, Analyse, Bewertung und Diagramme |
+| `analyse.py` | Einstieg für den gesamten Ablauf und die bisherigen Befehle |
+| `bilderfassungssystem.py` | A-M1 · Pi-Fotos, Stundenplan, Aufnahmezeiten und Objektivkalibrierung |
+| `computer_vision_pipeline.py` | A-M2 · Blattmasken, Messwerte, CSV/JSON, Grafiken und lokaler Browserstart |
+| `gesundheitsbewertung.py` | A-M3 · Lichtabgleich, Gesundheitsscore und Daten für die Gesundheitsansicht |
+| `digital_twin.py` | A-M4 · Sichtbare Blattgeometrie, Modell, Prognose und Daten für die 3D-Ansicht |
 | `dokumentation/` | Spezifikationen zu Aufnahme, Bewertung und Messfeldern |
 | `bilder/` | Lokale Eingabebilder im üblichen Projektaufbau |
 | `auswertung/masken/` | Binäre Messmasken in Originalauflösung |
 | `auswertung/kontrolle/` | Je eine Kontrollansicht pro lesbarer Aufnahme, Foto bis 1500 Pixel breit |
-| `grafiken/` | Fünf PNG-Diagramme und lokale Galerie mit HTML, CSS, JS und JSON |
+| `grafiken/` | Fünf PNG-Diagramme und `grafiken.json`; feste Galerie aus HTML, CSS und JavaScript |
 | `auswertung/ergebnis.csv` | Tabellarische Kontrollausgabe |
 | `auswertung/ergebnis.json` | Strukturierte Datensätze für die weitere Verarbeitung |
-| `digital twin/digital_twin.json` | Modellzustand, 24-Stunden-Projektion und Prognosehistorie, sofern verfügbar |
+| `digital twin/digital_twin.json` | Modellzustand, 24-Stunden-Projektion, Prognosehistorie und Blattdaten für die Ansicht |
 | `digital twin/digital_twin_3d.html` mit `digital_twin_3d.js` und `digital_twin_3d.css` | Lokale Browseransicht, JavaScript und Gestaltung |
 | `gesundheitssystem/gesundheitssystem.html`, `.css`, `.js`, `.json` | Lokale Gesundheitsansicht und zugehörige Daten |
 | `auswertung/massstab.npz` | Gespeicherte Referenzstrecke, sofern eingerichtet |
@@ -338,7 +350,9 @@ Die Grafiken `02_wachstumsrate.png` und `04_gesundheit.png` markieren jede Aufna
 | `auswertung/blattlabels/` | Optionale Blattmarkierungen und importierte Blattlabels |
 | `kamera_kalibrierung.json` | Objektivprofil, sofern erstellt |
 
-Die Ausgabeordner werden bei der Verarbeitung erzeugt. Beim Pi-Abruf gilt der konfigurierte `BILDER_ORDNER`; bei lokalen Aufrufen kann `--ausgabe` den Zielordner festlegen. Ohne diese Option liegt `auswertung/` neben dem ausgewählten Bilderordner. Die Ordner `grafiken/`, `digital twin/` und `gesundheitssystem/` liegen neben dem Standardordner `auswertung/`. Bei einem anders benannten Ausgabeordner werden sie darin getrennt von anderen Messreihen erzeugt. Alte Twin-Dateien in `auswertung/` werden nach einem erfolgreichen Lauf übernommen; gespeicherte Prognosen bleiben erhalten. Maßstab und manuelle Korrekturen gehören zum jeweiligen Messaufbau. Frühere automatisch erzeugte Referenzdateien werden nach einem erfolgreichen Lauf gezielt entfernt.
+Alle fünf Python-Dateien liegen im selben Projektordner. `python analyse.py` startet den gesamten Ablauf. `python bilderfassungssystem.py` holt nur die Pi-Fotos. `python computer_vision_pipeline.py bilder` verarbeitet die lokalen Bilder samt Ergebnissen, ohne den Pi zu kontaktieren oder eine Seite zu öffnen.
+
+Die Ausgabeordner werden bei der Verarbeitung erzeugt. Beim Pi-Abruf gilt der konfigurierte `BILDER_ORDNER`; bei lokalen Aufrufen kann `--ausgabe` den Zielordner festlegen. Ohne diese Option liegt `auswertung/` neben dem ausgewählten Bilderordner. Die Datenordner `grafiken/`, `digital twin/` und `gesundheitssystem/` liegen neben dem Standardordner `auswertung/`. Bei einem anders benannten Ausgabeordner werden die Daten darin abgelegt. Die HTML-, CSS- und JS-Dateien bleiben in ihren bisherigen Projektordnern. Bei abweichendem Ausgabeort kann den Browserbefehlen der Ergebnisordner mit `--ausgabe` übergeben werden. Die Prognosehistorie aus einem alten `auswertung/digital_twin.json` wird beim nächsten Analyselauf übernommen. Maßstab und manuelle Korrekturen gehören zum jeweiligen Messaufbau. Frühere automatisch erzeugte Referenzdateien werden nach einem erfolgreichen Lauf gezielt entfernt.
 
 ### Diagramme
 
@@ -372,26 +386,20 @@ JSON bedeutet JavaScript Object Notation. `ergebnis.json` enthält eine Liste mi
 
 Pixel- und Farbwerte bleiben ohne Maßstab verfügbar. Metrische Werte und fehlende Vergleichsscores werden nicht geschätzt. Fehlt bei älteren Daten ein aus derselben Aufnahme eindeutig ableitbarer Wert, werden Blattanteil, metrische Maße oder Farbcode aus den gespeicherten Eingangsgrößen ergänzt.
 
-Aufnahme und Skript werden mit SHA-256-Prüfsummen — Secure Hash Algorithm mit 256 Bit — gekennzeichnet. `pipeline_version`, `scoring_version` und `analysis.pipeline_sha256` machen den Verarbeitungsstand nachvollziehbar. Der abgeleitete Bildpfad muss bei der späteren Serveranbindung mit den tatsächlichen Speicherpfaden abgeglichen werden.
+Die Aufnahme erhält eine SHA-256-Prüfsumme. `analysis.pipeline_sha256` ist die gemeinsame Prüfsumme der vier Meilensteindateien. Zusammen mit `pipeline_version` und `scoring_version` macht sie den Verarbeitungsstand nachvollziehbar. Der abgeleitete Bildpfad muss bei der späteren Serveranbindung mit den tatsächlichen Speicherpfaden abgeglichen werden.
 
 Die vollständigen Feldnamen, Einheiten und Zuordnungen stehen im [Merkmalsverzeichnis](dokumentation/BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md). Ein automatischer Versand an die Webplattform ist noch nicht implementiert.
 
 ## Konfiguration
 
-Die Einstellungen stehen im oberen Bereich von `analyse.py`. Es wird derzeit keine separate Konfigurationsdatei eingelesen.
+Die Einstellungen stehen oben in der jeweiligen Meilensteindatei. Eigene Werte aus einer älteren `analyse.py` werden beim Umstieg in die zuständige Datei übernommen.
 
-| Einstellung | Bedeutung |
+| Datei | Einstellungen |
 |---|---|
-| `PI_ADRESSE` | SSH-Benutzer und erreichbare Adresse des Kamera-Pi |
-| `PI_AUFNAHME` | Absoluter Aufruf des vorhandenen Aufnahmehelfers |
-| `PI_FOTO_ORDNER` | Verzeichnis mit fertigen Kamera-Sitzungen auf dem Pi |
-| `PI_SSH_KEY` | Pfad zum vorhandenen privaten SSH-Schlüssel; bei Passwortschutz im `ssh-agent` laden |
-| `BILDER_ORDNER` | Lokales Ziel des Pi-Abgleichs |
-| `MAX_KAMERA_BILDER` | Begrenzung der lokal aufbewahrten importierten Kamerabilder; Standard: 100 |
-| `MESSREIHE` | Kennung der untersuchten Pflanze beziehungsweise Beobachtungsreihe |
-| `REFERENZ_FREIGEGEBEN` | Freigabekennzeichnung der Hauptreferenz nach Sichtprüfung; keine biologische Bestätigung |
-| `DEVICE_ID` | Bestätigter Geräteschlüssel für die spätere Plattformzuordnung |
-| `ROI_NORMIERT` | Optionaler normierter Bildbereich |
+| `bilderfassungssystem.py` | `PI_ADRESSE`, `PI_AUFNAHME`, `PI_FOTO_ORDNER`, `PI_SSH_KEY`, `BILDER_ORDNER`, `MAX_KAMERA_BILDER`, Objektivkalibrierung |
+| `computer_vision_pipeline.py` | `MESSREIHE`, `DEVICE_ID`, `ROI_NORMIERT`, Maßstab und Bildverarbeitung |
+| `gesundheitsbewertung.py` | `REFERENZ_FREIGEGEBEN`, Gewichte und Kennlinien für den Score |
+| `digital_twin.py` | `TWIN_FOTOANSICHT` und Grenzen der Prognose |
 
 Der Standard für `BILDER_ORDNER` ist `Downloads/Diploma/bilder` im Benutzerverzeichnis. Bei einem anderen Projektstandort wird dieser Pfad angepasst. Kameraadressen, Kennungen und Kalibrierdaten müssen zum jeweiligen Aufbau passen. Persönliche Zugangsdaten gehören nicht in die Projektdateien.
 
@@ -472,13 +480,7 @@ Für einen Fehlerbericht helfen der verwendete Befehl, Python- und Paketversione
 
 Änderungen sollen an passenden Originalbildern überprüft und in verständlichen, zusammengehörigen Commits dokumentiert werden. Bei Änderungen des Messverfahrens oder der Bewertung werden die zugehörigen Versionsfelder und Spezifikationen gepflegt.
 
-Wenn die erzeugten Viewer-Dateien im Repository liegen, können sie über diese Einträge in `.gitattributes` von GitHubs Sprachstatistik ausgeschlossen werden:
-
-```gitattributes
-"digital twin/**" linguist-generated=true
-gesundheitssystem/** linguist-generated=true
-grafiken/** linguist-generated=true
-```
+Die neun HTML-, CSS- und JavaScript-Dateien der Ansichten werden als Quellcode eingecheckt. Sind die ganzen Ansichtsordner noch in `.gitignore` oder als `linguist-generated` in `.gitattributes` eingetragen, werden diese Regeln auf die erzeugten JSON- und PNG-Dateien beschränkt.
 
 Große Bilddatensätze, automatisch erzeugte Ausgaben und die virtuelle Python-Umgebung werden von der Quellcode-Versionierung getrennt gehalten. Kleine gezielte Prüfdaten und ihre Herkunft können die spätere Regressionstest-Sammlung ergänzen. Gerätebezogene Kalibrierdaten und geprüfte Maskenkorrekturen gehören zum jeweiligen Messaufbau. Automatische Pflanzenreferenzen bestehen nur während eines Analyselaufs.
 

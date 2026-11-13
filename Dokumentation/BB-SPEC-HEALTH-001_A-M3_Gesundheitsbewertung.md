@@ -4,10 +4,10 @@
 |---|---|
 | Dokument-ID | BB-SPEC-HEALTH-001 |
 | Meilenstein | A-M3 · Gesundheitsbewertung |
-| Version | 1.11 |
+| Version | 1.13 |
 | Datum | 13.11.2026 |
 | Autorin | Atida Ashta |
-| Implementierung | analyse.py 4.13.0 |
+| Implementierung | gesundheitsbewertung.py |
 | Scoring-Version | 4.1.0 |
 | Status | Technischer relativer Zustandsindex; keine biologisch validierte Diagnose |
 
@@ -116,11 +116,11 @@ Die Gesundheitsdaten werden unter `health_assessment` ausgegeben, getrennt von `
 
 ### Lokale Gesundheitsansicht
 
-Beim normalen Analyselauf werden `gesundheitssystem.html`, `gesundheitssystem.css`, `gesundheitssystem.js` und `gesundheitssystem.json` im Projektordner `gesundheitssystem/` erzeugt. Die HTML-Datei kann per Doppelklick geöffnet werden. Mit `python analyse.py --gesundheit` kann die Ansicht aus vorhandenen Ergebnissen neu erzeugt und geöffnet werden, ohne eine Aufnahme abzurufen.
+Beim normalen Analyselauf wird `gesundheitssystem/gesundheitssystem.json` geschrieben. `gesundheitssystem.html`, `gesundheitssystem.css` und `gesundheitssystem.js` sind feste Projektdateien. Mit `python gesundheitsbewertung.py` oder `python analyse.py --gesundheit` wird die Ansicht über den lokalen Server geöffnet und die JSON-Datei automatisch geladen. Beim direkten Öffnen der HTML-Datei lässt der Browser den automatischen Zugriff auf die benachbarte JSON-Datei nicht zu.
 
 Neben dem letzten zeitlich zuordenbaren Foto werden der geglättete Gesundheitsscore, die fünf farbbezogenen Teilbewertungen und die Blattmerkmale angezeigt. Auf schmalen Bildschirmen werden Foto und Messwerte untereinander angezeigt. Farbanteile stammen aus dem Rohbild. Der Rohscore, der 24-Stunden-Trend, Warnungen und Angaben zu Bildqualität, Lichtabgleich und Referenzbezug bleiben in den Ergebnisdateien verfügbar. Die Strukturwertung fließt weiterhin in den Score ein, wenn die Voraussetzungen aus Abschnitt 5 erfüllt sind.
 
-Die Vorschau wird aus dem lokalen Original mit passender Prüfsumme erstellt. Fehlt das Original, bleiben die gespeicherten Bewertungen lesbar. Die Ansicht verwendet dieselben gerundeten Gesundheitswerte wie die Ergebnisausgabe.
+Die Vorschau wird aus dem lokalen Original mit passender Prüfsumme erstellt. Sie kann aus einem bereits gespeicherten Gesundheits-JSON angezeigt werden. Ist keine Vorschau vorhanden und fehlt das Original, bleiben die gespeicherten Bewertungen lesbar. Die Ansicht verwendet dieselben gerundeten Gesundheitswerte wie die Ergebnisausgabe.
 
 Die Diagramme zu Gesundheit und Teilbewertungen können separat in `grafiken/grafiken.html` geöffnet werden.
 
@@ -140,7 +140,7 @@ Ein stabiler Index bei den getesteten Lichtvarianten bedeutet keine vollständig
 
 ## 10 Grundlagen
 
-- Maßgeblich für die Berechnung: [`analyse.py`](../analyse.py), Funktionen `gesundheitsmerkmale`, `bewerten` und `zeitreihe_und_glaettung`.
+- Maßgeblich für die Berechnung: [`gesundheitsbewertung.py`](../gesundheitsbewertung.py), Funktionen `gesundheitsmerkmale`, `bewerten` und `gesundheitsverlauf`.
 - [Bilderfassungssystem](BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md) und [Computer-Vision-Pipeline](BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md).
 - [OpenCV: GrabCut](https://docs.opencv.org/4.x/d8/d83/tutorial_py_grabcut.html).
 - [OpenCV: Histogrammvergleich](https://docs.opencv.org/4.x/d8/dc8/tutorial_histogram_comparison.html).

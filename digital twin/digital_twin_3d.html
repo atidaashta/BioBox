@@ -1,16 +1,42 @@
 <!doctype html>
 <html lang="de">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
-<meta name="biobox-viewer-version" content="0.7.0">
-<title>BioBox</title>
-<link rel="stylesheet" href="digital_twin_3d.css">
-<script src="digital_twin_3d.js" defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="biobox-viewer-version" content="0.7.0">
+  <title>BioBox</title>
+  <link rel="stylesheet" href="digital_twin_3d.css">
+  <script src="digital_twin_3d.js" defer></script>
 </head>
 <body>
-<div id="app"></div>
-<noscript>JavaScript ist für diese Ansicht erforderlich.</noscript>
+  <main>
+    <header>
+      <h1>BioBox</h1>
+      <time id="capture-time" hidden></time>
+    </header>
+    <section class="viewer" aria-label="3D-Ansicht">
+      <div class="stage">
+        <canvas id="plant" tabindex="0" aria-label="Drehbare Basilikumpflanze. Mit Maus, Touch oder Pfeiltasten drehen." hidden></canvas>
+        <div class="leaf-tray" id="leaf-tray" tabindex="0" role="region" aria-label="Blattzählung" hidden>
+          <ol id="leaf-list" role="list" aria-label="Einzeln dargestellte Blätter"></ol>
+        </div>
+        <button id="leaves-button" type="button" aria-controls="leaf-tray" aria-pressed="false" hidden>
+          <span id="count-text">Blätter zählen</span>
+          <span id="count-badge" class="leaf-count"></span>
+        </button>
+        <p id="twin-empty" class="empty" role="status">Blattkonturen werden geladen …</p>
+      </div>
+      <div class="controls">
+        <label for="days">Tage nach der Aufnahme<output id="day-text" for="days">Aufnahme</output></label>
+        <input id="days" type="range" min="0" max="14" value="0" disabled>
+      </div>
+    </section>
+    <div id="data-load" class="data-load" hidden>
+      <label for="data-file">digital_twin.json auswählen</label>
+      <input id="data-file" type="file" accept=".json,application/json">
+    </div>
+  </main>
+  <noscript>JavaScript ist für diese Ansicht erforderlich.</noscript>
 </body>
 </html>

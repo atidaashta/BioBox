@@ -4,26 +4,32 @@
 | --- | --- |
 | Dokument-ID | BB-GUIDE-TWIN-001 |
 | Meilenstein | A-M4 · Digital-Twin-Modell |
-| Version | 1.11 |
+| Version | 1.13 |
 | Datum | 13.11.2026 |
-| Software | analyse.py 4.13.0 · Modell 0.1.0 · 3D-Ansicht 0.7.0 |
+| Software | digital_twin.py · Modell 0.1.0 · 3D-Ansicht 0.7.0 |
 | Status | Prototyp für lokale Darstellung, Projektion und Szenarien |
 
 ## 1. Starten
 
-Mit `analyse.py` 4.13.0 wird im Projektordner folgender Befehl ausgeführt:
+Der gesamte Aufnahme- und Analyseablauf wird im Projektordner gestartet:
 
 ```powershell
 python analyse.py
 ```
 
-Nach der Bildauswertung wird die Ansicht im Browser geöffnet. Mit `python analyse.py --3d` kann eine vorhandene Ansicht geöffnet werden. Sind bereits Messwerte vorhanden und soll die Seite daraus neu erstellt werden, kann ohne Pi-Abruf und ohne erneute Bildanalyse folgender Befehl verwendet werden:
+Nach der Bildauswertung wird die Ansicht im Browser geöffnet. Für vorhandene Daten wird die Ansicht separat geöffnet:
 
 ```powershell
-python analyse.py --3d-aus-json auswertung/ergebnis.json
+python digital_twin.py
 ```
 
-Die erzeugte Datei `digital twin/digital_twin_3d.html` kann auch per Doppelklick geöffnet werden. `digital_twin_3d.js` und `digital_twin_3d.css` müssen im selben Ordner liegen. JavaScript baut die Oberfläche auf und zeichnet die Pflanze. Ein Webserver wird nicht benötigt.
+Sind bereits Messwerte vorhanden und sollen nur die Daten für die Ansicht aktualisiert werden, kann ohne Pi-Abruf und ohne erneute Bildanalyse folgender Befehl verwendet werden:
+
+```powershell
+python digital_twin.py --3d-aus-json auswertung/ergebnis.json
+```
+
+Die Seite wird über einen lokalen Server geöffnet. Das JavaScript lädt `digital_twin.json` automatisch und zeichnet die Pflanze. Wird die HTML-Datei direkt geöffnet, lässt der Browser den automatischen Zugriff auf die JSON-Datei nicht zu. `digital_twin_3d.js` und `digital_twin_3d.css` liegen neben der HTML-Datei. `python analyse.py --3d` bleibt als gleichwertiger Startbefehl verfügbar.
 
 Bei Ergebnissen einer älteren Version wird mit `python analyse.py --lokal bilder` aus den vorhandenen Originalen neu segmentiert. Werden nur die gespeicherten JSON-Daten geöffnet, bleiben deren frühere Blattkonturen und Zählwerte maßgeblich.
 
@@ -46,7 +52,7 @@ python analyse.py --lokal bilder
 
 ## 3. Was das Modell darstellt
 
-Für jede erkannte oder markierte Blattregion wird eine gewölbte Oberfläche aufgebaut. Position, Länge, Breite, Orientierung, sichtbare Kontur und Grundfarbe werden aus der zugehörigen Bildregion angenähert. Tiefe, Stiele und Blattwölbung werden modelliert. Für senkrecht von oben aufgenommene Bilder kann oben im Skript `TWIN_FOTOANSICHT = "oben"` gesetzt werden. Eine einzelne Aufnahme liefert keine dreidimensionale Vermessung und zeigt keine vollständig verdeckten Blätter.
+Für jede erkannte oder markierte Blattregion wird eine gewölbte Oberfläche aufgebaut. Position, Länge, Breite, Orientierung, sichtbare Kontur und Grundfarbe werden aus der zugehörigen Bildregion angenähert. Tiefe, Stiele und Blattwölbung werden modelliert. Für senkrecht von oben aufgenommene Bilder kann in `digital_twin.py` `TWIN_FOTOANSICHT = "oben"` gesetzt werden. Eine einzelne Aufnahme liefert keine dreidimensionale Vermessung und zeigt keine vollständig verdeckten Blätter.
 
 Für spätere Tage wird die Modellgröße anhand einer verfügbaren geprüften Änderungsrate aus einem Vergleich über mindestens zwölf Stunden angepasst. Falls eine solche Rate fehlt, werden 2 % pro Tag als Annahme verwendet. Die Ansicht kennzeichnet spätere Tage als Szenario. Die Form wird nur in einem begrenzten Größenbereich skaliert; eine neue Blattanzahl und ein genauer späterer Wuchs werden daraus nicht abgeleitet. Der Regler ändert keine Messwerte.
 
@@ -54,17 +60,17 @@ Für spätere Tage wird die Modellgröße anhand einer verfügbaren geprüften �
 
 | Datei | Inhalt |
 | --- | --- |
-| `digital twin/digital_twin_3d.html` | Kleine Startdatei. |
-| `digital twin/digital_twin_3d.js` | Oberfläche, 3D-Modell und Daten der letzten Aufnahme. |
+| `digital twin/digital_twin_3d.html` | Aufbau der Oberfläche mit Modellansicht, Blattliste und Regler. |
+| `digital twin/digital_twin_3d.js` | Laden der Daten, Bedienung und Darstellung des 3D-Modells. |
 | `digital twin/digital_twin_3d.css` | Gestaltung. |
 | `auswertung/ergebnis.csv`, `auswertung/ergebnis.json` | Vollständiger Export der Bildmessungen. |
-| `digital twin/digital_twin.json` | Daten für die getrennte technische 24-Stunden-Projektion. |
+| `digital twin/digital_twin.json` | Zustand, 24-Stunden-Projektion, Prognosehistorie und Blattdaten der letzten Aufnahme unter `viewer`. |
 
-Beim Öffnen per Doppelklick müssen die drei Viewer-Dateien im selben Ordner liegen. Sie werden durch `analyse.py` erzeugt. Beim ersten erfolgreichen Lauf mit der neuen Ordnerstruktur werden alte Viewer-Dateien aus `auswertung/` durch die Dateien in `digital twin/` ersetzt. Die Prognosehistorie bleibt erhalten. Die Gesundheitsansicht wird separat unter `gesundheitssystem/` abgelegt.
+Die drei Viewer-Dateien sind fester Quellcode und werden nicht von `analyse.py` überschrieben. Aus der Analyse oder aus gespeicherten Bildmessungen werden nur die Daten im JSON aktualisiert. Beim Öffnen eines gespeicherten Ergebnisses werden die bestehende Modellrechnung und die Prognosehistorie nicht neu berechnet. Die Gesundheitsansicht liegt separat unter `gesundheitssystem/`.
 
 ## 5. Modell für die nächsten 24 Stunden
 
-Die 24-Stunden-Projektion wird in `analyse.py` aus der gemessenen sichtbaren Blattfläche in Pixeln berechnet. Sie wird getrennt vom Szenario des Reglers aus Abschnitt 3 erzeugt. In `digital_twin.json` stehen der aktuelle Messpunkt (`state`), die Modellrechnung (`forecast`) und der jeweilige Status.
+Die 24-Stunden-Projektion wird in `digital_twin.py` aus der gemessenen sichtbaren Blattfläche in Pixeln berechnet. Sie wird getrennt vom Szenario des Reglers aus Abschnitt 3 erzeugt. In `digital_twin.json` stehen der aktuelle Messpunkt (`state`), die Modellrechnung (`forecast`) und der jeweilige Status.
 
 | Prüfung | Voraussetzung |
 | --- | --- |

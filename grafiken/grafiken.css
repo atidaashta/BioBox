@@ -16,3 +16,4 @@ figure{margin:0;min-height:clamp(250px,65vh,630px);display:grid;place-items:cent
 figure img{display:block;width:auto;height:auto;max-width:100%;max-height:calc(100vh - 152px);object-fit:contain}
 .empty{margin:0;color:var(--muted);font-size:.9rem;text-align:center}
 @media(max-width:700px){figure{min-height:0;padding:5px}figure img{width:100%;max-height:none}nav a,.open{min-height:40px}figure .empty{padding:28px 10px}}
+[hidden]{display:none!important}

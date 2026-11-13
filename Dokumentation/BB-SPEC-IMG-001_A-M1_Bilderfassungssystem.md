@@ -4,15 +4,15 @@
 |---|---|
 | Dokument-ID | BB-SPEC-IMG-001 |
 | Meilenstein | A-M1 · Bilderfassungssystem |
-| Version | 1.6 |
-| Datum | 11.11.2026 |
+| Version | 1.8 |
+| Datum | 13.11.2026 |
 | Autorin | Atida Ashta |
-| Software | analyse.py 4.9.1 |
+| Software | bilderfassungssystem.py · Pipeline 4.13.0 |
 | Status | Implementierter Analyseablauf; Aufnahmeprofil und reale Messgenauigkeit weiter zu prüfen |
 
 ## 1 Zweck
 
-Es wird die **sichtbare projizierte Blattfläche einer einzelnen Pflanze** gemessen. Topf, Erde, Halterung, Fensterrahmen und möglichst auch lange dünne Stiele sollen ausgeschlossen werden. Überlappende oder verdeckte Blattflächen werden nicht hinzugeschätzt. Eine Blattanzahl und eine dreidimensionale Blattoberfläche werden nicht aus einem einzelnen Foto berechnet.
+Es wird die **sichtbare projizierte Blattfläche einer einzelnen Pflanze** gemessen. Topf, Erde, Halterung, Fensterrahmen und möglichst auch lange dünne Stiele sollen ausgeschlossen werden. Überlappende oder verdeckte Blattflächen werden nicht hinzugeschätzt. Die Anzahl sichtbarer Blätter kann geschätzt werden; die Gesamtzahl mit verdeckten Blättern und die dreidimensionale Blattoberfläche lassen sich aus einem Foto nicht bestimmen.
 
 Die Verarbeitung ist nicht auf Basilikum oder einen festgelegten dunklen Grünton beschränkt. Die automatische Initialisierung nutzt jedoch vor allem grünliche Blattbereiche. Für ungewöhnliche Farben oder schwer trennbare Hintergründe ist eine geprüfte Korrekturmaske vorgesehen. Das Verfahren ist keine universell trainierte semantische Blatterkennung.
 
@@ -39,11 +39,11 @@ Andere Zeitplaneinträge werden erhalten. Vor einer Änderung wird die bisherige
 
 Mit `python analyse.py --abholen` werden vorhandene fertige JPEGs abgeglichen und danach alle lokalen Bilder erneut analysiert. Dies entspricht dem normalen Aufruf `python analyse.py`; beide lösen keine zusätzliche Aufnahme aus. Nur die Einrichtung des Stundenplans und die direkte Linealmessung mit `--massstab` lösen gezielt eine Test- beziehungsweise Messaufnahme aus. `--stundenaufnahme-status` zeigt den eigenen Zeitplan und den letzten protokollierten Aufnahmeversuch; `--stundenaufnahme-ausschalten` entfernt den eigenen markierten Auftrag und erhält vorhandene Fotos. Früher von Hand angelegte Aufnahmejobs werden nicht automatisch entfernt.
 
-Für die stündliche Ausführung wird auf dem Pi ein Helfer unter `~/.local/bin/biobox-hourly-capture.py` erzeugt. Protokoll (`stundenaufnahme.log`), letzter Aufnahmestatus (`stundenaufnahme-status.json`) und Crontab-Sicherungen stehen unter `~/.local/state/BioBox/`. Der Stundenhelfer benötigt keine OpenCV-Installation auf dem Pi. Nach der nächsten vollen Stunde wird geprüft, ob der Zeitplan ein weiteres Foto erzeugt hat. Die Schritte zur Einrichtung und Prüfung stehen in der [Übergabe](../Atida-Handover.md).
+Für die stündliche Ausführung wird auf dem Pi ein Helfer unter `~/.local/bin/biobox-hourly-capture.py` erzeugt. Protokoll (`stundenaufnahme.log`), letzter Aufnahmestatus (`stundenaufnahme-status.json`) und Crontab-Sicherungen stehen unter `~/.local/state/BioBox/`. Der Stundenhelfer benötigt keine OpenCV-Installation auf dem Pi. Nach der nächsten vollen Stunde wird geprüft, ob der Zeitplan ein weiteres Foto erzeugt hat. Die Einrichtung und Prüfung stehen im [README](../README.md).
 
 ### Getrennter Fotoabruf und lokale Auswertung
 
-Der Abruf aktualisiert den lokalen Bildbestand. Die Analyse wird anschließend unabhängig vom Abrufstatus aus diesem Bestand gestartet. Beide Schritte bleiben in `analyse.py` enthalten; ein zweites Programm ist dafür nicht erforderlich.
+Der Abruf in `bilderfassungssystem.py` aktualisiert den lokalen Bildbestand. Die `computer_vision_pipeline.py` wertet anschließend diesen Bestand unabhängig vom Abrufstatus aus. Beide Schritte werden gemeinsam über `python analyse.py` gestartet. Mit `python bilderfassungssystem.py` werden nur gespeicherte Pi-Fotos abgeholt. Die `--stundenaufnahme-…`-Optionen stehen auch in diesem Skript zur Verfügung.
 
 | Situation | Verarbeitung |
 |---|---|
@@ -76,11 +76,11 @@ Für jedes lesbare Foto wird eine Kontrollansicht mit dünner Kontur und schwach
 
 ### Erneute Auswertung alter Bilder
 
-Jeder Analyselauf verarbeitet die gesamte ausgewählte Bildliste erneut. Automatische Masken, Messwerte, Referenzen und zeitliche Vergleiche werden aus den Originalbildern neu aufgebaut. Der SHA-256-Prüfwert der vollständigen Skriptdatei wird im JSON dokumentiert.
+Jeder Analyselauf verarbeitet die gesamte ausgewählte Bildliste erneut. Automatische Masken, Messwerte, Referenzen und zeitliche Vergleiche werden aus den Originalbildern neu aufgebaut. Der gemeinsame SHA-256-Prüfwert der vier Meilensteindateien wird im JSON dokumentiert.
 
 Referenzbilder und Referenzmasken werden ausschließlich im Arbeitsspeicher gehalten. Fällt die bisherige Referenz aus dem lokalen 100-Bilder-Fenster, wird im nächsten Lauf die erste geeignete verbleibende Aufnahme je Ansicht zur Referenz. Gespeicherte historische Messwerte behalten ihren ursprünglichen Bezug. Die JSON-Felder zur Referenz machen beide Fälle nachvollziehbar.
 
-Neue Masken, Kontrollbilder, CSV/JSON, Grafiken und die Browserausgabe werden zunächst getrennt erzeugt und anschließend gemeinsam übernommen. Ein Schreibfehler löst die Wiederherstellung der vorherigen Ausgabe aus. Wird auch diese blockiert, bleibt die Sicherung am gemeldeten Pfad erhalten. Eine gesperrte Excel-Datei oder Vorschau muss vor einem erneuten Lauf geschlossen werden. Geprüfte manuelle Korrekturen und der Maßstab werden wiederverwendet. Parallele Analysen desselben Ausgabeordners werden verhindert.
+Neue Masken, Kontrollbilder, CSV/JSON, PNG-Diagramme und Daten für die Browseransichten werden zunächst erzeugt und anschließend gemeinsam übernommen. Die HTML-, CSS- und JavaScript-Dateien bleiben als fester Quellcode im Projekt. Ein Schreibfehler löst die Wiederherstellung der vorherigen Ausgabe aus. Wird auch diese blockiert, bleibt die Sicherung am gemeldeten Pfad erhalten. Eine gesperrte Excel-Datei oder Vorschau muss vor einem erneuten Lauf geschlossen werden. Geprüfte manuelle Korrekturen und der Maßstab werden wiederverwendet. Parallele Analysen desselben Ausgabeordners werden verhindert.
 
 ### Geprüfte Korrektur für Grenzfälle
 
@@ -149,7 +149,7 @@ Die bisherigen Entwicklungsprüfungen umfassen Originalfotos, kontrollierte Bild
 
 ## 9 Grundlagen
 
-- Maßgeblich für den hier beschriebenen Ablauf: [`analyse.py`](../analyse.py), Pipeline 4.9.1, Scoring 4.1.0.
+- Maßgeblich für die Bilderfassung: [`bilderfassungssystem.py`](../bilderfassungssystem.py). Einstieg für den gemeinsamen Ablauf: [`analyse.py`](../analyse.py).
 - [Atida-Handover](../Atida-Handover.md) für den dokumentierten Aufnahmeaufbau und die Prüfung am Gerät.
 - [OpenCV: GrabCut](https://docs.opencv.org/4.x/d8/d83/tutorial_py_grabcut.html).
 - [Computer-Vision-Pipeline](BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md) und [Digital-Twin-Modell](BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md).
