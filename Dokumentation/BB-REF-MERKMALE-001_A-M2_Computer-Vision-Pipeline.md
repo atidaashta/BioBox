@@ -4,25 +4,25 @@
 |---|---|
 | Dokument-ID | BB-REF-MERKMALE-001 |
 | Meilenstein | A-M2 · Computer-Vision-Pipeline |
-| Version | 3.10 |
-| Datum | 12.11.2026 |
+| Version | 3.11 |
+| Datum | 13.11.2026 |
 | Autorin | Atida Ashta |
-| Pipeline | analyse.py 4.12.0 |
+| Pipeline | analyse.py 4.13.0 |
 | Bewertung | Scoring 4.1.0 |
 
 ## 1 Ausgabeprinzip
 
-Wenn eine Aufnahme sowohl im JSON als auch in der CSV gespeichert ist, werden für die Historie die Messwerte aus JSON verwendet. CSV-Einträge ohne entsprechendes JSON werden weiter gelesen. Optionale Blattkonturen für den Browser werden separat berechnet; ein Fehler dabei verwirft die vorhandenen Messwerte nicht.
+Wenn eine Aufnahme sowohl im JSON als auch in der CSV gespeichert ist, werden für die Historie die Messwerte aus JSON verwendet. Fehlende Blattdeckung, metrische Maße und Farbcodes werden nur aus den dafür nötigen gespeicherten Messwerten derselben Aufnahme ergänzt. CSV-Einträge ohne entsprechendes JSON werden weiter gelesen. Optionale Blattkonturen für den Browser werden separat berechnet; ein Fehler dabei verwirft die vorhandenen Messwerte nicht.
 
 Aus jedem Eingabebild wird ein Datensatz mit Messwerten oder einem Fehlerstatus erzeugt. Die Ausgabe verbindet diese Datensätze mit den bereits gespeicherten Aufnahmen. Kann ein bereits brauchbar ausgewertetes Foto bei einem späteren Lauf nicht mehr gelesen oder analysiert werden, kann sein gespeicherter Datensatz erhalten bleiben. Unbekannte Messwerte werden nicht mit 0 aufgefüllt.
 
-Die Kontrollausgabe heißt `auswertung/ergebnis.csv`. CSV bedeutet Comma-Separated Values, ein tabellarisches Dateiformat. Für deutsche Tabellenprogramme werden hier Semikolon als Trennzeichen, Dezimalkomma und UTF-8 mit Byte Order Mark (BOM, Kennung der Textcodierung) verwendet. Fehlende Werte werden ausdrücklich als `—` geschrieben. `True` und `False` sind boolesche Angaben.
+Die Kontrollausgabe heißt `auswertung/ergebnis.csv`. CSV bedeutet Comma-Separated Values, ein tabellarisches Dateiformat. Für deutsche Tabellenprogramme werden hier Semikolon als Trennzeichen, Dezimalkomma und UTF-8 mit Byte Order Mark (BOM, Kennung der Textcodierung) verwendet. Fehlende Werte werden ausdrücklich als `Nicht verfügbar` geschrieben. Der Grund steht in `fehlende_werte`. `True` und `False` sind boolesche Angaben.
 
-`ergebnis.json` verwendet JavaScript Object Notation (JSON), ein strukturiertes Datenaustauschformat. Dort stehen echte Zahlen, boolesche Werte und `null`, keine Dezimalkomma-Zahlen als Text. Beide Ausgaben und die Diagramme werden aus denselben gerundeten Datensätzen aufgebaut. Die spätere Programmierschnittstelle, Application Programming Interface (API), muss deshalb keine CSV-Datei einlesen.
+`ergebnis.json` verwendet JavaScript Object Notation (JSON), ein strukturiertes Datenaustauschformat. Dort stehen echte Zahlen und boolesche Werte. Nicht verfügbare Felder werden ausgelassen; Gründe für fehlende fachliche Werte stehen in `analysis.missing_values`. Dezimalkomma-Zahlen werden nicht als Text geschrieben. Beide Ausgaben und die Diagramme werden aus denselben gerundeten Datensätzen aufgebaut. Die spätere Programmierschnittstelle, Application Programming Interface (API), muss deshalb keine CSV-Datei einlesen.
 
 ## 2 Spalten und Zuordnung
 
-Die Tabelle enthält die 52 Standardspalten in der Reihenfolge von `SPALTEN` in `analyse.py` 4.12.0. Beim Einlesen älterer CSV-Dateien können vorhandene Zusatzspalten am Ende erhalten bleiben. `image_measurements` und `health_assessment` sind Objekte des JSON-Exports. Die Übernahme per HTTP ist getrennt abzustimmen.
+Die Tabelle enthält die 52 Standardspalten in der Reihenfolge von `SPALTEN` in `analyse.py` 4.13.0. Beim Einlesen älterer CSV-Dateien können vorhandene Zusatzspalten am Ende erhalten bleiben. `image_measurements` und `health_assessment` sind Objekte des JSON-Exports. Die Übernahme per HTTP ist getrennt abzustimmen.
 
 | CSV-Spalte | Einheit | Bedeutung | JSON-Zuordnung |
 |---|---|---|---|
@@ -145,7 +145,7 @@ Mehrere Qualitätsmeldungen werden mit Semikolon getrennt. Der CSV-Schreiber set
 
 ## 5 JSON-Struktur für die Übergabe
 
-- `device_id`: vorhandener Plattformschlüssel; bis zur echten Zuordnung `null`.
+- `device_id`: vorhandener Plattformschlüssel; bis zur echten Zuordnung ausgelassen.
 - `image`: Dateiname mit Endung, Aufnahmezeit, relativer Bildpfad und SHA-256-Prüfsumme. SHA-256 bedeutet Secure Hash Algorithm mit 256 Bit und dient hier zur eindeutigen Prüfung der Dateiinhalte.
 - `image_measurements`: Bildmesswerte mit den in der Tabelle aufgeführten englischen Feldnamen.
 - `health_assessment`: Score, Kategorie, Teilbewertungen, Status und Scoring-Version.
@@ -153,7 +153,7 @@ Mehrere Qualitätsmeldungen werden mit Semikolon getrennt. Der CSV-Schreiber set
 
 `mm_per_px`, `image_brightness`, `largest_component_pct`, `color_hex` und `pipeline_version` entsprechen den bekannten Projektfeldnamen. Die früher verwendeten Aliasnamen `mm_per_pixel` und `brightness` werden nicht zusätzlich als doppelte Messwerte ausgegeben. Die genauen Datenbank-IDs und der HTTP-Vertrag sind weiterhin abzugleichen.
 
-Bei erkannten Pi-Importen wird `image.storage_path` aus dem Sitzungsnamen als `recent/<Sitzung>/normal.jpg` abgeleitet. Bei anderen lokalen Bildern bleibt dieser Pfad `null`, bis ein tatsächlicher Serverpfad zugeordnet ist. `analysis.missing_values` nennt dafür den Grund. `analysis.growth_comparison_mode` ist nur bei einer berechneten geometrisch geprüften Rate gesetzt; andernfalls steht der Grund unter `missing_values` beim jeweiligen Ratenfeld.
+Bei erkannten Pi-Importen wird `image.storage_path` aus dem Sitzungsnamen als `recent/<Sitzung>/normal.jpg` abgeleitet. Bei anderen lokalen Bildern wird dieser Pfad ausgelassen, bis ein tatsächlicher Serverpfad zugeordnet ist. `analysis.missing_values` nennt dafür den Grund. `analysis.growth_comparison_mode` ist nur bei einer berechneten geometrisch geprüften Rate gesetzt; andernfalls steht der Grund unter `missing_values` beim jeweiligen Ratenfeld.
 
 ### Angaben zum Bildvergleich
 
@@ -169,7 +169,7 @@ Im JSON stehen diese Zusatzinformationen unter `analysis`. `view_id` ist der SHA
 
 ### Blattgeometrie für den Digital Twin
 
-`analysis.leaf_geometry` enthält die Konturen in gemeinsamen, auf die Bildgröße normierten Koordinaten. `width_px` und `height_px` beschreiben die Ausdehnung der sichtbaren Gesamtmaske; `leaves[].pixels` gibt die Fläche des jeweiligen Teilbereichs an. `method` unterscheidet `estimated` und `manual`. Ohne verfügbare Konturen ist das Objekt `null` oder fehlt in älteren Exporten. Die CSV enthält zusätzlich den Durchmesser in Pixeln und die Blattzählung mit Quelle. Der Zählwert betrifft nur sichtbare, voneinander getrennte oder manuell zugeordnete Flächen.
+`analysis.leaf_geometry` enthält die Konturen in gemeinsamen, auf die Bildgröße normierten Koordinaten. `width_px` und `height_px` beschreiben die Ausdehnung der sichtbaren Gesamtmaske; `leaves[].pixels` gibt die Fläche des jeweiligen Teilbereichs an. `method` unterscheidet `estimated` und `manual`. Ohne verfügbare Konturen wird das Objekt ausgelassen. Die CSV enthält zusätzlich den Durchmesser in Pixeln und die Blattzählung mit Quelle. Der Zählwert betrifft nur sichtbare, voneinander getrennte oder manuell zugeordnete Flächen.
 
 Die automatische Trennung beginnt mit Blattkernen, die aus dem Abstand zum Maskenrand ermittelt werden. Pixel werden diesen Kernen zugeordnet. Benachbarte Farbkanten können die Grenzen zwischen Regionen verschieben. Manuell können die Kerne im Originalfoto angeklickt oder vollständige Blattlabels als Graustufen-PNG importiert werden. Bei angeklickten Kernen bleibt der Grenzverlauf zwischen Blättern geschätzt. Die Gesamtmaske für Flächenmessung und Gesundheitsbewertung bleibt dabei unverändert.
 
@@ -186,7 +186,7 @@ Alle Schritte werden durch `analyse.py` ausgeführt.
 | `05_teilscores.png` | Heatmap der fünf Teilbewertungen für jede Aufnahme; Referenzstarts und fehlende Werte bleiben erkennbar |
 | `06_digital_twin.png` | Modellreihe der sichtbaren Blattfläche und gegebenenfalls die 24-Stunden-Projektion |
 
-Die Bildliste wird nach jedem normalen Abrufversuch frisch aus dem lokalen Ordner gebildet, unabhängig von dessen Erfolg. Auch selbst hinzugefügte Bilder werden erfasst. Die vorhandenen Originale werden neu ausgewertet. `--nur-bild` überspringt die Analyse. Automatische Masken und Kontrollen werden in `masken/` und `kontrolle/` aktualisiert; dateigenaue Korrekturen bleiben in `masken_korrektur/`. Die Diagramme werden auch bei fehlenden Einzelwerten mit dem jeweiligen Status ausgegeben. `digital_twin.json`, `digital_twin_3d.html`, `digital_twin_3d.js` und `digital_twin_3d.css` werden im selben Analyselauf erzeugt. Modell und Browseransicht sind in [A-M4](BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) beschrieben.
+Die Bildliste wird nach jedem normalen Abrufversuch frisch aus dem lokalen Ordner gebildet, unabhängig von dessen Erfolg. Auch selbst hinzugefügte Bilder werden erfasst. Die vorhandenen Originale werden neu ausgewertet. `--nur-bild` überspringt die Analyse. Automatische Masken und Kontrollen werden in `masken/` und `kontrolle/` aktualisiert; dateigenaue Korrekturen bleiben in `masken_korrektur/`. Die Diagramme werden auch bei fehlenden Einzelwerten mit dem jeweiligen Status ausgegeben. Die vier Modell- und Viewer-Dateien werden unter `digital twin/` erzeugt, die vier Gesundheitsdateien unter `gesundheitssystem/`. Die Browseransichten werden in [A-M4](BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) und [A-M3](BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md) beschrieben.
 
 Die sichtbare Blattanzahl wird bei der Analyse geschätzt oder anhand manueller Markierungen ermittelt. In der Zählansicht werden die daraus erzeugten Blätter einzeln dargestellt. Pflanzenhöhe und eine absolute biologische Gesundheitswahrscheinlichkeit werden nicht berechnet. Die tatsächliche Datenquelle bleibt das Originalfoto mit der finalen sichtbaren Blattmaske.
 
@@ -202,5 +202,5 @@ Ein Pi-Abruffehler wird in der Konsole ausgegeben. Es wird dafür kein zusätzli
 
 ## 8 Maßgebliche Implementierung
 
-- [`analyse.py`](../analyse.py), Pipeline 4.12.0 und Scoring 4.1.0: `SPALTEN`, `API_MESSFELDER`, `API_GESUNDHEIT`, `api_datensatz`, `ergebnishistorie_verbinden` und `ergebnisse_speichern`.
+- [`analyse.py`](../analyse.py), Pipeline 4.13.0 und Scoring 4.1.0: `SPALTEN`, `API_MESSFELDER`, `API_GESUNDHEIT`, `api_datensatz`, `ergebnishistorie_verbinden` und `ergebnisse_speichern`.
 - [Bilderfassungssystem](BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md) und [Gesundheitsbewertung](BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md).

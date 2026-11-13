@@ -4,14 +4,14 @@
 | --- | --- |
 | Dokument-ID | BB-GUIDE-TWIN-001 |
 | Meilenstein | A-M4 · Digital-Twin-Modell |
-| Version | 1.8 |
-| Datum | 12.11.2026 |
-| Software | analyse.py 4.12.0 · Modell 0.1.0 · 3D-Ansicht 0.7.0 |
+| Version | 1.9 |
+| Datum | 13.11.2026 |
+| Software | analyse.py 4.13.0 · Modell 0.1.0 · 3D-Ansicht 0.7.0 |
 | Status | Prototyp für lokale Darstellung, Projektion und Szenarien |
 
 ## 1. Starten
 
-Mit `analyse.py` 4.12.0 wird im Projektordner folgender Befehl ausgeführt:
+Mit `analyse.py` 4.13.0 wird im Projektordner folgender Befehl ausgeführt:
 
 ```powershell
 python analyse.py
@@ -23,7 +23,7 @@ Nach der Bildauswertung wird die Ansicht im Browser geöffnet. Mit `python analy
 python analyse.py --3d-aus-json auswertung/ergebnis.json
 ```
 
-Die erzeugte Datei `auswertung/digital_twin_3d.html` kann auch per Doppelklick geöffnet werden. `digital_twin_3d.js` und `digital_twin_3d.css` müssen im selben Ordner liegen. JavaScript baut die Oberfläche auf und zeichnet die Pflanze. Ein Webserver wird nicht benötigt.
+Die erzeugte Datei `digital twin/digital_twin_3d.html` kann auch per Doppelklick geöffnet werden. `digital_twin_3d.js` und `digital_twin_3d.css` müssen im selben Ordner liegen. JavaScript baut die Oberfläche auf und zeichnet die Pflanze. Ein Webserver wird nicht benötigt.
 
 Bei Ergebnissen einer älteren Version wird mit `python analyse.py --lokal bilder` aus den vorhandenen Originalen neu segmentiert. Werden nur die gespeicherten JSON-Daten geöffnet, bleiben deren frühere Blattkonturen und Zählwerte maßgeblich.
 
@@ -52,15 +52,15 @@ Für spätere Tage wird die Modellgröße anhand einer verfügbaren geprüften �
 
 ## 4. Dateien
 
-| Datei unter `auswertung/` | Inhalt |
+| Datei | Inhalt |
 | --- | --- |
-| `digital_twin_3d.html` | Kleine Startdatei. |
-| `digital_twin_3d.js` | Oberfläche, 3D-Modell und Daten der letzten Aufnahme. |
-| `digital_twin_3d.css` | Gestaltung. |
-| `ergebnis.csv`, `ergebnis.json` | Vollständiger Export der Bildmessungen. |
-| `digital_twin.json` | Daten für die getrennte technische 24-Stunden-Projektion. |
+| `digital twin/digital_twin_3d.html` | Kleine Startdatei. |
+| `digital twin/digital_twin_3d.js` | Oberfläche, 3D-Modell und Daten der letzten Aufnahme. |
+| `digital twin/digital_twin_3d.css` | Gestaltung. |
+| `auswertung/ergebnis.csv`, `auswertung/ergebnis.json` | Vollständiger Export der Bildmessungen. |
+| `digital twin/digital_twin.json` | Daten für die getrennte technische 24-Stunden-Projektion. |
 
-Beim Öffnen per Doppelklick müssen die drei Viewer-Dateien im selben Ordner liegen. Sie werden durch `analyse.py` erzeugt.
+Beim Öffnen per Doppelklick müssen die drei Viewer-Dateien im selben Ordner liegen. Sie werden durch `analyse.py` erzeugt. Beim ersten erfolgreichen Lauf mit der neuen Ordnerstruktur werden alte Viewer-Dateien aus `auswertung/` durch die Dateien in `digital twin/` ersetzt. Die Prognosehistorie bleibt erhalten. Die Gesundheitsansicht wird separat unter `gesundheitssystem/` abgelegt.
 
 ## 5. Modell für die nächsten 24 Stunden
 

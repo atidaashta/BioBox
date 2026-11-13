@@ -4,16 +4,16 @@
 |---|---|
 | Dokument-ID | BB-SPEC-HEALTH-001 |
 | Meilenstein | A-M3 · Gesundheitsbewertung |
-| Version | 1.6 |
-| Datum | 11.11.2026 |
+| Version | 1.7 |
+| Datum | 13.11.2026 |
 | Autorin | Atida Ashta |
-| Implementierung | analyse.py 4.9.1 |
+| Implementierung | analyse.py 4.13.0 |
 | Scoring-Version | 4.1.0 |
 | Status | Technischer relativer Zustandsindex; keine biologisch validierte Diagnose |
 
 ## 1 Aussage des Wertes
 
-Der Gesundheitsscore von 0 bis 100 beschreibt sichtbare Veränderungen gegenüber einer Referenzaufnahme **derselben Pflanze**. 100 bedeutet eine geringe Abweichung der untersuchten Merkmale von der Referenz. Auch eine bereits geschädigte Pflanze kann bei geringer Abweichung zur eigenen Referenz einen hohen Vergleichswert erhalten. Für die Referenzaufnahme selbst wird kein gemessener Score ausgegeben. „Zustandsindex“ in den Diagrammen und „Gesundheitsscore“ in der 3D-Ansicht bezeichnen denselben relativen Wert.
+Der Gesundheitsscore von 0 bis 100 beschreibt sichtbare Veränderungen gegenüber einer Referenzaufnahme **derselben Pflanze**. 100 bedeutet eine geringe Abweichung der untersuchten Merkmale von der Referenz. Auch eine bereits geschädigte Pflanze kann bei geringer Abweichung zur eigenen Referenz einen hohen Vergleichswert erhalten. Für die Referenzaufnahme selbst wird kein gemessener Score ausgegeben. „Zustandsindex“ in den Diagrammen und „Gesundheitsscore“ in der Gesundheitsansicht bezeichnen denselben relativen Wert.
 
 Ein fester dunkler Grünton für Basilikum wird nicht als Sollzustand verwendet. Helle oder panaschierte Blätter, also Blätter mit unterschiedlich gefärbten Bereichen, werden gegen ihren eigenen Ausgangszustand verglichen. Aufnahmen verschiedener Pflanzen dürfen nicht zu einer gemeinsamen Bewertung zusammengefasst werden.
 
@@ -23,7 +23,7 @@ Der Index enthält Hinweise auf Farb- und Strukturänderungen. Er bestimmt keine
 
 Die erste brauchbare Aufnahme je Kameraansicht der aktuellen Bildauswahl wird als Referenz im Arbeitsspeicher verwendet. Bilddaten, Blattmaske, Aufnahmezeit, Dateihash und Geometrie stehen während des Laufs für die Vergleiche bereit. Es werden keine automatischen `referenz.npz`-Dateien und keine Dateien in `kamera_referenzen/` eingelesen oder angelegt. Auch die Glättungshistorie wird aus den ausgewählten Bildern neu berechnet.
 
-Der Referenzstart wird im Diagramm als Marke bei 100 dargestellt. Er ist kein gemessener Zustandswert: `gesundheit`, `gesundheit_roh` und die Teilbewertungen bleiben dafür `null` beziehungsweise `NULL`; der Status lautet `referenzfoto_start_der_ansicht`.
+Der Referenzstart wird im Diagramm als Marke bei 100 dargestellt. Er ist kein gemessener Zustandswert: `gesundheit`, `gesundheit_roh` und die Teilbewertungen werden im Ergebnis-JSON dafür ausgelassen und in CSV als `Nicht verfügbar` markiert; der Status lautet `referenzfoto_start_der_ansicht`.
 
 Ab einer weiteren brauchbaren Aufnahme derselben Ansicht kann ein Vergleich berechnet werden. Eine automatisch gewählte Referenz wird bei berechneten Scores durch `vorlaeufige_referenz` gekennzeichnet. Nach Sichtprüfung kann `REFERENZ_FREIGEGEBEN` auf `True` gesetzt werden; dies kennzeichnet im aktuellen Code nur die Hauptreferenz des Laufs als freigegeben. Es bestätigt die Referenzwahl, keine biologische Diagnose.
 
@@ -81,7 +81,7 @@ Der Rohwert besteht zu 65 % aus dem gewichteten arithmetischen und zu 35 % aus d
 
 `gesundheit_roh` ist die Bewertung der einzelnen Aufnahme. `gesundheit` wird zeitabhängig exponentiell geglättet. Der neue Anteil wird mit `1 - exp(-Zeitabstand / 2 Stunden)` bestimmt und auf 0,25 bis 1 begrenzt. Damit werden größere Zeitabstände stärker berücksichtigt. Bei der Glättung werden Kameraansicht und Vergleichsmodus getrennt gehalten.
 
-Für den 24-Stunden-Trend wird ein gültiger Vergleich derselben Ansicht und desselben Modus zwischen 22 und 26 Stunden Abstand gesucht. Verwendet wird die Aufnahme mit dem kleinsten Abstand zu 24 Stunden. Fehlt sie, bleibt `gesundheit_trend_24h` in JSON `null` und in CSV `NULL`. Die Einheit sind Scorepunkte, keine Prozentänderung.
+Für den 24-Stunden-Trend wird ein gültiger Vergleich derselben Ansicht und desselben Modus zwischen 22 und 26 Stunden Abstand gesucht. Verwendet wird die Aufnahme mit dem kleinsten Abstand zu 24 Stunden. Fehlt sie, wird `health_trend_24h` im Ergebnis-JSON ausgelassen und in CSV als `Nicht verfügbar` markiert. Die Einheit sind Scorepunkte, keine Prozentänderung.
 
 | Bereich | Ausgabekategorie |
 |---|---|
@@ -110,11 +110,17 @@ Lichtprobleme stehen bei den Qualitätsmerkmalen und im Gesundheitsstatus, beisp
 
 ## 8 Ausgabe und Datenbank
 
-Die neu berechneten Werte werden gemeinsam in CSV und JSON gespeichert. Bei fehlender Vergleichbarkeit steht im neuen Datensatz `null` in JSON und `NULL` in CSV. Ein gemessener Wert von 0 bleibt 0. Bei entfernten Originalen bleibt der früher gespeicherte Datensatz mit damaliger Bewertung, Referenz und Version erhalten. Die Diagramme zeigen die verfügbaren Werte je Foto; fehlende Scores und Referenzstarts haben eigene Markierungen.
+Die neu berechneten Werte werden gemeinsam in CSV und JSON gespeichert. Bei fehlender Vergleichbarkeit wird der Wert im Ergebnis-JSON ausgelassen und in CSV mit `Nicht verfügbar` gekennzeichnet. Die Gründe stehen in `analysis.missing_values` und `fehlende_werte`. Ein gemessener Wert von 0 bleibt 0. Bei entfernten Originalen bleibt der früher gespeicherte Datensatz mit damaliger Bewertung, Referenz und Version erhalten. Die Diagramme zeigen die verfügbaren Werte je Foto; fehlende Scores und Referenzstarts haben eigene Markierungen.
 
 Die Gesundheitsdaten werden unter `health_assessment` ausgegeben, getrennt von `image_measurements`. `health_status`, `scoring_version` und `analysis.health_comparison_mode` erklären die Herkunft des Wertes. Die genauen Messfelder und Einheiten stehen im [Merkmalsverzeichnis](BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md).
 
-Unter **Pflegetipps** in der 3D-Ansicht werden Score, Teilbewertungen und Bildqualität als Hinweise für mögliche nächste Prüfungen verwendet. Optional formuliert ein lokales Modell Tipps zum neuesten vergleichbaren Foto. Die Tipps ändern weder den Score noch Messwerte oder Wachstumsszenarien. Die Bedienung und Einrichtung stehen in [A-M4](BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md).
+### Lokale Gesundheitsansicht
+
+Beim normalen Analyselauf werden `gesundheitssystem.html`, `gesundheitssystem.css`, `gesundheitssystem.js` und `gesundheitssystem.json` im Projektordner `gesundheitssystem/` erzeugt. Die HTML-Datei kann per Doppelklick geöffnet werden. Mit `python analyse.py --gesundheit` kann die Ansicht aus vorhandenen Ergebnissen neu erzeugt und geöffnet werden, ohne eine Aufnahme abzurufen.
+
+Neben dem letzten zeitlich zuordenbaren Foto werden der geglättete Score, der Rohscore, der 24-Stunden-Trend, die Teilbewertungen und die belegten Auffälligkeiten angezeigt. Farbanteile stammen aus dem Rohbild. Bildqualität, Lichtabgleich und Referenzbezug stehen unter den Details. Die neuesten Einträge bleiben im Verlauf auch dann sichtbar, wenn kein Score vorliegt. Nur Werte derselben Referenz und desselben Bewertungsverfahrens werden in der Kurve verbunden. Im Zeitverlauf werden keine zukünftigen Werte ergänzt.
+
+Die Vorschau wird aus dem lokalen Original mit passender Prüfsumme erstellt. Fehlt das Original, bleiben die gespeicherten Bewertungen lesbar. Die Ansicht verwendet dieselben gerundeten Gesundheitswerte wie die Ergebnisausgabe.
 
 ### Verhalten bei ausgefallenem Pi-Abruf
 

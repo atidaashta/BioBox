@@ -4,7 +4,7 @@ Bildgestützte Beobachtung von Pflanzen als Teil der Diplomarbeit **BioBox**. Au
 
 Dieses Repository dokumentiert den Teilbereich **Bildaufnahme, Bildauswertung und Zustandsbewertung** von **Atida Ashta** an der HTL Shkodra. Einstiegspunkt für die Verarbeitung ist `analyse.py`.
 
-**Projektstatus:** Entwicklung und Validierung · Bildanalyse 4.12.0, Zustandsindex 4.1.0 · Stand 12.11.2026. Der Aufnahme- und Analyseablauf ist implementiert. Die Genauigkeit der Blattmasken und die fachliche Aussage des Zustandsindex werden weiter untersucht; die direkte Backend-Anbindung ist geplant.
+**Projektstatus:** Entwicklung und Validierung · Bildanalyse 4.13.0, Zustandsindex 4.1.0 · Stand 13.11.2026. Der Aufnahme- und Analyseablauf ist implementiert. Die Genauigkeit der Blattmasken und die fachliche Aussage des Zustandsindex werden weiter untersucht; die direkte Backend-Anbindung ist geplant.
 
 ## Inhalt
 
@@ -217,6 +217,16 @@ Für eine andere Pflanze wird eine eigene Bildserie und eine eigene Kennung in `
 python analyse.py --lokal bilder --neue-referenz --ausgabe auswertung
 ```
 
+### Gesundheitsansicht öffnen
+
+Nach der Analyse kann `gesundheitssystem/gesundheitssystem.html` per Doppelklick geöffnet werden. Alternativ wird die Seite aus vorhandenen Ergebnissen ohne Pi-Abruf geöffnet:
+
+```powershell
+python analyse.py --gesundheit
+```
+
+Neben dem neuesten Foto werden Gesundheitsscore, Teilbewertungen, Warnungen und gemessene Blattmerkmale gezeigt. Der Verlauf verbindet ausschließlich Scores mit demselben Referenzbezug und Vergleichsverfahren. Eine nicht bewertbare letzte Aufnahme bleibt als solche sichtbar. Die vier Dateien werden automatisch erzeugt; beim Doppelklick wird kein Webserver benötigt.
+
 ### Digital Twin öffnen
 
 Nach der Analyse wird die lokale Browseransicht geöffnet. Vorhandene Ergebnisse lassen sich auch ohne neue Analyse öffnen:
@@ -230,7 +240,7 @@ Der Browser zeigt die Pflanze aus der letzten Aufnahme. Aus den sichtbaren Kontu
 
 Mit dem Regler werden 0 bis 14 Tage nach der Aufnahme ausgewählt. Das Szenario verändert die Größe anhand einer geeigneten gemessenen Änderungsrate oder ersatzweise einer Annahme von 2 % pro Tag. Die Anzahl der dargestellten Blätter bleibt gleich. Die gemessene sichtbare Blattfläche steht weiterhin in den Ergebnissen.
 
-Nach dem Austausch des Skripts werden vorhandene Fotos mit `python analyse.py --lokal bilder` neu ausgewertet. Ist die automatische Anzahl bei einem Foto ungenau, können die sichtbaren Blätter [einzeln markiert werden](docs/BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md#sichtbare-blätter-nachzählen).
+Nach dem Austausch des Skripts werden vorhandene Fotos mit `python analyse.py --lokal bilder` neu ausgewertet. Ist die automatische Anzahl bei einem Foto ungenau, können die sichtbaren Blätter [einzeln markiert werden](dokumentation/BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md#sichtbare-blätter-nachzählen).
 
 ## Messverfahren und Referenz
 
@@ -263,7 +273,7 @@ Für die Wide-Optik kann zusätzlich eine passende Objektivkalibrierung mit Scha
 python analyse.py --kalibrieren kalibrierbilder
 ```
 
-Das verwendete Muster und seine echte Feldgröße müssen zu den Einstellungen passen. Details und die weitere Marker-Alternative stehen in der [Bildaufnahme-Spezifikation](docs/BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md).
+Das verwendete Muster und seine echte Feldgröße müssen zu den Einstellungen passen. Details und die weitere Marker-Alternative stehen in der [Bildaufnahme-Spezifikation](dokumentation/BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md).
 
 ### Relativer Zustandsindex
 
@@ -303,21 +313,22 @@ Die Grafiken `02_wachstumsrate.png` und `04_gesundheit.png` markieren jede Aufna
 | Pfad | Inhalt |
 |---|---|
 | `analyse.py` | Zentraler Einstieg für Aufnahmeabruf, Analyse, Bewertung und Diagramme |
-| `docs/` | Spezifikationen zu Aufnahme, Bewertung und Messfeldern |
+| `dokumentation/` | Spezifikationen zu Aufnahme, Bewertung und Messfeldern |
 | `bilder/` | Lokale Eingabebilder im üblichen Projektaufbau |
 | `auswertung/masken/` | Binäre Messmasken in Originalauflösung |
 | `auswertung/kontrolle/` | Je eine Kontrollansicht pro lesbarer Aufnahme, Foto bis 1500 Pixel breit |
 | `auswertung/grafiken/` | Fünf Auswertungsdiagramme |
 | `auswertung/ergebnis.csv` | Tabellarische Kontrollausgabe |
 | `auswertung/ergebnis.json` | Strukturierte Datensätze für die weitere Verarbeitung |
-| `auswertung/digital_twin.json` | Modellzustand, 24-Stunden-Projektion und Prognosehistorie, sofern verfügbar |
-| `auswertung/digital_twin_3d.html` mit `digital_twin_3d.js` und `digital_twin_3d.css` | Lokale Browseransicht, JavaScript und Gestaltung |
+| `digital twin/digital_twin.json` | Modellzustand, 24-Stunden-Projektion und Prognosehistorie, sofern verfügbar |
+| `digital twin/digital_twin_3d.html` mit `digital_twin_3d.js` und `digital_twin_3d.css` | Lokale Browseransicht, JavaScript und Gestaltung |
+| `gesundheitssystem/gesundheitssystem.html`, `.css`, `.js`, `.json` | Lokale Gesundheitsansicht und zugehörige Daten |
 | `auswertung/massstab.npz` | Gespeicherte Referenzstrecke, sofern eingerichtet |
 | `auswertung/masken_korrektur/` | Dateigenaue manuelle Maskenkorrekturen |
 | `auswertung/blattlabels/` | Optionale Blattmarkierungen und importierte Blattlabels |
 | `kamera_kalibrierung.json` | Objektivprofil, sofern erstellt |
 
-Die Ausgabeordner werden bei der Verarbeitung erzeugt. Beim Pi-Abruf gilt der konfigurierte `BILDER_ORDNER`; bei lokalen Aufrufen kann `--ausgabe` den Zielordner festlegen. Ohne diese Option liegt `auswertung/` neben dem ausgewählten Bilderordner. Maßstab und manuelle Korrekturen gehören zum jeweiligen Messaufbau. Frühere automatisch erzeugte Referenzdateien werden nach einem erfolgreichen Lauf gezielt entfernt.
+Die Ausgabeordner werden bei der Verarbeitung erzeugt. Beim Pi-Abruf gilt der konfigurierte `BILDER_ORDNER`; bei lokalen Aufrufen kann `--ausgabe` den Zielordner festlegen. Ohne diese Option liegt `auswertung/` neben dem ausgewählten Bilderordner. Die Ordner `digital twin/` und `gesundheitssystem/` liegen neben dem Standardordner `auswertung/`. Bei einem anders benannten Ausgabeordner werden sie darin getrennt von anderen Messreihen erzeugt. Alte Twin-Dateien in `auswertung/` werden nach einem erfolgreichen Lauf übernommen; gespeicherte Prognosen bleiben erhalten. Maßstab und manuelle Korrekturen gehören zum jeweiligen Messaufbau. Frühere automatisch erzeugte Referenzdateien werden nach einem erfolgreichen Lauf gezielt entfernt.
 
 ### Diagramme
 
@@ -337,23 +348,23 @@ Bei vorhandenen Originalen werden die Messungen neu berechnet. Für ältere Aufn
 
 Pro ausgewähltem Eingabebild wird ein Datensatz erzeugt. Auch eine unlesbare oder nicht auswertbare Datei bleibt mit ihrem Fehlerstatus enthalten.
 
-CSV bedeutet Comma-Separated Values, ein tabellarisches Textformat. Die Kontrollausgabe verwendet hier Semikolon, Dezimalkomma und UTF-8 mit Byte Order Mark (BOM), einer Codierungskennung für Tabellenprogramme. Fehlende Werte stehen als `—` darin. Der Grund steht in `fehlende_werte`. Im JSON bleibt ein fehlender Messwert `null`; ein echter Nullwert bleibt die Zahl `0`.
+CSV bedeutet Comma-Separated Values, ein tabellarisches Textformat. Die Kontrollausgabe verwendet hier Semikolon, Dezimalkomma und UTF-8 mit Byte Order Mark (BOM), einer Codierungskennung für Tabellenprogramme. Fehlende Werte werden als `Nicht verfügbar` gekennzeichnet. Der Grund steht in `fehlende_werte`. Keine erkannten Warnungen werden mit `Keine` bezeichnet. Eine gemessene Null bleibt die Zahl `0`.
 
-JSON bedeutet JavaScript Object Notation. `ergebnis.json` enthält eine Liste mit einem Datensatz je Bild. Verwendet werden echte Zahlen, boolesche Werte und `null`. Die API — Application Programming Interface, also Programmierschnittstelle — soll später diese strukturierten Daten übernehmen; ein Einlesen der CSV ist dafür nicht vorgesehen.
+JSON bedeutet JavaScript Object Notation. `ergebnis.json` enthält eine Liste mit einem Datensatz je Bild. Verwendet werden echte Zahlen und boolesche Werte. Nicht verfügbare Felder werden ausgelassen; ihre fachlichen Gründe stehen unter `analysis.missing_values`. Die API — Application Programming Interface, also Programmierschnittstelle — soll später diese strukturierten Daten übernehmen; ein Einlesen der CSV ist dafür nicht vorgesehen.
 
 | JSON-Bereich | Inhalt |
 |---|---|
-| `device_id` | Gerätezuordnung, bis zur bestätigten Plattform-ID `null` |
+| `device_id` | Gerätezuordnung, bis zur bestätigten Plattform-ID ausgelassen |
 | `image` | Dateiname, Aufnahmezeit, relativer Bildpfad und Dateiprüfsumme |
 | `image_measurements` | Flächen-, Farb-, Geometrie- und Qualitätsmesswerte |
 | `health_assessment` | Zustandsindex, Teilbewertungen, Status und Scoring-Version |
 | `analysis` | Herkunft, Referenzbezug, Skriptstand und Gründe für fehlende Werte |
 
-`null` bedeutet unbekannt oder nicht sinnvoll bestimmbar. **0 bleibt eine tatsächlich berechnete Null.** Bei fehlendem Maßstab können beispielsweise Pixel- und Farbwerte vorhanden sein, während `leaf_area_cm2`, `diameter_mm` und `mm_per_px` fehlen.
+Pixel- und Farbwerte bleiben ohne Maßstab verfügbar. Metrische Werte und fehlende Vergleichsscores werden nicht geschätzt. Fehlt bei älteren Daten ein aus derselben Aufnahme eindeutig ableitbarer Wert, werden Blattanteil, metrische Maße oder Farbcode aus den gespeicherten Eingangsgrößen ergänzt.
 
 Aufnahme und Skript werden mit SHA-256-Prüfsummen — Secure Hash Algorithm mit 256 Bit — gekennzeichnet. `pipeline_version`, `scoring_version` und `analysis.pipeline_sha256` machen den Verarbeitungsstand nachvollziehbar. Der abgeleitete Bildpfad muss bei der späteren Serveranbindung mit den tatsächlichen Speicherpfaden abgeglichen werden.
 
-Die vollständigen Feldnamen, Einheiten und Zuordnungen stehen im [Merkmalsverzeichnis](docs/BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md). Ein automatischer Versand an die Webplattform ist noch nicht implementiert.
+Die vollständigen Feldnamen, Einheiten und Zuordnungen stehen im [Merkmalsverzeichnis](dokumentation/BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md). Ein automatischer Versand an die Webplattform ist noch nicht implementiert.
 
 ## Konfiguration
 
@@ -444,19 +455,18 @@ Für einen Fehlerbericht helfen der verwendete Befehl, Python- und Paketversione
 
 | Dokument | Schwerpunkt |
 |---|---|
-| [Bildaufnahme-Spezifikation](docs/BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md) | Aufnahmebetrieb, Segmentierung und physische Messung |
-| [Gesundheitsbewertung](docs/BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md) | Referenz, Lichtausgleich, Teilbewertungen und Zustandsindex |
-| [Merkmalsverzeichnis](docs/BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md) | Datentypen, Einheiten, fehlende Werte und Exportzuordnung |
-| [Digital-Twin-Modell](docs/BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) | Browseransicht, Messwerte und Projektion |
+| [Bildaufnahme-Spezifikation](dokumentation/BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md) | Aufnahmebetrieb, Segmentierung und physische Messung |
+| [Gesundheitsbewertung](dokumentation/BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md) | Referenz, Lichtausgleich, Teilbewertungen und Zustandsindex |
+| [Merkmalsverzeichnis](dokumentation/BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md) | Datentypen, Einheiten, fehlende Werte und Exportzuordnung |
+| [Digital-Twin-Modell](dokumentation/BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) | Browseransicht, Messwerte und Projektion |
 
 Änderungen sollen an passenden Originalbildern überprüft und in verständlichen, zusammengehörigen Commits dokumentiert werden. Bei Änderungen des Messverfahrens oder der Bewertung werden die zugehörigen Versionsfelder und Spezifikationen gepflegt.
 
-Wenn erzeugte Viewer-Dateien unter `auswertung/` im Repository liegen, können sie über diese Einträge in `.gitattributes` von GitHubs Sprachstatistik ausgeschlossen werden:
+Wenn die erzeugten Viewer-Dateien im Repository liegen, können sie über diese Einträge in `.gitattributes` von GitHubs Sprachstatistik ausgeschlossen werden:
 
 ```gitattributes
-auswertung/digital_twin_3d.html linguist-generated=true
-auswertung/digital_twin_3d.js linguist-generated=true
-auswertung/digital_twin_3d.css linguist-generated=true
+"digital twin/**" linguist-generated=true
+gesundheitssystem/** linguist-generated=true
 ```
 
 Große Bilddatensätze, automatisch erzeugte Ausgaben und die virtuelle Python-Umgebung werden von der Quellcode-Versionierung getrennt gehalten. Kleine gezielte Prüfdaten und ihre Herkunft können die spätere Regressionstest-Sammlung ergänzen. Gerätebezogene Kalibrierdaten und geprüfte Maskenkorrekturen gehören zum jeweiligen Messaufbau. Automatische Pflanzenreferenzen bestehen nur während eines Analyselaufs.

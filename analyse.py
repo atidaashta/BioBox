@@ -28,9 +28,9 @@ CSV und JSON behalten die Messwerte nicht mehr vorhandener Bilder dauerhaft.
 Vorhandene Fotos werden neu ausgewertet und ohne doppelte Eintraege aktualisiert.
 Die 100-Bilder-Grenze betrifft Kamera-JPEGs, nicht die Ergebnishistorie.
 Grafiken zeigen auch die gespeicherten Werte; alte Bilddateien werden nicht kopiert.
-Digital Twin: auswertung/digital_twin.json und grafiken/06_digital_twin.png.
-Drehbare Pflanze: auswertung/digital_twin_3d.html mit zugehoeriger JS- und CSS-Datei.
-Die drei Dateien bleiben fuer die lokale Ansicht im selben Ordner.
+Digital Twin: digital twin/digital_twin_3d.html und digital_twin.json.
+Gesundheitsansicht: gesundheitssystem/gesundheitssystem.html oder --gesundheit.
+Die zugehoerigen JS- und CSS-Dateien bleiben jeweils im selben Ordner.
 Vorhandenes JSON ansehen: python analyse.py --3d
 Anderes JSON ansehen: python analyse.py --3d-aus-json auswertung/ergebnis.json
 Neue Analyse und Browser: python analyse.py --lokal bilder --3d
@@ -77,7 +77,7 @@ Die CSV-Farben bleiben Rohwerte.
 API: Die Messfeldnamen orientieren sich an BB-DB-HEALTH-001. Die endgueltige
 HTTP-Struktur/IDs sind noch mit Edona abzustimmen. Es wird nichts versendet.
 API_MESSFELDER ist die einzige Stelle fuer die Zuordnung Deutsch -> Englisch.
-Kein stiller Ersatz von fehlenden Werten durch Null oder einen alten Score.
+Fehlende Werte: in CSV gekennzeichnet, in Ergebnis-JSON ausgelassen und erklärt.
 Grundlagen: BB-SPEC-IMG-001, BB-SPEC-HEALTH-001, BB-REF-MERKMALE-001.
 OpenCV: docs.opencv.org/4.x/d7/d1b/group__imgproc__misc.html (Otsu)
         docs.opencv.org/4.x/d8/d83/tutorial_py_grabcut.html (Maskenkorrektur)
@@ -85,6 +85,7 @@ OpenCV: docs.opencv.org/4.x/d7/d1b/group__imgproc__misc.html (Otsu)
 """
 
 import argparse
+import base64
 import contextlib
 import copy
 import csv
@@ -136,12 +137,16 @@ CHROMA_MIN = 4            # a*-Mindestabstand von Grau; darunter keine Pflanze
 RATE_MIN_MINUTEN = 30    # Kurzer Vergleich; hohe Schwankung moeglich
 RATE_STABIL_STUNDEN = 12  # Wenn verfuegbar, laengeren Abstand bevorzugen
 SCORING_VERSION = "4.1.0"
-ANALYSE_VERSION = "4.12.0"
+ANALYSE_VERSION = "4.13.0"
 TWIN_3D_VERSION = "0.7.0"
 TWIN_3D_DATEI = "digital_twin_3d.html"
 TWIN_3D_CSS_DATEI = "digital_twin_3d.css"
 TWIN_3D_JS_DATEI = "digital_twin_3d.js"
 TWIN_DATEN_PREFIX = "const BIOBOX_DATA = "
+TWIN_JSON_DATEI = "digital_twin.json"
+TWIN_DATEIEN = (TWIN_3D_DATEI, TWIN_3D_CSS_DATEI, TWIN_3D_JS_DATEI, TWIN_JSON_DATEI)
+GESUND_DATEIEN = tuple("gesundheitssystem."+end for end in ("html","css","js","json"))
+CSV_NICHT_VERFUEGBAR = "Nicht verfügbar"
 OLLAMA_PFLEGEMODELL = "qwen2.5:3b"
 TWIN_VERSION = "0.1.0"
 TWIN_HORIZONT_STUNDEN = 24
@@ -1953,8 +1958,11 @@ def historienzeit(wert):
 
 def historienwert(feld, wert):
     """CSV-Dezimalkomma lesen, ohne gemessene Nullen als fehlend zu behandeln."""
-    if wert is None or (isinstance(wert, str) and wert.strip().lower() in ("null", "none", "nan", "—")):
+    if wert is None or (isinstance(wert, str) and wert.strip().casefold() in
+                         ("null", "none", "nan", "—", CSV_NICHT_VERFUEGBAR.casefold())):
         return None
+    if feld in ("auffaelligkeit","gesundheitswarnung") and wert=="Keine":
+        return ""
     if feld == "brauchbar":
         if isinstance(wert, bool):
             return wert
@@ -2005,6 +2013,9 @@ def historienzeile(satz):
     if isinstance(geo, dict):
         z["sichtbare_blaetter"] = geo.get("count")
         z["blattzaehlung_quelle"] = geo.get("method")
+    else:
+        z["sichtbare_blaetter"] = info.get("visible_leaf_count")
+        z["blattzaehlung_quelle"] = info.get("visible_leaf_count_method")
     z["durchmesser_px"] = info.get("leaf_diameter_px")
     pixel = info.get("pixel_measurement", {})
     if not isinstance(pixel, dict):
@@ -2020,6 +2031,24 @@ def historienzeile(satz):
     return z
 
 
+def belegte_werte_ergaenzen(z, info):
+    """Nur aus bekannten Werten derselben Aufnahme ableitbare Lücken füllen."""
+    form = info.get("image_size") or z.get("_bildform")
+    pixel, skala = z.get("pflanzen_pixel"), z.get("mm_pro_pixel")
+    if (z.get("blattanteil_im_bild_pct") is None and isinstance(form,(list,tuple))
+            and len(form)==2 and all(type(n) is int and n>0 for n in form)
+            and pixel is not None and 0<=pixel<=math.prod(form)):
+        z["blattanteil_im_bild_pct"] = round(100*pixel/math.prod(form),RUNDUNG["blattanteil_im_bild_pct"])
+    if skala is not None and skala>0:
+        if z.get("blattflaeche_cm2") is None and pixel is not None and pixel>0:
+            z["blattflaeche_cm2"] = round(pixel*skala**2/100,RUNDUNG["blattflaeche_cm2"])
+        if z.get("durchmesser_mm") is None and z.get("durchmesser_px") is not None and z["durchmesser_px"]>0:
+            z["durchmesser_mm"] = round(z["durchmesser_px"]*skala,RUNDUNG["durchmesser_mm"])
+    rgb = [z.get("mittel_"+k) for k in "rgb"]
+    if z.get("farbe_hex") is None and all(v is not None and 0<=v<=255 for v in rgb):
+        z["farbe_hex"] = "#{:02x}{:02x}{:02x}".format(*(round(v) for v in rgb))
+
+
 def historie_vorbereiten(z):
     """Urspruengliche Herkunft behalten; alte Bilder dafuer nicht benoetigen."""
     if not isinstance(z.get("bild"), str) or not z["bild"].strip():
@@ -2027,11 +2056,13 @@ def historie_vorbereiten(z):
     z["_zeit"] = historienzeit(z.get("captured_at"))
     z["_historisch"] = True
     gespeichert = z.pop("_historie_export", None)
+    belegte_werte_ergaenzen(z,(gespeichert or {}).get("analysis",{}))
     if gespeichert is None:
         gespeichert = api_datensatz(z)
         # Nur die CSV ist vorhanden: Herkunft nicht als aktuelle Messung ausgeben.
         gespeichert["device_id"] = None
-        gespeichert["analysis"].update(pipeline_sha256=None, mask_source=None, lens_corrected=None)
+        gespeichert["analysis"].update(version=z.get("pipeline_version"),pipeline_sha256=None,
+                                        series_id=None,mask_source=None,lens_corrected=None)
     info = gespeichert.setdefault("analysis", {})
     z["_sha256"] = gespeichert.get("image", {}).get("checksum_sha256")
     z["_ist_referenz"] = bool(info.get("is_reference") or z.get("gesundheit_status") == "referenzfoto_start_der_ansicht")
@@ -2064,6 +2095,10 @@ def historie_vorbereiten(z):
                 growth_interval_hours=z.get("wachstum_abstand_stunden"), missing_values=fehlt)
     info.setdefault("pixel_measurement", {}).update(leaf_coverage_pct=z.get("blattanteil_im_bild_pct"),
               visible_pixel_change_per_day=z.get("blattpixel_aenderung_pro_tag"), reference_file=z.get("pixel_vergleichsfoto"))
+    info["leaf_diameter_px"] = z.get("durchmesser_px")
+    if not info.get("leaf_geometry"):
+        info["visible_leaf_count"] = z.get("sichtbare_blaetter")
+        info["visible_leaf_count_method"] = z.get("blattzaehlung_quelle")
     if z.get("_csv_zusatz"):
         info["legacy_csv_fields"] = copy.deepcopy(z["_csv_zusatz"])
     z["_ansicht_id"] = info.get("view_id")
@@ -2256,6 +2291,7 @@ def api_datensatz(z, ref=None):
                      "reference_approved": bool(referenz and z.get("_referenz_geprueft")),
                      "is_reference": bool(z.get("_ist_referenz")),
                      "health_comparison_mode":z.get("_score_modus"),
+                     "structure_score": z.get("_struktur_score"),
                      "view_id": z.get("_ansicht_id"),
                      "growth_reference_file": z.get("wachstum_vergleichsfoto"),
                      "growth_interval_hours": z.get("wachstum_abstand_stunden"),
@@ -2266,21 +2302,80 @@ def api_datensatz(z, ref=None):
                      "missing_values": fehlt}})
 
 
+def ohne_json_nulls(wert):
+    """Optionale Objektfelder auslassen, Zahlen und Arrays unverändert behalten."""
+    if isinstance(wert, dict):
+        return {k: ohne_json_nulls(v) for k,v in wert.items() if v is not None}
+    if isinstance(wert, list):
+        return [ohne_json_nulls(v) for v in wert]
+    return wert
+
+
+ERGEBNIS_FELDER = {
+    **{de: ("image_measurements",en) for de,en in API_MESSFELDER.items()},
+    **{de: ("health_assessment",en) for de,en in API_GESUNDHEIT.items()},
+    "captured_at": ("image","captured_at"),
+    "zeitquelle": ("analysis","capture_time_source"),
+    "stunden_seit_start": ("analysis","hours_since_start"),
+    "ansicht": ("analysis","view_number"),
+    "gesundheit_referenzfoto": ("analysis","reference_file"),
+    "wachstum_vergleichsfoto": ("analysis","growth_reference_file"),
+    "wachstum_abstand_stunden": ("analysis","growth_interval_hours"),
+    "durchmesser_px": ("analysis","leaf_diameter_px"),
+    "blattanteil_im_bild_pct": ("analysis","pixel_measurement","leaf_coverage_pct"),
+    "blattpixel_aenderung_pro_tag": ("analysis","pixel_measurement","visible_pixel_change_per_day"),
+    "pixel_vergleichsfoto": ("analysis","pixel_measurement","reference_file"),
+    "sichtbare_blaetter": ("analysis","leaf_geometry","count"),
+    "blattzaehlung_quelle": ("analysis","leaf_geometry","method"),
+}
+
+
+def ergebnis_grund(feld,z):
+    status = z.get("gesundheit_status") or "kein_gueltiger_messwert"
+    if feld in ("captured_at","stunden_seit_start","zeitquelle"):
+        return "keine_verlaessliche_aufnahmezeit"
+    if feld in ("ansicht","gesundheit_referenzfoto") or feld.startswith("score_") or feld.startswith("gesundheit"):
+        return status
+    if feld in ("wachstum_vergleichsfoto","wachstum_abstand_stunden"):
+        return z.get("_rate_status") or "keine_gueltige_vergleichsaufnahme"
+    if feld=="pixel_vergleichsfoto":
+        return "kein_frueheres_brauchbares_bild_gleicher_aufloesung_mit_mindestabstand"
+    return "bild_nicht_auswertbar" if z.get("brauchbar") is False else "kein_gueltiger_messwert"
+
+
+def ergebnis_export(z,ref):
+    satz = api_datensatz(z,ref)
+    info = satz["analysis"]
+    fehlt = {k: v for k,v in info.get("missing_values",{}).items()
+             if isinstance(v,str) and v.strip()}
+    for feld,pfad in ERGEBNIS_FELDER.items():
+        key = pfad[-1] if feld not in ("sichtbare_blaetter","blattzaehlung_quelle","pixel_vergleichsfoto",
+                                       "blattpixel_aenderung_pro_tag","blattanteil_im_bild_pct") else feld
+        if z.get(feld) is not None:
+            fehlt.pop(key,None)
+        else:
+            fehlt.setdefault(key,ergebnis_grund(feld,z))
+    for key in ("device_id","storage_path","checksum_sha256"):
+        wert = satz.get(key) if key=="device_id" else satz["image"].get(key)
+        if wert is not None:
+            fehlt.pop(key,None)
+        else:
+            fehlt.setdefault(key,{"device_id":"geraet_noch_nicht_zugeordnet",
+                "storage_path":"externer_import_noch_keinem_serverpfad_zugeordnet",
+                "checksum_sha256":"keine_pruefsumme_gespeichert"}[key])
+    info["missing_values"] = fehlt
+    return ohne_json_nulls(json_sicher(satz))
+
+
 def ergebnisse_speichern(zeilen, ref, ausgabe):
     # Neue Werte aus der Analyse, historische Herkunft aus der bestehenden Ausgabe.
-    inhalt = [api_datensatz(z, ref) for z in zeilen]
-    # Jede leere Zelle bekommt in der CSV einen nachlesbaren Grund, damit
-    # NULL nicht mit "Messwert war null" verwechselt wird.
-    rueck = {e: d for d, e in {**API_MESSFELDER, **API_GESUNDHEIT}.items()}
-    rueck["leaf_diameter_px"] = "durchmesser_px"
+    inhalt = [ergebnis_export(z,ref) for z in zeilen]
+    rueck = {pfad[-1] if len(pfad)==2 else de:de for de,pfad in ERGEBNIS_FELDER.items()}
     for z, satz in zip(zeilen, inhalt):
-        if z.get("_historisch") and z.get("fehlende_werte") is not None:
-            continue
         gruende = {}
         for feld, grund in satz["analysis"]["missing_values"].items():
-            gruende.setdefault(grund, []).append(rueck.get(feld, feld))
-        if z.get("stunden_seit_start") is None:
-            gruende.setdefault("keine_verlaessliche_aufnahmezeit",[]).append("stunden_seit_start")
+            if feld in rueck:
+                gruende.setdefault(gesund_text(grund.split(";",1)[0]), []).append(rueck[feld])
         z["fehlende_werte"] = " | ".join(
             f"{', '.join(sorted(f))}: {g}" for g, f in sorted(gruende.items()))
     json_tmp = ausgabe/".ergebnis.json.tmp"
@@ -2296,8 +2391,11 @@ def ergebnisse_speichern(zeilen, ref, ausgabe):
             daten = {}
             for k in spalten:
                 v = json_sicher(z.get(k) if k in SPALTEN else z.get("_csv_zusatz", {}).get(k))
-                if v is None:
-                    daten[k] = "—"
+                if v is None or v=="":
+                    if v=="" and k in ("auffaelligkeit","gesundheitswarnung"):
+                        daten[k] = "Keine"
+                    else:
+                        daten[k] = CSV_NICHT_VERFUEGBAR
                 elif isinstance(v, bool):
                     daten[k] = str(v)
                 elif isinstance(v, float) and CSV_DEZIMALKOMMA:
@@ -2357,11 +2455,14 @@ def twin_ansichten_verbinden(historie, aktuell):
             z["_twin_pose"] = (np.vstack((z["_pose"], [0., 0., 1.]))@basis)[:2]
 
 
-def twin_historie_laden(ausgabe):
-    """Einmal ausgegebene Prognosen erhalten, statt sie nachtraeglich zu verbessern."""
-    pfad = Path(ausgabe)/"digital_twin.json"
-    if not pfad.exists():
-        return []
+def viewer_ordner(ausgabe):
+    """Im Standardprojekt beide Viewer neben der Auswertung ablegen."""
+    ausgabe = Path(ausgabe)
+    basis = ausgabe.parent if ausgabe.name.casefold()=="auswertung" else ausgabe
+    return basis/"digital twin",basis/"gesundheitssystem"
+
+
+def twin_historie_datei(pfad):
     try:
         daten = json.loads(pfad.read_text(encoding="utf-8-sig"))
         historie = daten["forecast_history"]
@@ -2387,6 +2488,19 @@ def twin_historie_laden(ausgabe):
         return historie
     except (OSError, ValueError, TypeError, KeyError) as fehler:
         raise ValueError(f"Digital-Twin-Historie nicht sicher lesbar: {fehler}. Vorhandene Ausgabe bleibt erhalten.") from fehler
+
+
+def twin_historie_laden(ausgabe):
+    """Vorhandene und alte Prognoseprotokolle zusammenführen, ohne IDs zu duplizieren."""
+    ergebnis = {}
+    for pfad in (viewer_ordner(ausgabe)[0]/TWIN_JSON_DATEI,Path(ausgabe)/TWIN_JSON_DATEI):
+        if pfad.is_file():
+            for eintrag in twin_historie_datei(pfad):
+                kennung = eintrag["forecast_id"]
+                vorher = ergebnis.setdefault(kennung,eintrag)
+                if vorher.get("evaluation") is None and eintrag.get("evaluation") is not None:
+                    vorher["evaluation"] = eintrag["evaluation"]
+    return list(ergebnis.values())
 
 
 def twin_messpunkt(z):
@@ -2615,11 +2729,12 @@ def digital_twin(zeilen, historie=None, einzelbilder=False, jetzt=None):
     return json_sicher(daten)
 
 
-def twin_speichern(daten, zeilen, ausgabe):
+def twin_speichern(daten, zeilen, ausgabe, twin_ordner):
     """Messung und Prognose getrennt anzeigen; alte Prognosen im JSON erhalten."""
-    tmp = ausgabe/".digital_twin.json.tmp"
+    twin_ordner.mkdir(parents=True,exist_ok=True)
+    tmp = twin_ordner/".digital_twin.json.tmp"
     tmp.write_text(json.dumps(daten, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
-    tmp.replace(ausgabe/"digital_twin.json")
+    tmp.replace(twin_ordner/TWIN_JSON_DATEI)
     ordner = ausgabe/"grafiken"; ordner.mkdir(exist_ok=True)
     fig, ax = plt.subplots(figsize=(11, 5.6))
     ax.set_title("06 | Digital Twin · sichtbare Blattfläche und 24-h-Prognose", loc="left", fontweight="semibold")
@@ -2998,6 +3113,7 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
     pfade=list(pfade);ausgabe=Path(ausgabe).expanduser().resolve()
     if not pfade:raise ValueError('Keine Eingabebilder; vorhandene Auswertung bleibt erhalten.')
     ausgabe.mkdir(parents=True,exist_ok=True)
+    twin_ziel,gesund_ziel = viewer_ordner(ausgabe)
     with auswertung_sperren(ausgabe):
         historie = ergebnishistorie_laden(ausgabe)
         twin_historie = twin_historie_laden(ausgabe)
@@ -3013,8 +3129,6 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
                 shutil.copytree(ausgabe/'masken_korrektur',fertig/'masken_korrektur')
             if (ausgabe/'blattlabels').is_dir():
                 shutil.copytree(ausgabe/'blattlabels',fertig/'blattlabels')
-            if (ausgabe/'pflege_ki.json').is_file():
-                shutil.copy2(ausgabe/'pflege_ki.json',fertig/'pflege_ki.json')
             # Eigene fremde Dateien nicht als alte generierte Vorschauen loeschen.
             for folder,suffix in [('masken','_maske.png'),('kontrolle','_kontrolle.png')]:
                 (fertig/folder).mkdir()
@@ -3025,27 +3139,38 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
                             target=fertig/folder/path.name
                             if path.is_dir():shutil.copytree(path,target,symlinks=True)
                             else:shutil.copy2(path,target,follow_symlinks=False)
-            rows=_analysieren(pfade,fertig,manuell,einzelbilder,neue_referenz,historie,twin_historie,zeitdaten)
-            required=['ergebnis.csv','ergebnis.json','digital_twin.json',TWIN_3D_CSS_DATEI,TWIN_3D_JS_DATEI,TWIN_3D_DATEI,'masken','kontrolle','grafiken']
-            if (fertig/'pflege_ki.json').is_file():
-                required.append('pflege_ki.json')
-            if not all((fertig/name).exists() for name in required):
+            twin_neu,gesund_neu = work/"twin",work/"gesundheit"
+            rows=_analysieren(pfade,fertig,manuell,einzelbilder,neue_referenz,historie,twin_historie,
+                              zeitdaten,twin_neu,gesund_neu)
+            dateien = [(fertig/name,ausgabe/name) for name in
+                       ('ergebnis.csv','ergebnis.json','masken','kontrolle','grafiken')]
+            dateien += [(twin_neu/name,twin_ziel/name) for name in TWIN_DATEIEN]
+            dateien += [(gesund_neu/name,gesund_ziel/name) for name in GESUND_DATEIEN]
+            # Alte Viewer erst gemeinsam mit einem vollständigen neuen Stand verschieben.
+            alte_viewer = [(None,ausgabe/name) for name in (*TWIN_DATEIEN,*GESUND_DATEIEN)
+                           if (ausgabe/name).is_file()]
+            if not all(neu.exists() for neu,_ in dateien):
                 raise OSError('Neue Auswertung ist unvollstaendig; alte Ausgabe bleibt erhalten.')
+            if any(ziel.is_dir() for _,ziel in dateien if ziel.name.endswith((".html",".css",".js",".json",".csv"))):
+                raise OSError("Ein Ausgabe-Dateiname wird bereits für einen Ordner verwendet.")
             changes=[]
             try:
-                for name in required:
-                    old=ausgabe/name;new=fertig/name
-                    item={'name':name,'old':False,'new':False};changes.append(item)
-                    if old.exists():old.replace(backup/name);item['old']=True
-                    new.replace(old);item['new']=True
+                twin_ziel.mkdir(parents=True,exist_ok=True)
+                gesund_ziel.mkdir(parents=True,exist_ok=True)
+                for i,(new,old) in enumerate(dateien+alte_viewer):
+                    sicherung = backup/str(i)
+                    item={'ziel':old,'backup':sicherung,'old':False,'new':False};changes.append(item)
+                    if old.exists():old.replace(sicherung);item['old']=True
+                    if new is not None:new.replace(old);item['new']=True
             except OSError as error:
                 rollback=[]
                 for item in reversed(changes):
-                    name=item['name']
                     try:
-                        if item['new']:(ausgabe/name).replace(fertig/name)
-                        if item['old']:(backup/name).replace(ausgabe/name)
-                    except OSError:rollback.append(name)
+                        if item['new'] and (not item['old'] or item['ziel'].is_dir()):
+                            item['ziel'].replace(work/("rollback-"+item['backup'].name))
+                        if item['old']:
+                            item['backup'].replace(item['ziel'])
+                    except OSError:rollback.append(str(item['ziel']))
                 if rollback:
                     cleanup=False
                     raise OSError('Wiederherstellung blockiert. Sicherung erhalten unter '+str(backup)+': '+', '.join(rollback)) from error
@@ -3056,8 +3181,9 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
     erhalten = sum(bool(z.get('_historisch')) for z in rows)
     print(f'\n{len(pfade)} vorhandene Bilder verarbeitet; {erhalten} fruehere Messungen erhalten.')
     print(f'{len(rows)} Datensaetze insgesamt -> {ausgabe/"ergebnis.csv"}')
-    print('Masken/Kontrollbilder, CSV/JSON-Historie, 5 Analyse-Grafiken, Digital Twin und lokale 3D-Ansicht aktualisiert.')
-    print('3D-Ansicht:', ausgabe/TWIN_3D_DATEI)
+    print('Masken, Kontrollbilder, Grafiken, Ergebnishistorie und beide Browseransichten aktualisiert.')
+    print('3D-Ansicht:', twin_ziel/TWIN_3D_DATEI)
+    print('Gesundheitsansicht:', gesund_ziel/GESUND_DATEIEN[0])
     n_rate = sum(z.get("wachstumsrate_pct_pro_tag") is not None for z in rows)
     n_score = sum(z.get("gesundheit") is not None for z in rows)
     n_pixel = sum(z.get("blattpixel_aenderung_pro_tag") is not None for z in rows)
@@ -3435,7 +3561,8 @@ def twin_blattgeometrie(bild, maske, labelpfad, punktpfad=None):
             "count":len(blaetter),"leaves":blaetter,"note":hinweis}
 
 
-def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz=False, historie=None, twin_historie=None, zeitdaten=None):
+def _analysieren(pfade, ausgabe, manuell, einzelbilder, neue_referenz, historie,
+                 twin_historie, zeitdaten, twin_ordner, gesund_ordner):
     ausgabe.mkdir(parents=True, exist_ok=True)
     masken, kontrolle = ausgabe/"masken", ausgabe/"kontrolle"
     masken.mkdir(exist_ok=True)
@@ -3624,6 +3751,8 @@ def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz
         for feld, stellen in RUNDUNG.items():
             if z.get(feld) is not None:
                 z[feld] = round(float(z[feld]), stellen)
+        if z.get("_struktur_score") is not None:
+            z["_struktur_score"] = round(z["_struktur_score"],1)
         if z.get("mittel_h") == 180:
             z["mittel_h"] = 0.0  # Kreisfoermiger Farbton, nicht ausserhalb 0..180.
     for z, pfad in zip(zeilen, pfade):
@@ -3652,8 +3781,9 @@ def _analysieren(pfade, ausgabe, manuell=None, einzelbilder=False, neue_referenz
         raise PermissionError("CSV konnte nicht erstellt werden; bisherige Auswertung bleibt erhalten.")
     grafiken(zeilen,ausgabe/"grafiken")
     twin = digital_twin(zeilen, twin_historie, einzelbilder)
-    twin_speichern(twin, zeilen, ausgabe)
-    twin_3d_speichern(zeilen, ausgabe)
+    twin_speichern(twin, zeilen, ausgabe, twin_ordner)
+    twin_3d_speichern(zeilen, twin_ordner)
+    gesundheit_speichern(zeilen, gesund_ordner, pfade)
     print("Digital Twin:", twin["status"], f"| {twin['training']['points']} vergleichbare Aufnahmen")
     if twin.get("forecast"):
         p = twin["forecast"]
@@ -3765,22 +3895,16 @@ def twin_pflege_einbetten(aufnahmen, ausgabe, auswahl=None):
                 verfuegbar = isinstance(modelle,list) and any(isinstance(m,dict) and
                     OLLAMA_PFLEGEMODELL in (m.get("name"),m.get("model")) for m in modelle)
                 if not verfuegbar and auswahl:
-                    print("Ollama oder Modell nicht verfügbar: Hinweise aus Messwerten werden angezeigt.")
+                    print("Ollama oder Modell nicht verfügbar.")
             if verfuegbar:
                 print("Lokale KI: "+r["file_name"],flush=True)
                 tipp = twin_pflege_ki(daten)
                 if tipp:
                     cache[key] = tipp
                 elif auswahl:
-                    print("Keine gültige KI-Antwort; die Ansicht verwendet Hinweise aus Messwerten.")
+                    print("Keine gültige KI-Antwort.")
         if tipp:
             r["care"] = tipp
-    if not cache:
-        return
-    with tempfile.TemporaryDirectory(dir=ziel.parent) as tmp:
-        datei = Path(tmp)/ziel.name
-        datei.write_text(json.dumps(dict(list(cache.items())[-1500:]),ensure_ascii=False),encoding="utf-8")
-        datei.replace(ziel)
 
 
 def twin_blattnetz(blatt, extent):
@@ -3922,30 +4046,31 @@ def twin_3d_aus_json(quelle, ausgabe, pflege_auswahl=None):
     if isinstance(daten, list) or (isinstance(daten, dict) and isinstance(daten.get("image"), dict)):
         saetze = daten if isinstance(daten, list) else [daten]
         zeilen = [historie_vorbereiten(historienzeile(s)) for s in saetze]
-        pfad = quelle.parent/"digital_twin.json"
-        twin = json.loads(pfad.read_text(encoding="utf-8-sig")) if pfad.is_file() else {}
     elif isinstance(daten, dict) and isinstance(daten.get("state"), (dict, type(None))) and "forecast" in daten:
-        twin, zeilen = daten, []
-        # ergebnis.json enthaelt die komplette Gesundheitshistorie. Der Twin allein
-        # enthaelt nur einen Zustand, nicht automatisch alle frueheren Scores.
-        pfad = quelle.parent/"ergebnis.json"
-        if pfad.is_file():
+        zeilen = []
+        # Die Blattkonturen liegen in der Ergebnishistorie, nicht im Prognose-JSON.
+        basis = quelle.parent.parent if quelle.parent.name=="digital twin" else quelle.parent
+        pfad = next((p for p in (basis/"auswertung"/"ergebnis.json",basis/"ergebnis.json") if p.is_file()),None)
+        if pfad is not None:
             saetze = json.loads(pfad.read_text(encoding="utf-8-sig"))
             if not isinstance(saetze, list):
                 raise ValueError("ergebnis.json muss eine Liste von Bilddatensätzen enthalten")
             zeilen = [historie_vorbereiten(historienzeile(s)) for s in saetze]
     else:
         raise ValueError("Bitte ergebnis.json oder digital_twin.json auswählen")
-    if not isinstance(twin, dict):
-        raise ValueError("digital_twin.json muss ein JSON-Objekt enthalten")
-    return twin_3d_speichern(zeilen, ausgabe, pflege_auswahl=pflege_auswahl)
+    ziel = viewer_ordner(ausgabe)[0]
+    return twin_3d_speichern(zeilen, ziel, pflege_auswahl=pflege_auswahl)
+
+
+def browseransicht_oeffnen(pfad,titel):
+    pfad = Path(pfad).resolve()
+    print(titel+":", pfad)
+    if not webbrowser.open(pfad.as_uri()):
+        print("Bitte die HTML-Datei per Doppelklick im Browser öffnen.")
 
 
 def twin_3d_oeffnen(pfad):
-    pfad = Path(pfad).resolve()
-    print("3D-Ansicht:", pfad)
-    if not webbrowser.open(pfad.as_uri()):
-        print("Bitte die HTML-Datei per Doppelklick im Browser öffnen.")
+    browseransicht_oeffnen(pfad,"3D-Ansicht")
 
 
 
@@ -4288,6 +4413,408 @@ TWIN_3D_JS = r"""
 })();
 """
 
+GESUND_STATUS = {
+    "freigegeben": "Vergleich mit geprüfter Referenz",
+    "vorlaeufige_referenz": "Vergleich mit vorläufiger Referenz",
+    "referenzfoto_start_der_ansicht": "Referenzaufnahme",
+    "bildqualitaet_nicht_ausreichend": "Bildqualität reicht nicht für einen Vergleich",
+    "datei_nicht_lesbar": "Aufnahme konnte nicht gelesen werden",
+    "analysefehler": "Aufnahme konnte nicht ausgewertet werden",
+    "aufnahme_vor_referenz": "Aufnahme liegt vor der Referenz",
+    "einzelbilder_keine_gemeinsame_referenz": "Einzelbild ohne gemeinsame Referenz",
+    "nicht_auswertbar": "Kein auswertbarer Vergleich",
+}
+GESUND_TEXTE = {
+    **GESUND_STATUS,
+    "farbe_und_struktur": "Farbe und Struktur",
+    "nur_farbe": "Nur Farbe",
+    "nur_farbvergleich": "Nur Farbe",
+    "farbverhaeltnis_teilflaeche": "Farbvergleich auf bestätigter Teilfläche",
+    "blattverteilung_chromatik": "Blattfarbverteilung ohne Helligkeit",
+    "blattverteilung_normiert": "Blattfarbverteilung mit Lichtabgleich",
+    "blattfarbverteilung": "Blattfarbverteilung",
+    "kein_gueltiger_score_vor_24_stunden_plusminus_2h": "Kein vergleichbarer Score vor 22–26 Stunden",
+    "brauntoene_ohne_bestaetigte_helligkeit_nicht_bewertet": "Ohne geprüfte Helligkeit nicht bewertbar",
+    "historischer_wert_nicht_gespeichert": "Bei dieser Aufnahme nicht gespeichert",
+    "keine_verlaessliche_aufnahmezeit": "Aufnahmezeit nicht bekannt",
+    "zu_wenig_bestaetigte_farbteilflaeche": "Zu wenig Blattfläche mit geprüftem Licht",
+    "lichtvergleich_zu_wenig_blattgewebe": "Zu wenig vergleichbares Blattgewebe",
+    "zu_wenig_gemeinsames_blattgewebe": "Zu wenig übereinstimmende Blattfläche",
+    "lichtvergleich_nicht_verifiziert": "Lichtvergleich nicht bestätigt",
+    "lichtvergleich_nicht_moeglich": "Lichtvergleich nicht möglich",
+    "lichtkorrektur_nicht_stabil": "Lichtkorrektur zu unsicher",
+    "blattflaeche_ueberbelichtet": "Blattfläche überbelichtet",
+    "maske_deckt_fast_den_gesamten_bereich_ab": "Blattmaske deckt fast das ganze Bild ab",
+    "keine_blattmaske": "Zu wenig Blattfläche gefunden",
+    "unscharf": "Bild unscharf",
+    "blatt_am_bildrand": "Blätter am Bildrand",
+    "starkes_rauschen": "Starkes Bildrauschen",
+    "keine_aufnahmezeit": "Aufnahmezeit nicht bekannt",
+    "neue_kameraansicht": "Neue Kameraansicht",
+    "gesundheit_ueber_blattfarbverteilung": "Vergleich über die Blattfarbverteilung",
+    "kein_gueltiger_messwert": "Für diese Aufnahme nicht messbar",
+    "bild_nicht_auswertbar": "Aufnahme nicht auswertbar",
+    "nicht_kalibriert": "Kein Maßstab auf Blatthöhe",
+    "kein_verifizierter_massstab_in_blattebene": "Kein Maßstab auf Blatthöhe",
+    "kein_gemeinsamer_massstab_fuer_beide_aufnahmen": "Kein gemeinsamer Maßstab der Vergleichsfotos",
+    "kein_frueheres_brauchbares_bild_gleicher_aufloesung_mit_mindestabstand": "Kein passendes früheres Bild",
+    "flaechensprung_pruefen": "Plötzliche Flächenänderung prüfen",
+    "farbveraenderung": "Blattfarbe verändert",
+    "gelbanteil_gestiegen": "Gelbanteil gegenüber der Referenz gestiegen",
+    "braunanteil_gestiegen": "Braunanteil gegenüber der Referenz gestiegen",
+    "saettigung_veraendert": "Farbsättigung verändert",
+    "sichtbare_blattflaeche_gesunken": "Sichtbare Blattfläche gesunken",
+    "auffaellig": "Auffällig",
+    "keine_daten": "Keine Bewertung",
+}
+
+
+def gesund_text(code):
+    return GESUND_TEXTE.get(code,code.split(":",1)[0].replace("_"," ").capitalize())
+
+
+def gesund_foto(z, bildpfade):
+    """Vorschau des exakt gleichen Originals, lokal und ohne zusätzliche Datei."""
+    name, sha = z.get("bild"), z.get("_sha256")
+    if not name or not sha:
+        return None
+    for pfad in bildpfade:
+        pfad = Path(pfad)
+        if pfad.name != name:
+            continue
+        try:
+            raw = pfad.read_bytes()
+            if hashlib.sha256(raw).hexdigest()!=sha:
+                continue
+            bild = cv2.imdecode(np.frombuffer(raw,np.uint8),cv2.IMREAD_COLOR)
+            if bild is None or min(bild.shape[:2])<3:
+                continue
+            h,w = bild.shape[:2]
+            f = min(1.,1050/max(h,w))
+            if f<1:
+                bild = cv2.resize(bild,(max(1,round(w*f)),max(1,round(h*f))),interpolation=cv2.INTER_AREA)
+            ok,jpg = cv2.imencode(".jpg",bild,[cv2.IMWRITE_JPEG_QUALITY,86])
+            if ok:
+                return "data:image/jpeg;base64,"+base64.b64encode(jpg).decode("ascii")
+        except (OSError,cv2.error):
+            continue
+    return None
+
+
+def gesund_vergleichsgruppe(z):
+    info = z.get("_historie_export",{}).get("analysis",{})
+    meta = z.get("_referenz_meta",{})
+    referenz = meta.get("sha256") or info.get("reference_sha256")
+    modus = z.get("_score_modus") or info.get("health_comparison_mode")
+    serie = info.get("series_id") if z.get("_historisch") else MESSREIHE
+    if referenz and modus and serie and z.get("scoring_version"):
+        return (serie,referenz,meta.get("captured_at") or info.get("reference_captured_at"),z["scoring_version"],modus)
+    return None
+
+
+def gesundheit_daten(zeilen,bildpfade=()):
+    """Ansichtsdaten aus derselben Auswertung wie CSV/JSON; keine Neubewertung."""
+    daten = {"version":"1.0.0","recent":[],"history":[],"total":len(zeilen)}
+    if not zeilen:
+        return daten
+    # Eine Importzeit oder das Änderungsdatum wird nicht als Aufnahmezeit ausgegeben.
+    geordnet = sorted(enumerate(zeilen),key=lambda paar:(
+        historienzeit(paar[1].get("captured_at")) or datetime.min.replace(tzinfo=timezone.utc),
+        not paar[1].get("_historisch",False),paar[0]))
+    _,z = geordnet[-1]
+    ergebnis = ergebnis_export(z,None)
+    info,fehlend = ergebnis["analysis"],ergebnis["analysis"]["missing_values"]
+    bewertung = ergebnis["health_assessment"]
+    werte = ("yellow_fraction_pct","brown_fraction_pct","mean_hue","mean_saturation","mean_r","mean_g","mean_b",
+             "greenness_index","color_hex","sharpness","noise","image_brightness","overexposed_pct")
+    teile = ("score_green","score_yellow","score_brown","score_saturation","score_hue")
+    messwerte = ergebnis["image_measurements"]
+    status = bewertung.get("health_status") or "nicht_auswertbar"
+    kurzstatus = status.split(";",1)[0]
+    hinweise = {k:gesund_text(v.split(";",1)[0]) for k,v in fehlend.items() if
+                k in (*werte,*teile,"health_trend_24h","health_score","health_score_raw")}
+    if info.get("is_reference"):
+        hinweise["health_score"] = "Diese Aufnahme ist der Ausgangspunkt. Ein Score braucht ein späteres vergleichbares Foto."
+    if "structure_score" not in info:
+        hinweise["structure_score"] = ("Bei dieser Aufnahme nicht bewertet" if bewertung.get("health_score") is not None
+                                       else "Kein gültiger Zustandsvergleich")
+    modus = info.get("health_comparison_mode")
+    daten["latest"] = {"file_name":z["bild"],"captured_at":z.get("captured_at"),
+        "photo":gesund_foto(z,bildpfade),"health":bewertung,"status_label":gesund_text(kurzstatus),
+        "category_label":gesund_text(bewertung["health_category"]) if bewertung.get("health_category") and bewertung.get("health_score") is not None else None,
+        "mode_label":gesund_text(modus) if modus else None,
+        "measurements":{k:messwerte[k] for k in werte if k in messwerte},
+        "quality_flags":[gesund_text(v) for v in (z.get("auffaelligkeit") or "").split(";")
+                         if v and v!="gesundheit_ueber_blattfarbverteilung"],
+        "warnings":[gesund_text(v) for v in (z.get("gesundheitswarnung") or "").split(";") if v],
+        "usable":z.get("brauchbar"),"is_reference":bool(info.get("is_reference")),
+        "reference_file":info.get("reference_file"),"reference_captured_at":info.get("reference_captured_at"),
+        "reference_approved":info.get("reference_approved"),"structure_score":info.get("structure_score"),
+        "missing":hinweise,"illumination":info.get("illumination",{}),"view_number":info.get("view_number")}
+    # Auch bei einem Referenzstart bleiben ältere Scores sichtbar.
+    # Nur aufeinanderfolgende Punkte mit derselben Vergleichsbasis werden verbunden.
+    gruppen = {}
+    for _,r in geordnet[-120:]:
+        if not historienzeit(r.get("captured_at")):
+            continue
+        gruppe = gesund_vergleichsgruppe(r)
+        daten["history"].append({"time":r["captured_at"],"score":r.get("gesundheit"),
+                                  "group":gruppen.setdefault(gruppe,len(gruppen)+1) if gruppe is not None else None})
+    daten["recent"] = [{"file_name":r["bild"],"time":r.get("captured_at"),"score":r.get("gesundheit"),
+                       "status":gesund_text((r.get("gesundheit_status") or "nicht_auswertbar").split(";",1)[0])}
+                      for _,r in reversed(geordnet[-12:])]
+    return ohne_json_nulls(json_sicher(daten))
+
+
+def gesundheit_speichern(zeilen,ordner,bildpfade=()):
+    """Vier lokale Dateien; JS enthält dieselben Daten für Doppelklick ohne Server."""
+    ordner = Path(ordner)
+    ordner.mkdir(parents=True,exist_ok=True)
+    daten = gesundheit_daten(zeilen,bildpfade)
+    json_text = json.dumps(daten,ensure_ascii=False,indent=2,allow_nan=False)
+    js_daten = json.dumps(daten,ensure_ascii=False,separators=(",",":"),allow_nan=False)
+    dateien = (GESUND_HTML,GESUND_CSS,"const BIOBOX_HEALTH = "+js_daten+";\n"+GESUND_JS,json_text+"\n")
+    with tempfile.TemporaryDirectory(prefix=".biobox-health-",dir=ordner) as tmp:
+        for name,inhalt in zip(GESUND_DATEIEN,dateien):
+            (Path(tmp)/name).write_text(inhalt,encoding="utf-8")
+        for name in (GESUND_DATEIEN[3],GESUND_DATEIEN[1],GESUND_DATEIEN[2],GESUND_DATEIEN[0]):
+            (Path(tmp)/name).replace(ordner/name)
+    return ordner/GESUND_DATEIEN[0]
+
+
+def gesundheit_aus_ergebnissen(ausgabe,bildordner=None):
+    ausgabe = Path(ausgabe).expanduser().resolve()
+    with auswertung_sperren(ausgabe):
+        zeilen = ergebnishistorie_laden(ausgabe)
+        if not zeilen:
+            raise ValueError("Keine gespeicherten Ergebnisse. Zuerst python analyse.py ausführen.")
+        ordner = Path(bildordner).expanduser().resolve() if bildordner else ausgabe.parent/"bilder"
+        pfade = vorhandene_bilder(ordner) if ordner.is_dir() else [ordner] if ordner.is_file() else []
+        return gesundheit_speichern(zeilen,viewer_ordner(ausgabe)[1],pfade)
+
+
+GESUND_HTML = r"""
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>BioBox · Pflanzengesundheit</title>
+<link rel="stylesheet" href="gesundheitssystem.css">
+<script src="gesundheitssystem.js" defer></script>
+</head>
+<body>
+<main id="app"></main>
+<noscript>JavaScript ist für diese Ansicht erforderlich.</noscript>
+</body>
+</html>
+"""
+
+GESUND_CSS = r"""
+:root{color-scheme:light;--ink:#203328;--muted:#536b5f;--line:#d9e4dc;--accent:#2c694d;--soft:#f0f5ef;--paper:#fff;--warn:#7a4c24;--warn-bg:#fbf3e8;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#f6f8f5;color:var(--ink)}
+main{width:min(940px,100% - 32px);margin:32px auto 48px;display:grid;gap:16px}
+h1,h2,h3,p,figure,dl{margin:0}
+h1{font-size:clamp(25px,4vw,34px);letter-spacing:-.045em;line-height:1.13}
+h2{font-size:1.04rem;letter-spacing:-.018em;line-height:1.3}
+.masthead,.row-title,.split{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.masthead{margin-bottom:0}
+.eyebrow{font-size:.69rem;font-weight:750;text-transform:uppercase;letter-spacing:.125em;color:var(--accent);margin-bottom:6px}
+.muted,.timestamp,.hint{color:var(--muted);font-size:.81rem;line-height:1.48}
+.timestamp{white-space:nowrap;text-align:right}
+.panel{border:1px solid var(--line);border-radius:16px;background:var(--paper);min-width:0;overflow:hidden}
+.hero{display:grid;grid-template-columns:minmax(0,1.06fr) minmax(0,1fr)}
+.capture{min-width:0;display:grid;grid-template-rows:1fr auto;position:relative;background:var(--soft);border-right:1px solid var(--line)}
+.stage{position:relative;display:grid;place-items:center;min-height:325px;height:100%;background:radial-gradient(ellipse at 46% 34%,#f8faf5,#e8f0e8 73%,#dce8df);overflow:hidden}
+.stage img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain}
+.capture figcaption{min-width:0;display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:11px 15px;border-top:1px solid var(--line);font-size:.75rem}
+.capture strong{white-space:nowrap}
+.filename{overflow-wrap:anywhere;color:var(--muted);text-align:right;line-height:1.35}
+.no-photo{position:relative;padding:22px;text-align:center;max-width:33ch}
+.hero-info,.block{padding:19px 22px}
+.hero-info{display:grid;align-content:start;gap:14px}
+.status-pill{border-radius:999px;background:#e9f1e9;color:#315643;padding:5px 9px;font-size:.73rem;font-weight:650;line-height:1.25}
+.status-pill.check{background:var(--warn-bg);color:var(--warn)}
+.hero h2{margin-top:2px}
+.score{display:flex;align-items:baseline;gap:6px;font-size:clamp(49px,8vw,70px);font-weight:700;letter-spacing:-.075em;line-height:1.02;font-variant-numeric:tabular-nums}
+.score span{font-size:.92rem;color:var(--muted);font-weight:600;letter-spacing:0}
+.score.absent{font-size:2rem;letter-spacing:0}
+.score-track,.part-track{display:block;width:100%;height:7px;background:#e9efea;border-radius:999px;overflow:hidden}
+.score-track{margin:9px 0 7px}
+.fill{height:100%;background:#438462;border-radius:inherit;display:block}
+.fill.mid{background:#8b8845}.fill.low{background:#a86548}
+.chips{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.chip{min-width:0;border-radius:9px;background:#f2f6f2;padding:9px 10px;display:grid;gap:3px}
+.chip dt,.stats dt{font-size:.76rem;color:var(--muted)}
+.chip dd,.stats dd{margin:0;font-size:.88rem;font-weight:650;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.chip small{font-weight:400;font-size:.7rem}
+.alert{background:var(--warn-bg);color:var(--warn);padding:8px 10px;border-radius:8px;font-size:.78rem;line-height:1.42}
+.alert ul{padding-left:15px;margin:4px 0 0}
+.panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.block{display:grid;align-content:start;gap:13px}
+.part-list{margin:0;padding:0;list-style:none;display:grid;gap:10px}
+.part-label{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:4px;font-size:.82rem}
+.part-label strong,.nowrap{white-space:nowrap;font-variant-numeric:tabular-nums}
+.part-track{height:5px}
+.part-reason{font-size:.73rem;color:var(--muted)}
+.stats{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:9px}
+.stats>div{background:#f3f6f3;border-radius:8px;padding:9px 10px;display:grid;gap:3px;min-width:0}
+.swatch{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:5px;border:1px solid #20332825}
+.meta{border-top:1px solid var(--line);padding-top:10px}
+summary{cursor:pointer;font-size:.83rem;font-weight:650;line-height:1.6}
+.meta .stats{margin-top:9px}
+.meta ul{margin:7px 0 0;padding-left:16px}
+.timeline{display:grid;gap:9px}
+.chart{display:block;width:100%;height:auto;min-height:126px;overflow:visible}
+.chart text{font-family:inherit;font-size:12px;fill:#536b5f}
+.chart .gridline{stroke:#e2eae2;stroke-width:1}
+.chart .score-line{fill:none;stroke:#3c835d;stroke-width:2.3;stroke-linejoin:round;stroke-linecap:round}
+.chart .point{fill:#3c835d;stroke:white;stroke-width:1.1}
+.table-wrap{overflow:auto;margin-top:7px}
+.recent{width:100%;border-collapse:collapse;font-size:.78rem;line-height:1.45;text-align:left}
+.recent th,.recent td{border-bottom:1px solid #e9eee8;padding:7px 10px 7px 0}
+.recent th{color:var(--muted);font-weight:600}
+.recent tr:last-child td{border-bottom:0}
+.recent td:last-child{overflow-wrap:anywhere}
+.foot{padding:1px 2px;color:var(--muted);font-size:.77rem}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media(max-width:700px){.hero,.panel-grid{grid-template-columns:1fr}.capture{border-right:0;border-bottom:1px solid var(--line)}.stage{min-height:330px;height:clamp(275px,65vw,395px)}}
+@media(max-width:440px){main{margin-top:18px;gap:12px}.masthead{align-items:start;flex-wrap:wrap;gap:5px}.timestamp{text-align:left}.hero-info,.block{padding:15px}.stage{min-height:270px;height:clamp(270px,76vw,330px)}.panel-grid{gap:12px}.recent th,.recent td{padding-right:7px}}
+"""
+
+GESUND_JS = r"""
+'use strict';
+(() => {
+ const app=document.getElementById('app'), data=BIOBOX_HEALTH, row=data.latest;
+ function el(tag,attrs={},...children){
+  const node=document.createElement(tag);
+  for(const [k,v] of Object.entries(attrs))node.setAttribute(k,v);
+  node.append(...children);return node;
+ }
+ const number=n=>Number.isFinite(n);
+ const de=new Intl.NumberFormat('de-DE',{maximumFractionDigits:1});
+ const tz={timeZone:'Europe/Berlin'};
+ const datefmt=new Intl.DateTimeFormat('de-DE',{dateStyle:'medium',timeStyle:'short',...tz});
+ const dayfmt=new Intl.DateTimeFormat('de-DE',{day:'2-digit',month:'2-digit',...tz});
+ const value=(v,unit='')=>number(v)?de.format(v)+unit:'—';
+ const signed=v=>number(v)?(v>0?'+':'')+de.format(v)+' Pkt.':'—';
+ const time=v=>v&&Number.isFinite(Date.parse(v))?el('time',{datetime:v},datefmt.format(new Date(v))):el('span',{},'Aufnahmezeit unbekannt');
+ const reason=k=>row?.missing?.[k]||'Für diese Aufnahme nicht verfügbar';
+ const header=el('header',{class:'masthead'},el('div',{},el('p',{class:'eyebrow'},'BioBox'),el('h1',{},'Pflanzengesundheit')));
+ if(row)header.append(el('div',{class:'timestamp'},time(row.captured_at)));
+ app.append(header);
+ if(!row){app.append(el('section',{class:'panel block'},el('h2',{},'Noch keine Aufnahmen'),el('p',{class:'muted'},'Zuerst die Bildanalyse ausführen.')));return;}
+ const health=row.health, m=row.measurements, score=health.health_score;
+ const track=(val,cls,label)=>{
+  if(!number(val))return el('div',{class:cls,'aria-hidden':'true'});
+  const percent=Math.max(0,Math.min(100,val)),tone=percent<50?' low':percent<70?' mid':'';
+  return el('div',{class:cls,role:'meter','aria-label':label,'aria-valuemin':'0','aria-valuemax':'100','aria-valuenow':String(percent)},
+   el('span',{class:'fill'+tone,style:'width:'+percent+'%'}));
+ };
+ function entry(label,v,cls=''){
+  return el('div',{class:cls},el('dt',{},label),el('dd',{},v));
+ }
+ const photo=el('div',{class:'stage'});
+ const fallback=()=>el('p',{class:'muted no-photo'},'Das Originalfoto ist lokal nicht verfügbar.');
+ if(typeof row.photo==='string'&&/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(row.photo)){
+  const img=el('img',{src:row.photo,alt:'Letzte Pflanzenaufnahme'});
+  img.addEventListener('error',()=>photo.replaceChildren(fallback()));photo.append(img);
+ }else photo.append(fallback());
+ const fig=el('figure',{class:'capture'},photo,el('figcaption',{},el('strong',{},'Letzte Aufnahme'),el('span',{class:'filename'},row.file_name)));
+ const headline=el('div',{class:'row-title'},el('h2',{},'Gesundheitsscore'),
+  el('span',{class:'status-pill'+(!number(score)||score<70?' check':'')},row.category_label||'Kein Score'));
+ const scoreBody=number(score)?el('div',{},
+  el('p',{class:'score'},de.format(score),el('span',{},'/ 100')),track(score,'score-track','Gesundheitsscore'),
+  el('p',{class:'hint'},row.status_label)):
+  el('div',{},el('p',{class:'score absent','aria-label':'Kein Score'},'—'),el('p',{class:'hint'},row.status_label+': '+reason('health_score')));
+ const change=number(health.health_trend_24h)?signed(health.health_trend_24h):el('small',{class:'muted'},reason('health_trend_24h'));
+ const raw=number(health.health_score_raw)?value(health.health_score_raw,' / 100'):el('small',{class:'muted'},'Nicht verfügbar');
+ const overview=el('div',{class:'hero-info'},headline,scoreBody,el('dl',{class:'chips'},entry('Rohscore',raw,'chip'),entry('24-Stunden-Trend',change,'chip')));
+ if(row.mode_label)overview.append(el('p',{class:'hint'},row.mode_label));
+ if(row.warnings.length)overview.append(el('div',{class:'alert'},el('strong',{},'Auffälligkeiten an der Pflanze'),el('ul',{},...row.warnings.map(w=>el('li',{},w)))));
+ else if(number(score))overview.append(el('p',{class:'hint'},'Keine Warnung im Bildvergleich.'));
+ if(row.quality_flags.length)overview.append(el('p',{class:'hint'},'Bildprüfung: '+row.quality_flags.join(' · ')));
+ app.append(el('section',{class:'panel hero','aria-label':'Letzte Aufnahme und Gesundheitsbewertung'},fig,overview));
+
+ const parts=[['Farbverteilung','score_green'],['Gelb- und Warmtöne','score_yellow'],['Brauntöne','score_brown'],
+              ['Farbsättigung','score_saturation'],['Farbton','score_hue'],['Struktur','structure_score']];
+ const list=el('ul',{class:'part-list'});
+ for(const [label,k] of parts){
+  const val=k==='structure_score'?row.structure_score:health[k];
+  list.append(el('li',{},el('div',{class:'part-label'},el('span',{},label),el('strong',{},value(val,' / 100'))),
+   number(val)?track(val,'part-track',label):el('p',{class:'part-reason'},reason(k))));
+ }
+ const partPanel=el('section',{class:'panel block'},el('h2',{},'Teilbewertungen'),list);
+ const leafColor=typeof m.color_hex==='string'&&/^#[0-9a-f]{6}$/i.test(m.color_hex)
+  ?el('span',{},el('i',{class:'swatch',style:'background:'+m.color_hex,'aria-hidden':'true'}),m.color_hex.toUpperCase()):'—';
+ const stat=el('dl',{class:'stats'},entry('Gelbanteil',value(m.yellow_fraction_pct,' %')),entry('Braunanteil',value(m.brown_fraction_pct,' %')),
+  entry('Normierter Grünanteil',number(m.greenness_index)?m.greenness_index.toLocaleString('de-DE',{maximumFractionDigits:4}):'—'),entry('Mittlere Blattfarbe',leafColor),
+  entry('Farbton (OpenCV)',value(m.mean_hue,' / 180')),entry('Sättigung',value(m.mean_saturation,' / 255')));
+ const quality=el('details',{class:'meta'},el('summary',{},'Bildqualität und Referenz'),el('dl',{class:'stats'},
+  entry('Aufnahme für Vergleich',row.usable===true?'Brauchbar':row.usable===false?'Nicht ausreichend':'Nicht verfügbar'),
+  entry('Überbelichtete Blattpixel',value(m.overexposed_pct,' %')),entry('Schärfe',value(m.sharpness)),entry('Rauschen',value(m.noise)),
+  entry('Bildhelligkeit',value(m.image_brightness,' / 255')),
+  entry('Blattfarbe (RGB)',[m.mean_r,m.mean_g,m.mean_b].every(number)?[m.mean_r,m.mean_g,m.mean_b].map(n=>value(n)).join(' · '):'—'),
+  entry('Lichtkorrektur',row.illumination.corrected===true?'Angewendet':row.illumination.corrected===false?'Nicht angewendet':'Nicht verfügbar'),
+  entry('Gemeinsame Blattfläche',value(row.illumination.common_leaf_pct,' %')),
+  entry('Geprüfte Farbteilfläche',value(row.illumination.verified_color_region_pct,' %')),
+  entry('Ausgeschlossene Blattpixel',value(row.illumination.excluded_leaf_pct,' %')),
+  entry('Kameraansicht',value(row.view_number)),
+  entry('Referenzfoto',row.reference_file||'Nicht verfügbar'),
+  entry('Referenzstatus',row.reference_approved===true?'Geprüft':row.reference_file?'Vorläufig':'Nicht verfügbar'),
+  entry('Referenzzeit',row.reference_captured_at?time(row.reference_captured_at):'Nicht verfügbar'),
+  entry('Scoring-Version',health.scoring_version||'Nicht verfügbar')));
+ const measurePanel=el('section',{class:'panel block'},el('h2',{},'Blattmerkmale'),stat,
+  el('p',{class:'hint'},'Farbmessungen aus dem Foto. Die Beleuchtung kann diese Rohwerte beeinflussen.'),quality);
+ app.append(el('div',{class:'panel-grid'},partPanel,measurePanel));
+
+ function svg(tag,attrs={},txt){
+  const node=document.createElementNS('http://www.w3.org/2000/svg',tag);
+  for(const [k,v] of Object.entries(attrs))node.setAttribute(k,v);
+  if(txt!==undefined)node.textContent=txt;
+  return node;
+ }
+ function chart(rows){
+  const valid=rows.filter(r=>number(r.score));
+  if(!valid.length)return el('p',{class:'muted'},'Für die gespeicherten Aufnahmen liegen noch keine vergleichbaren Scores vor.');
+  const view=svg('svg',{class:'chart',viewBox:'0 0 700 176',role:'img','aria-label':'Verlauf vergleichbarer Gesundheitsscores von 0 bis 100'});
+  const W=700,left=36,right=W-17,bottom=143,top=14;
+  const start=Date.parse(rows[0].time),end=Date.parse(rows.at(-1).time);
+  const x=t=>end>start?left+(Date.parse(t)-start)/(end-start)*(right-left):(left+right)/2;
+  const y=n=>bottom-(bottom-top)*Math.max(0,Math.min(100,n))/100;
+  for(const n of [0,25,50,75,100]){
+   view.append(svg('line',{class:'gridline',x1:left,y1:y(n),x2:right,y2:y(n)}),svg('text',{x:left-7,y:y(n)+4,'text-anchor':'end'},String(n)));
+  }
+  let path='',lastGroup;
+  for(const r of rows){
+   if(!number(r.score)){lastGroup=undefined;continue;}
+   path+=(number(r.group)&&r.group===lastGroup?' L':' M')+x(r.time).toFixed(1)+' '+y(r.score).toFixed(1);
+   lastGroup=r.group;
+  }
+  view.append(svg('path',{class:'score-line',d:path}));
+  for(const r of valid){
+   const circle=svg('circle',{class:'point',cx:x(r.time),cy:y(r.score),r:3.7});
+   circle.append(svg('title',{},datefmt.format(new Date(r.time))+': '+value(r.score,' Pkt.')));view.append(circle);
+  }
+  const ticks=start===end?[start]:[start,end];
+  for(const [i,t] of ticks.entries())view.append(svg('text',{x:x(new Date(t).toISOString()),y:164,
+    'text-anchor':ticks.length===1?'middle':i===0?'start':'end'},dayfmt.format(new Date(t))));
+  return view;
+ }
+ const body=el('tbody');
+ for(const r of data.recent)body.append(el('tr',{},el('td',{class:'nowrap'},time(r.time)),el('td',{class:'nowrap'},value(r.score)),el('td',{},r.status)));
+ const table=el('table',{class:'recent'},el('thead',{},el('tr',{},...['Aufnahme','Score','Status'].map(t=>el('th',{scope:'col'},t)))),body);
+ app.append(el('section',{class:'panel block'},el('div',{class:'row-title'},el('h2',{},'Gesundheitsverlauf'),
+  el('span',{class:'muted'},data.total+(data.total===1?' Aufnahme':' Aufnahmen'))),
+  el('div',{class:'timeline'},chart(data.history),el('p',{class:'hint'},'Die Kurve verbindet nur Scores mit derselben Referenz und Vergleichsmethode.')),
+  el('details',{class:'meta'},el('summary',{},'Letzte Aufnahmen'),el('div',{class:'table-wrap'},table))));
+ app.append(el('p',{class:'foot'},'Der Score beschreibt Veränderungen gegenüber der Referenz.'));
+})();
+"""
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("ordner", nargs="?", help="Optional: nur diesen lokalen Ordner/dieses Bild analysieren")
@@ -4303,6 +4830,7 @@ def main():
     parser.add_argument("--ausgabe", type=Path, help="Ausgabeordner (Standard: neben bilder/auswertung)")
     parser.add_argument("--3d", dest="drei_d", action="store_true", help="Lokale 3D-Ansicht im Browser öffnen; allein: vorhandene JSONs ohne Pi-Abruf ansehen")
     parser.add_argument("--3d-aus-json", dest="drei_d_json", type=Path, metavar="JSON", help="Persönliche 3D-Ansicht aus ergebnis.json oder digital_twin.json öffnen")
+    parser.add_argument("--gesundheit", action="store_true", help="Gesundheitsansicht aus vorhandenen Ergebnissen öffnen; kein Pi-Abruf")
     parser.add_argument("--pflege-ki", metavar="FOTO", help="Lokale KI für einen gespeicherten Dateinamen oder * für alle brauchbaren Fotos")
     parser.add_argument("--ohne-browser", action="store_true", help="Bilder normal analysieren, die 3D-Ansicht anschließend nicht öffnen")
     parser.add_argument("--aufnahmezeiten", type=Path, metavar="CSV", help="Bekannte Aufnahmezeiten als CSV mit bild;captured_at und Zeitzone")
@@ -4319,6 +4847,29 @@ def main():
     parser.add_argument("--referenz-mm", type=float, help="Tatsaechlich gemessene Laenge zwischen den zwei Punkten, in mm")
     parser.add_argument("--punkte", nargs=4, type=float, metavar=("X1", "Y1", "X2", "Y2"), help="Messpunkte im Originalbild; ohne Angabe zwei Klicks im Bildfenster")
     args = parser.parse_args()
+    if args.gesundheit:
+        if (args.ordner or args.abholen or args.nur_bild or args.drei_d or args.drei_d_json or args.pflege_ki
+                or args.massstab or args.massstab_bild or args.kalibrieren or args.blattlabels
+                or args.blaetter_markieren or args.maske_korrigieren or args.stundenaufnahme_einrichten
+                or args.stundenaufnahme_status or args.stundenaufnahme_ausschalten or args.aufnahmezeiten
+                or args.neue_referenz or args.einzelbilder):
+            parser.error("--gesundheit separat ausführen; --lokal kann den Fotoordner angeben")
+        bilder = Path(args.lokal).expanduser().resolve() if args.lokal else None
+        standard = Path("auswertung")
+        if not any((standard/name).is_file() for name in ("ergebnis.json","ergebnis.csv")):
+            standard = BILDER_ORDNER.parent/"auswertung"
+        quelle = args.ausgabe or ((bilder.parent if bilder.is_dir() else bilder.parent.parent)/"auswertung"
+                                  if bilder else standard)
+        try:
+            ansicht = gesundheit_aus_ergebnissen(quelle,bilder)
+            if args.ohne_browser:
+                print("Gesundheitsansicht:",ansicht)
+            else:
+                browseransicht_oeffnen(ansicht,"Gesundheitsansicht")
+        except (OSError,ValueError,TypeError) as fehler:
+            print("Gesundheitsansicht nicht erstellt:",fehler)
+            return 1
+        return 0
     if args.pflege_ki:
         if args.lokal or args.ordner or args.abholen or args.nur_bild or args.blattlabels or args.blaetter_markieren or args.kalibrieren or args.maske_korrigieren or args.massstab or args.massstab_bild or any(getattr(args,"stundenaufnahme_"+a) for a in ("einrichten","status","ausschalten")):
             parser.error("--pflege-ki liest vorhandene Ergebnisse; separat von Analyse und Aufnahme ausführen")
@@ -4337,14 +4888,19 @@ def main():
         parser.error("--blaetter-markieren separat von Analyse, Aufnahme und Kalibrierung ausführen")
     if args.drei_d_json or (args.drei_d and not (args.lokal or args.ordner or args.abholen)):
         quelle = args.drei_d_json or (args.ausgabe or BILDER_ORDNER.parent/"auswertung")/"ergebnis.json"
-        ziel = args.ausgabe or Path(quelle).expanduser().resolve().parent
+        quellenordner = Path(quelle).expanduser().resolve().parent
+        if quellenordner.name=="digital twin":
+            basis = quellenordner.parent
+            quellenordner = basis/"auswertung" if (basis/"auswertung").is_dir() else basis
+        ziel = args.ausgabe or quellenordner
         try:
-            vorhanden = Path(ziel)/TWIN_3D_DATEI
-            stylesheet = Path(ziel)/TWIN_3D_CSS_DATEI
-            quellen = [Path(quelle), Path(quelle).parent/"digital_twin.json", Path(__file__)]
+            twin_ordner,_ = viewer_ordner(ziel)
+            vorhanden = twin_ordner/TWIN_3D_DATEI
+            stylesheet = twin_ordner/TWIN_3D_CSS_DATEI
+            quellen = [Path(quelle),twin_ordner/TWIN_JSON_DATEI,Path(__file__)]
             aktuell = (not args.drei_d_json and vorhanden.is_file() and stylesheet.is_file()
                        and stylesheet.stat().st_size > 0
-                       and (Path(ziel)/TWIN_3D_JS_DATEI).is_file()
+                       and (twin_ordner/TWIN_3D_JS_DATEI).is_file()
                        and f'content="{TWIN_3D_VERSION}"' in vorhanden.read_text(encoding="utf-8")
                        and all(not p.is_file() or vorhanden.stat().st_mtime_ns >= p.stat().st_mtime_ns for p in quellen))
             ansicht = vorhanden if aktuell else twin_3d_aus_json(quelle, ziel, args.pflege_ki)
@@ -4472,8 +5028,9 @@ def main():
         # Nach dem Aufraeumen der Fotos bleibt die Ergebnishistorie nutzbar.
         # Nur beim normalen Pi-Start auf diese vorhandenen Werte zurueckgreifen.
         if not lokal and not args.ohne_browser:
-            quelle = next((Path(ausgabe)/name for name in ("ergebnis.json", "digital_twin.json")
-                           if (Path(ausgabe)/name).is_file()), None)
+            twin_ordner,_ = viewer_ordner(ausgabe)
+            quelle = next((p for p in (Path(ausgabe)/"ergebnis.json",twin_ordner/TWIN_JSON_DATEI,
+                                       Path(ausgabe)/TWIN_JSON_DATEI) if p.is_file()),None)
             if quelle is not None:
                 try:
                     print("3D-Ansicht aus vorhandenen Messwerten; keine neue Bildanalyse.")
@@ -4496,10 +5053,10 @@ def main():
         return 1
     if not args.ohne_browser:
         try:
-            twin_3d_oeffnen(Path(ausgabe)/TWIN_3D_DATEI)
+            twin_3d_oeffnen(viewer_ordner(ausgabe)[0]/TWIN_3D_DATEI)
         except OSError as fehler:
             print(f"Auswertung fertig; Browser konnte nicht geoeffnet werden: {fehler}")
-            print("Bitte die HTML-Datei selbst oeffnen:", Path(ausgabe)/TWIN_3D_DATEI)
+            print("Bitte die HTML-Datei selbst oeffnen:", viewer_ordner(ausgabe)[0]/TWIN_3D_DATEI)
     return 0
 
 
