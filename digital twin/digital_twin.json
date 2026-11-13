@@ -1,7 +1,7 @@
 {
   "version": "0.1.0",
   "series_id": "pflanze-01",
-  "generated_at": "2026-11-13T07:36:21.123698Z",
+  "generated_at": "2026-11-13T07:52:20.555570Z",
   "pipeline_version": "4.13.0",
   "scope": "visible_leaf_area_pixels",
   "status": "zu_wenige_vergleichbare_aufnahmen",
@@ -19,7 +19,7 @@
     "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
     "usable": true,
     "quality_flags": "gesundheit_ueber_blattfarbverteilung",
-    "age_hours": 15427.604,
+    "age_hours": 15427.871,
     "fresh": false
   },
   "forecast": null,
@@ -33,7 +33,7 @@
       "flaechensprung_pruefen": 2,
       "kamera_fuer_prognose_nicht_fest_genug": 2
     },
-    "comparison_group": "1a93fa3e7523b36ef70e9dce81c0927e00d455320c64e2766ad5d6e6ef92f773",
+    "comparison_group": "f31a571384f0cb10f8d75c783d6b08292efa7535212d7726db55fda21fd1d4ad",
     "first_at": "2025-02-08T12:00:05Z",
     "last_at": "2025-02-08T12:00:05Z"
   },

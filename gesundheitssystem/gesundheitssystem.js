@@ -17,7 +17,7 @@ const BIOBOX_HEALTH = {"version":"1.0.0","recent":[{"file_name":"basil03_2025020
  const signed=v=>number(v)?(v>0?'+':'')+de.format(v)+' Pkt.':'—';
  const time=v=>v&&Number.isFinite(Date.parse(v))?el('time',{datetime:v},datefmt.format(new Date(v))):el('span',{},'Aufnahmezeit unbekannt');
  const reason=k=>row?.missing?.[k]||'Für diese Aufnahme nicht verfügbar';
- const header=el('header',{class:'masthead'},el('div',{},el('p',{class:'eyebrow'},'BioBox'),el('h1',{},'Pflanzengesundheit')));
+ const header=el('header',{class:'masthead'},el('h1',{},'Biobox'));
  if(row)header.append(el('div',{class:'timestamp'},time(row.captured_at)));
  app.append(header);
  if(!row){app.append(el('section',{class:'panel block'},el('h2',{},'Noch keine Aufnahmen'),el('p',{class:'muted'},'Zuerst die Bildanalyse ausführen.')));return;}
@@ -37,7 +37,7 @@ const BIOBOX_HEALTH = {"version":"1.0.0","recent":[{"file_name":"basil03_2025020
   const img=el('img',{src:row.photo,alt:'Letzte Pflanzenaufnahme'});
   img.addEventListener('error',()=>photo.replaceChildren(fallback()));photo.append(img);
  }else photo.append(fallback());
- const fig=el('figure',{class:'capture'},photo,el('figcaption',{},el('strong',{},'Letzte Aufnahme'),el('span',{class:'filename'},row.file_name)));
+ const fig=el('figure',{class:'capture'},photo);
  const headline=el('div',{class:'row-title'},el('h2',{},'Gesundheitsscore'),
   el('span',{class:'status-pill'+(!number(score)||score<70?' check':'')},row.category_label||'Kein Score'));
  const scoreBody=number(score)?el('div',{},
@@ -50,8 +50,7 @@ const BIOBOX_HEALTH = {"version":"1.0.0","recent":[{"file_name":"basil03_2025020
  if(row.mode_label)overview.append(el('p',{class:'hint'},row.mode_label));
  if(row.warnings.length)overview.append(el('div',{class:'alert'},el('strong',{},'Auffälligkeiten an der Pflanze'),el('ul',{},...row.warnings.map(w=>el('li',{},w)))));
  else if(number(score))overview.append(el('p',{class:'hint'},'Keine Warnung im Bildvergleich.'));
- if(row.quality_flags.length)overview.append(el('p',{class:'hint'},'Bildprüfung: '+row.quality_flags.join(' · ')));
- app.append(el('section',{class:'panel hero','aria-label':'Letzte Aufnahme und Gesundheitsbewertung'},fig,overview));
+ app.append(el('section',{class:'panel hero','aria-label':'Foto und Gesundheitsbewertung'},fig,overview));
 
  const parts=[['Farbverteilung','score_green'],['Gelb- und Warmtöne','score_yellow'],['Brauntöne','score_brown'],
               ['Farbsättigung','score_saturation'],['Farbton','score_hue'],['Struktur','structure_score']];
@@ -67,22 +66,8 @@ const BIOBOX_HEALTH = {"version":"1.0.0","recent":[{"file_name":"basil03_2025020
  const stat=el('dl',{class:'stats'},entry('Gelbanteil',value(m.yellow_fraction_pct,' %')),entry('Braunanteil',value(m.brown_fraction_pct,' %')),
   entry('Normierter Grünanteil',number(m.greenness_index)?m.greenness_index.toLocaleString('de-DE',{maximumFractionDigits:4}):'—'),entry('Mittlere Blattfarbe',leafColor),
   entry('Farbton (OpenCV)',value(m.mean_hue,' / 180')),entry('Sättigung',value(m.mean_saturation,' / 255')));
- const quality=el('details',{class:'meta'},el('summary',{},'Bildqualität und Referenz'),el('dl',{class:'stats'},
-  entry('Aufnahme für Vergleich',row.usable===true?'Brauchbar':row.usable===false?'Nicht ausreichend':'Nicht verfügbar'),
-  entry('Überbelichtete Blattpixel',value(m.overexposed_pct,' %')),entry('Schärfe',value(m.sharpness)),entry('Rauschen',value(m.noise)),
-  entry('Bildhelligkeit',value(m.image_brightness,' / 255')),
-  entry('Blattfarbe (RGB)',[m.mean_r,m.mean_g,m.mean_b].every(number)?[m.mean_r,m.mean_g,m.mean_b].map(n=>value(n)).join(' · '):'—'),
-  entry('Lichtkorrektur',row.illumination.corrected===true?'Angewendet':row.illumination.corrected===false?'Nicht angewendet':'Nicht verfügbar'),
-  entry('Gemeinsame Blattfläche',value(row.illumination.common_leaf_pct,' %')),
-  entry('Geprüfte Farbteilfläche',value(row.illumination.verified_color_region_pct,' %')),
-  entry('Ausgeschlossene Blattpixel',value(row.illumination.excluded_leaf_pct,' %')),
-  entry('Kameraansicht',value(row.view_number)),
-  entry('Referenzfoto',row.reference_file||'Nicht verfügbar'),
-  entry('Referenzstatus',row.reference_approved===true?'Geprüft':row.reference_file?'Vorläufig':'Nicht verfügbar'),
-  entry('Referenzzeit',row.reference_captured_at?time(row.reference_captured_at):'Nicht verfügbar'),
-  entry('Scoring-Version',health.scoring_version||'Nicht verfügbar')));
  const measurePanel=el('section',{class:'panel block'},el('h2',{},'Blattmerkmale'),stat,
-  el('p',{class:'hint'},'Farbmessungen aus dem Foto. Die Beleuchtung kann diese Rohwerte beeinflussen.'),quality);
+  el('p',{class:'hint'},'Farbmessungen aus dem Foto. Die Beleuchtung kann diese Rohwerte beeinflussen.'));
  app.append(el('div',{class:'panel-grid'},partPanel,measurePanel));
 
  function svg(tag,attrs={},txt){

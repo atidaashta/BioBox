@@ -4600,7 +4600,7 @@ GESUND_HTML = r"""
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>BioBox · Pflanzengesundheit</title>
+<title>Biobox</title>
 <link rel="stylesheet" href="gesundheitssystem.css">
 <script src="gesundheitssystem.js" defer></script>
 </head>
@@ -4619,19 +4619,14 @@ main{width:min(940px,100% - 32px);margin:32px auto 48px;display:grid;gap:16px}
 h1,h2,h3,p,figure,dl{margin:0}
 h1{font-size:clamp(25px,4vw,34px);letter-spacing:-.045em;line-height:1.13}
 h2{font-size:1.04rem;letter-spacing:-.018em;line-height:1.3}
-.masthead,.row-title,.split{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
-.masthead{margin-bottom:0}
-.eyebrow{font-size:.69rem;font-weight:750;text-transform:uppercase;letter-spacing:.125em;color:var(--accent);margin-bottom:6px}
+.masthead,.row-title{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
 .muted,.timestamp,.hint{color:var(--muted);font-size:.81rem;line-height:1.48}
 .timestamp{white-space:nowrap;text-align:right}
 .panel{border:1px solid var(--line);border-radius:16px;background:var(--paper);min-width:0;overflow:hidden}
 .hero{display:grid;grid-template-columns:minmax(0,1.06fr) minmax(0,1fr)}
-.capture{min-width:0;display:grid;grid-template-rows:1fr auto;position:relative;background:var(--soft);border-right:1px solid var(--line)}
+.capture{min-width:0;background:var(--soft);border-right:1px solid var(--line)}
 .stage{position:relative;display:grid;place-items:center;min-height:325px;height:100%;background:radial-gradient(ellipse at 46% 34%,#f8faf5,#e8f0e8 73%,#dce8df);overflow:hidden}
 .stage img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain}
-.capture figcaption{min-width:0;display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:11px 15px;border-top:1px solid var(--line);font-size:.75rem}
-.capture strong{white-space:nowrap}
-.filename{overflow-wrap:anywhere;color:var(--muted);text-align:right;line-height:1.35}
 .no-photo{position:relative;padding:22px;text-align:center;max-width:33ch}
 .hero-info,.block{padding:19px 22px}
 .hero-info{display:grid;align-content:start;gap:14px}
@@ -4664,8 +4659,6 @@ h2{font-size:1.04rem;letter-spacing:-.018em;line-height:1.3}
 .swatch{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:5px;border:1px solid #20332825}
 .meta{border-top:1px solid var(--line);padding-top:10px}
 summary{cursor:pointer;font-size:.83rem;font-weight:650;line-height:1.6}
-.meta .stats{margin-top:9px}
-.meta ul{margin:7px 0 0;padding-left:16px}
 .timeline{display:grid;gap:9px}
 .chart{display:block;width:100%;height:auto;min-height:126px;overflow:visible}
 .chart text{font-family:inherit;font-size:12px;fill:#536b5f}
@@ -4702,7 +4695,7 @@ GESUND_JS = r"""
  const signed=v=>number(v)?(v>0?'+':'')+de.format(v)+' Pkt.':'—';
  const time=v=>v&&Number.isFinite(Date.parse(v))?el('time',{datetime:v},datefmt.format(new Date(v))):el('span',{},'Aufnahmezeit unbekannt');
  const reason=k=>row?.missing?.[k]||'Für diese Aufnahme nicht verfügbar';
- const header=el('header',{class:'masthead'},el('div',{},el('p',{class:'eyebrow'},'BioBox'),el('h1',{},'Pflanzengesundheit')));
+ const header=el('header',{class:'masthead'},el('h1',{},'Biobox'));
  if(row)header.append(el('div',{class:'timestamp'},time(row.captured_at)));
  app.append(header);
  if(!row){app.append(el('section',{class:'panel block'},el('h2',{},'Noch keine Aufnahmen'),el('p',{class:'muted'},'Zuerst die Bildanalyse ausführen.')));return;}
@@ -4722,7 +4715,7 @@ GESUND_JS = r"""
   const img=el('img',{src:row.photo,alt:'Letzte Pflanzenaufnahme'});
   img.addEventListener('error',()=>photo.replaceChildren(fallback()));photo.append(img);
  }else photo.append(fallback());
- const fig=el('figure',{class:'capture'},photo,el('figcaption',{},el('strong',{},'Letzte Aufnahme'),el('span',{class:'filename'},row.file_name)));
+ const fig=el('figure',{class:'capture'},photo);
  const headline=el('div',{class:'row-title'},el('h2',{},'Gesundheitsscore'),
   el('span',{class:'status-pill'+(!number(score)||score<70?' check':'')},row.category_label||'Kein Score'));
  const scoreBody=number(score)?el('div',{},
@@ -4735,8 +4728,7 @@ GESUND_JS = r"""
  if(row.mode_label)overview.append(el('p',{class:'hint'},row.mode_label));
  if(row.warnings.length)overview.append(el('div',{class:'alert'},el('strong',{},'Auffälligkeiten an der Pflanze'),el('ul',{},...row.warnings.map(w=>el('li',{},w)))));
  else if(number(score))overview.append(el('p',{class:'hint'},'Keine Warnung im Bildvergleich.'));
- if(row.quality_flags.length)overview.append(el('p',{class:'hint'},'Bildprüfung: '+row.quality_flags.join(' · ')));
- app.append(el('section',{class:'panel hero','aria-label':'Letzte Aufnahme und Gesundheitsbewertung'},fig,overview));
+ app.append(el('section',{class:'panel hero','aria-label':'Foto und Gesundheitsbewertung'},fig,overview));
 
  const parts=[['Farbverteilung','score_green'],['Gelb- und Warmtöne','score_yellow'],['Brauntöne','score_brown'],
               ['Farbsättigung','score_saturation'],['Farbton','score_hue'],['Struktur','structure_score']];
@@ -4752,22 +4744,8 @@ GESUND_JS = r"""
  const stat=el('dl',{class:'stats'},entry('Gelbanteil',value(m.yellow_fraction_pct,' %')),entry('Braunanteil',value(m.brown_fraction_pct,' %')),
   entry('Normierter Grünanteil',number(m.greenness_index)?m.greenness_index.toLocaleString('de-DE',{maximumFractionDigits:4}):'—'),entry('Mittlere Blattfarbe',leafColor),
   entry('Farbton (OpenCV)',value(m.mean_hue,' / 180')),entry('Sättigung',value(m.mean_saturation,' / 255')));
- const quality=el('details',{class:'meta'},el('summary',{},'Bildqualität und Referenz'),el('dl',{class:'stats'},
-  entry('Aufnahme für Vergleich',row.usable===true?'Brauchbar':row.usable===false?'Nicht ausreichend':'Nicht verfügbar'),
-  entry('Überbelichtete Blattpixel',value(m.overexposed_pct,' %')),entry('Schärfe',value(m.sharpness)),entry('Rauschen',value(m.noise)),
-  entry('Bildhelligkeit',value(m.image_brightness,' / 255')),
-  entry('Blattfarbe (RGB)',[m.mean_r,m.mean_g,m.mean_b].every(number)?[m.mean_r,m.mean_g,m.mean_b].map(n=>value(n)).join(' · '):'—'),
-  entry('Lichtkorrektur',row.illumination.corrected===true?'Angewendet':row.illumination.corrected===false?'Nicht angewendet':'Nicht verfügbar'),
-  entry('Gemeinsame Blattfläche',value(row.illumination.common_leaf_pct,' %')),
-  entry('Geprüfte Farbteilfläche',value(row.illumination.verified_color_region_pct,' %')),
-  entry('Ausgeschlossene Blattpixel',value(row.illumination.excluded_leaf_pct,' %')),
-  entry('Kameraansicht',value(row.view_number)),
-  entry('Referenzfoto',row.reference_file||'Nicht verfügbar'),
-  entry('Referenzstatus',row.reference_approved===true?'Geprüft':row.reference_file?'Vorläufig':'Nicht verfügbar'),
-  entry('Referenzzeit',row.reference_captured_at?time(row.reference_captured_at):'Nicht verfügbar'),
-  entry('Scoring-Version',health.scoring_version||'Nicht verfügbar')));
  const measurePanel=el('section',{class:'panel block'},el('h2',{},'Blattmerkmale'),stat,
-  el('p',{class:'hint'},'Farbmessungen aus dem Foto. Die Beleuchtung kann diese Rohwerte beeinflussen.'),quality);
+  el('p',{class:'hint'},'Farbmessungen aus dem Foto. Die Beleuchtung kann diese Rohwerte beeinflussen.'));
  app.append(el('div',{class:'panel-grid'},partPanel,measurePanel));
 
  function svg(tag,attrs={},txt){
