@@ -4501,68 +4501,32 @@ def gesund_foto(z, bildpfade):
     return None
 
 
-def gesund_vergleichsgruppe(z):
-    info = z.get("_historie_export",{}).get("analysis",{})
-    meta = z.get("_referenz_meta",{})
-    referenz = meta.get("sha256") or info.get("reference_sha256")
-    modus = z.get("_score_modus") or info.get("health_comparison_mode")
-    serie = info.get("series_id") if z.get("_historisch") else MESSREIHE
-    if referenz and modus and serie and z.get("scoring_version"):
-        return (serie,referenz,meta.get("captured_at") or info.get("reference_captured_at"),z["scoring_version"],modus)
-    return None
-
-
 def gesundheit_daten(zeilen,bildpfade=()):
-    """Ansichtsdaten aus derselben Auswertung wie CSV/JSON; keine Neubewertung."""
-    daten = {"version":"1.0.0","recent":[],"history":[],"total":len(zeilen)}
+    """Nur die letzte Aufnahme anzeigen; die Ergebnishistorie bleibt separat."""
+    daten = {"version":"1.2.0"}
     if not zeilen:
         return daten
     # Eine Importzeit oder das Änderungsdatum wird nicht als Aufnahmezeit ausgegeben.
-    geordnet = sorted(enumerate(zeilen),key=lambda paar:(
+    _,z = max(enumerate(zeilen),key=lambda paar:(
         historienzeit(paar[1].get("captured_at")) or datetime.min.replace(tzinfo=timezone.utc),
         not paar[1].get("_historisch",False),paar[0]))
-    _,z = geordnet[-1]
     ergebnis = ergebnis_export(z,None)
     info,fehlend = ergebnis["analysis"],ergebnis["analysis"]["missing_values"]
     bewertung = ergebnis["health_assessment"]
-    werte = ("yellow_fraction_pct","brown_fraction_pct","mean_hue","mean_saturation","mean_r","mean_g","mean_b",
-             "greenness_index","color_hex","sharpness","noise","image_brightness","overexposed_pct")
+    werte = ("yellow_fraction_pct","brown_fraction_pct","mean_hue","mean_saturation","greenness_index","color_hex")
     teile = ("score_green","score_yellow","score_brown","score_saturation","score_hue")
+    scores = ("health_score",*teile)
     messwerte = ergebnis["image_measurements"]
     status = bewertung.get("health_status") or "nicht_auswertbar"
     kurzstatus = status.split(";",1)[0]
-    hinweise = {k:gesund_text(v.split(";",1)[0]) for k,v in fehlend.items() if
-                k in (*werte,*teile,"health_trend_24h","health_score","health_score_raw")}
+    hinweise = {k:gesund_text(v.split(";",1)[0]) for k,v in fehlend.items() if k in scores}
     if info.get("is_reference"):
         hinweise["health_score"] = "Diese Aufnahme ist der Ausgangspunkt. Ein Score braucht ein späteres vergleichbares Foto."
-    if "structure_score" not in info:
-        hinweise["structure_score"] = ("Bei dieser Aufnahme nicht bewertet" if bewertung.get("health_score") is not None
-                                       else "Kein gültiger Zustandsvergleich")
-    modus = info.get("health_comparison_mode")
     daten["latest"] = {"file_name":z["bild"],"captured_at":z.get("captured_at"),
-        "photo":gesund_foto(z,bildpfade),"health":bewertung,"status_label":gesund_text(kurzstatus),
+        "photo":gesund_foto(z,bildpfade),"health":{k:bewertung[k] for k in scores if k in bewertung},
+        "status_label":gesund_text(kurzstatus),
         "category_label":gesund_text(bewertung["health_category"]) if bewertung.get("health_category") and bewertung.get("health_score") is not None else None,
-        "mode_label":gesund_text(modus) if modus else None,
-        "measurements":{k:messwerte[k] for k in werte if k in messwerte},
-        "quality_flags":[gesund_text(v) for v in (z.get("auffaelligkeit") or "").split(";")
-                         if v and v!="gesundheit_ueber_blattfarbverteilung"],
-        "warnings":[gesund_text(v) for v in (z.get("gesundheitswarnung") or "").split(";") if v],
-        "usable":z.get("brauchbar"),"is_reference":bool(info.get("is_reference")),
-        "reference_file":info.get("reference_file"),"reference_captured_at":info.get("reference_captured_at"),
-        "reference_approved":info.get("reference_approved"),"structure_score":info.get("structure_score"),
-        "missing":hinweise,"illumination":info.get("illumination",{}),"view_number":info.get("view_number")}
-    # Auch bei einem Referenzstart bleiben ältere Scores sichtbar.
-    # Nur aufeinanderfolgende Punkte mit derselben Vergleichsbasis werden verbunden.
-    gruppen = {}
-    for _,r in geordnet[-120:]:
-        if not historienzeit(r.get("captured_at")):
-            continue
-        gruppe = gesund_vergleichsgruppe(r)
-        daten["history"].append({"time":r["captured_at"],"score":r.get("gesundheit"),
-                                  "group":gruppen.setdefault(gruppe,len(gruppen)+1) if gruppe is not None else None})
-    daten["recent"] = [{"file_name":r["bild"],"time":r.get("captured_at"),"score":r.get("gesundheit"),
-                       "status":gesund_text((r.get("gesundheit_status") or "nicht_auswertbar").split(";",1)[0])}
-                      for _,r in reversed(geordnet[-12:])]
+        "measurements":{k:messwerte[k] for k in werte if k in messwerte},"missing":hinweise}
     return ohne_json_nulls(json_sicher(daten))
 
 
@@ -4600,7 +4564,7 @@ GESUND_HTML = r"""
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Biobox</title>
+<title>BioBox</title>
 <link rel="stylesheet" href="gesundheitssystem.css">
 <script src="gesundheitssystem.js" defer></script>
 </head>
@@ -4612,75 +4576,54 @@ GESUND_HTML = r"""
 """
 
 GESUND_CSS = r"""
-:root{color-scheme:light;--ink:#203328;--muted:#536b5f;--line:#d9e4dc;--accent:#2c694d;--soft:#f0f5ef;--paper:#fff;--warn:#7a4c24;--warn-bg:#fbf3e8;font-family:system-ui,sans-serif}
+:root{color-scheme:light;--ink:#203328;--muted:#536b5f;--line:#d9e4dc;--soft:#f0f5ef;--paper:#fff;--warn:#7a4c24;--warn-bg:#fbf3e8;--gap:clamp(12px,1.45vw,22px);font-family:system-ui,sans-serif}
 *{box-sizing:border-box}
 body{margin:0;background:#f6f8f5;color:var(--ink)}
-main{width:min(940px,100% - 32px);margin:32px auto 48px;display:grid;gap:16px}
-h1,h2,h3,p,figure,dl{margin:0}
+main{width:100%;padding:clamp(18px,2.5vw,38px) clamp(14px,3vw,48px);display:grid;gap:var(--gap)}
+h1,h2,p,figure,dl{margin:0}
 h1{font-size:clamp(25px,4vw,34px);letter-spacing:-.045em;line-height:1.13}
 h2{font-size:1.04rem;letter-spacing:-.018em;line-height:1.3}
 .masthead,.row-title{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
 .muted,.timestamp,.hint{color:var(--muted);font-size:.81rem;line-height:1.48}
 .timestamp{white-space:nowrap;text-align:right}
+.dashboard{display:grid;grid-template-columns:minmax(0,1.4fr) repeat(2,minmax(0,1fr));grid-template-areas:"photo score score" "photo parts traits";grid-template-rows:auto 1fr;gap:var(--gap)}
 .panel{border:1px solid var(--line);border-radius:16px;background:var(--paper);min-width:0;overflow:hidden}
-.hero{display:grid;grid-template-columns:minmax(0,1.06fr) minmax(0,1fr)}
-.capture{min-width:0;background:var(--soft);border-right:1px solid var(--line)}
-.stage{position:relative;display:grid;place-items:center;min-height:325px;height:100%;background:radial-gradient(ellipse at 46% 34%,#f8faf5,#e8f0e8 73%,#dce8df);overflow:hidden}
+.capture{grid-area:photo;background:var(--soft)}
+.stage{position:relative;display:grid;place-items:center;min-height:clamp(360px,60vh,650px);height:100%;background:radial-gradient(ellipse at 46% 34%,#f8faf5,#e8f0e8 73%,#dce8df);overflow:hidden}
 .stage img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain}
 .no-photo{position:relative;padding:22px;text-align:center;max-width:33ch}
-.hero-info,.block{padding:19px 22px}
-.hero-info{display:grid;align-content:start;gap:14px}
+.hero-info,.block{padding:clamp(15px,1.55vw,24px)}
+.hero-info{grid-area:score;display:grid;align-content:start;gap:13px}
+.parts-panel{grid-area:parts}
+.traits-panel{grid-area:traits}
 .status-pill{border-radius:999px;background:#e9f1e9;color:#315643;padding:5px 9px;font-size:.73rem;font-weight:650;line-height:1.25}
 .status-pill.check{background:var(--warn-bg);color:var(--warn)}
-.hero h2{margin-top:2px}
 .score{display:flex;align-items:baseline;gap:6px;font-size:clamp(49px,8vw,70px);font-weight:700;letter-spacing:-.075em;line-height:1.02;font-variant-numeric:tabular-nums}
 .score span{font-size:.92rem;color:var(--muted);font-weight:600;letter-spacing:0}
 .score.absent{font-size:2rem;letter-spacing:0}
 .score-track,.part-track{display:block;width:100%;height:7px;background:#e9efea;border-radius:999px;overflow:hidden}
-.score-track{margin:9px 0 7px}
+.score-track{margin-top:9px}
 .fill{height:100%;background:#438462;border-radius:inherit;display:block}
 .fill.mid{background:#8b8845}.fill.low{background:#a86548}
-.chips{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
-.chip{min-width:0;border-radius:9px;background:#f2f6f2;padding:9px 10px;display:grid;gap:3px}
-.chip dt,.stats dt{font-size:.76rem;color:var(--muted)}
-.chip dd,.stats dd{margin:0;font-size:.88rem;font-weight:650;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
-.chip small{font-weight:400;font-size:.7rem}
-.alert{background:var(--warn-bg);color:var(--warn);padding:8px 10px;border-radius:8px;font-size:.78rem;line-height:1.42}
-.alert ul{padding-left:15px;margin:4px 0 0}
-.panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.stats dt{font-size:.76rem;color:var(--muted)}
+.stats dd{margin:0;font-size:.88rem;font-weight:650;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .block{display:grid;align-content:start;gap:13px}
 .part-list{margin:0;padding:0;list-style:none;display:grid;gap:10px}
 .part-label{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:4px;font-size:.82rem}
-.part-label strong,.nowrap{white-space:nowrap;font-variant-numeric:tabular-nums}
+.part-label strong{white-space:nowrap;font-variant-numeric:tabular-nums}
 .part-track{height:5px}
-.part-reason{font-size:.73rem;color:var(--muted)}
 .stats{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:9px}
 .stats>div{background:#f3f6f3;border-radius:8px;padding:9px 10px;display:grid;gap:3px;min-width:0}
 .swatch{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:5px;border:1px solid #20332825}
-.meta{border-top:1px solid var(--line);padding-top:10px}
-summary{cursor:pointer;font-size:.83rem;font-weight:650;line-height:1.6}
-.timeline{display:grid;gap:9px}
-.chart{display:block;width:100%;height:auto;min-height:126px;overflow:visible}
-.chart text{font-family:inherit;font-size:12px;fill:#536b5f}
-.chart .gridline{stroke:#e2eae2;stroke-width:1}
-.chart .score-line{fill:none;stroke:#3c835d;stroke-width:2.3;stroke-linejoin:round;stroke-linecap:round}
-.chart .point{fill:#3c835d;stroke:white;stroke-width:1.1}
-.table-wrap{overflow:auto;margin-top:7px}
-.recent{width:100%;border-collapse:collapse;font-size:.78rem;line-height:1.45;text-align:left}
-.recent th,.recent td{border-bottom:1px solid #e9eee8;padding:7px 10px 7px 0}
-.recent th{color:var(--muted);font-weight:600}
-.recent tr:last-child td{border-bottom:0}
-.recent td:last-child{overflow-wrap:anywhere}
-.foot{padding:1px 2px;color:var(--muted);font-size:.77rem}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-@media(max-width:700px){.hero,.panel-grid{grid-template-columns:1fr}.capture{border-right:0;border-bottom:1px solid var(--line)}.stage{min-height:330px;height:clamp(275px,65vw,395px)}}
-@media(max-width:440px){main{margin-top:18px;gap:12px}.masthead{align-items:start;flex-wrap:wrap;gap:5px}.timestamp{text-align:left}.hero-info,.block{padding:15px}.stage{min-height:270px;height:clamp(270px,76vw,330px)}.panel-grid{gap:12px}.recent th,.recent td{padding-right:7px}}
+@media(max-width:1040px){.dashboard{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-areas:"photo score" "parts traits";grid-template-rows:auto}.stage{min-height:clamp(235px,35vw,370px)}.hero-info{align-content:center}}
+@media(max-width:700px){.dashboard{grid-template-columns:minmax(0,1fr);grid-template-areas:"photo" "score" "parts" "traits"}.stage{min-height:clamp(240px,66vw,350px)}}
+@media(max-width:440px){.masthead{align-items:start;flex-wrap:wrap;gap:5px}.timestamp{text-align:left}}
 """
 
 GESUND_JS = r"""
 'use strict';
 (() => {
- const app=document.getElementById('app'), data=BIOBOX_HEALTH, row=data.latest;
+ const app=document.getElementById('app'), row=BIOBOX_HEALTH.latest;
  function el(tag,attrs={},...children){
   const node=document.createElement(tag);
   for(const [k,v] of Object.entries(attrs))node.setAttribute(k,v);
@@ -4690,12 +4633,10 @@ GESUND_JS = r"""
  const de=new Intl.NumberFormat('de-DE',{maximumFractionDigits:1});
  const tz={timeZone:'Europe/Berlin'};
  const datefmt=new Intl.DateTimeFormat('de-DE',{dateStyle:'medium',timeStyle:'short',...tz});
- const dayfmt=new Intl.DateTimeFormat('de-DE',{day:'2-digit',month:'2-digit',...tz});
  const value=(v,unit='')=>number(v)?de.format(v)+unit:'—';
- const signed=v=>number(v)?(v>0?'+':'')+de.format(v)+' Pkt.':'—';
  const time=v=>v&&Number.isFinite(Date.parse(v))?el('time',{datetime:v},datefmt.format(new Date(v))):el('span',{},'Aufnahmezeit unbekannt');
  const reason=k=>row?.missing?.[k]||'Für diese Aufnahme nicht verfügbar';
- const header=el('header',{class:'masthead'},el('h1',{},'Biobox'));
+ const header=el('header',{class:'masthead'},el('h1',{},'BioBox'));
  if(row)header.append(el('div',{class:'timestamp'},time(row.captured_at)));
  app.append(header);
  if(!row){app.append(el('section',{class:'panel block'},el('h2',{},'Noch keine Aufnahmen'),el('p',{class:'muted'},'Zuerst die Bildanalyse ausführen.')));return;}
@@ -4706,89 +4647,39 @@ GESUND_JS = r"""
   return el('div',{class:cls,role:'meter','aria-label':label,'aria-valuemin':'0','aria-valuemax':'100','aria-valuenow':String(percent)},
    el('span',{class:'fill'+tone,style:'width:'+percent+'%'}));
  };
- function entry(label,v,cls=''){
-  return el('div',{class:cls},el('dt',{},label),el('dd',{},v));
+ function entry(label,v){
+  return el('div',{},el('dt',{},label),el('dd',{},v));
  }
  const photo=el('div',{class:'stage'});
- const fallback=()=>el('p',{class:'muted no-photo'},'Das Originalfoto ist lokal nicht verfügbar.');
+ const fallback=()=>el('p',{class:'muted no-photo'},'Originalfoto nicht verfügbar');
  if(typeof row.photo==='string'&&/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(row.photo)){
   const img=el('img',{src:row.photo,alt:'Letzte Pflanzenaufnahme'});
   img.addEventListener('error',()=>photo.replaceChildren(fallback()));photo.append(img);
  }else photo.append(fallback());
- const fig=el('figure',{class:'capture'},photo);
+ const fig=el('figure',{class:'panel capture'},photo);
  const headline=el('div',{class:'row-title'},el('h2',{},'Gesundheitsscore'),
   el('span',{class:'status-pill'+(!number(score)||score<70?' check':'')},row.category_label||'Kein Score'));
  const scoreBody=number(score)?el('div',{},
-  el('p',{class:'score'},de.format(score),el('span',{},'/ 100')),track(score,'score-track','Gesundheitsscore'),
-  el('p',{class:'hint'},row.status_label)):
-  el('div',{},el('p',{class:'score absent','aria-label':'Kein Score'},'—'),el('p',{class:'hint'},row.status_label+': '+reason('health_score')));
- const change=number(health.health_trend_24h)?signed(health.health_trend_24h):el('small',{class:'muted'},reason('health_trend_24h'));
- const raw=number(health.health_score_raw)?value(health.health_score_raw,' / 100'):el('small',{class:'muted'},'Nicht verfügbar');
- const overview=el('div',{class:'hero-info'},headline,scoreBody,el('dl',{class:'chips'},entry('Rohscore',raw,'chip'),entry('24-Stunden-Trend',change,'chip')));
- if(row.mode_label)overview.append(el('p',{class:'hint'},row.mode_label));
- if(row.warnings.length)overview.append(el('div',{class:'alert'},el('strong',{},'Auffälligkeiten an der Pflanze'),el('ul',{},...row.warnings.map(w=>el('li',{},w)))));
- else if(number(score))overview.append(el('p',{class:'hint'},'Keine Warnung im Bildvergleich.'));
- app.append(el('section',{class:'panel hero','aria-label':'Foto und Gesundheitsbewertung'},fig,overview));
+  el('p',{class:'score'},de.format(score),el('span',{},'/ 100')),track(score,'score-track','Gesundheitsscore')):
+  el('div',{},el('p',{class:'score absent','aria-label':'Kein Score'},'—'),el('p',{class:'hint',title:reason('health_score')},row.status_label));
+ const overview=el('section',{class:'panel hero-info','aria-label':'Gesundheitsscore'},headline,scoreBody);
 
  const parts=[['Farbverteilung','score_green'],['Gelb- und Warmtöne','score_yellow'],['Brauntöne','score_brown'],
-              ['Farbsättigung','score_saturation'],['Farbton','score_hue'],['Struktur','structure_score']];
+              ['Farbsättigung','score_saturation'],['Farbton','score_hue']];
  const list=el('ul',{class:'part-list'});
  for(const [label,k] of parts){
-  const val=k==='structure_score'?row.structure_score:health[k];
-  list.append(el('li',{},el('div',{class:'part-label'},el('span',{},label),el('strong',{},value(val,' / 100'))),
-   number(val)?track(val,'part-track',label):el('p',{class:'part-reason'},reason(k))));
+  const val=health[k];
+  const scoreLabel=el('strong',number(val)?{}:{title:reason(k),'aria-label':'Nicht verfügbar'},value(val,' / 100'));
+  list.append(el('li',{},el('div',{class:'part-label'},el('span',{},label),scoreLabel),track(val,'part-track',label)));
  }
- const partPanel=el('section',{class:'panel block'},el('h2',{},'Teilbewertungen'),list);
+ const partPanel=el('section',{class:'panel block parts-panel'},el('h2',{},'Teilbewertungen'),list);
  const leafColor=typeof m.color_hex==='string'&&/^#[0-9a-f]{6}$/i.test(m.color_hex)
   ?el('span',{},el('i',{class:'swatch',style:'background:'+m.color_hex,'aria-hidden':'true'}),m.color_hex.toUpperCase()):'—';
  const stat=el('dl',{class:'stats'},entry('Gelbanteil',value(m.yellow_fraction_pct,' %')),entry('Braunanteil',value(m.brown_fraction_pct,' %')),
   entry('Normierter Grünanteil',number(m.greenness_index)?m.greenness_index.toLocaleString('de-DE',{maximumFractionDigits:4}):'—'),entry('Mittlere Blattfarbe',leafColor),
   entry('Farbton (OpenCV)',value(m.mean_hue,' / 180')),entry('Sättigung',value(m.mean_saturation,' / 255')));
- const measurePanel=el('section',{class:'panel block'},el('h2',{},'Blattmerkmale'),stat,
-  el('p',{class:'hint'},'Farbmessungen aus dem Foto. Die Beleuchtung kann diese Rohwerte beeinflussen.'));
- app.append(el('div',{class:'panel-grid'},partPanel,measurePanel));
-
- function svg(tag,attrs={},txt){
-  const node=document.createElementNS('http://www.w3.org/2000/svg',tag);
-  for(const [k,v] of Object.entries(attrs))node.setAttribute(k,v);
-  if(txt!==undefined)node.textContent=txt;
-  return node;
- }
- function chart(rows){
-  const valid=rows.filter(r=>number(r.score));
-  if(!valid.length)return el('p',{class:'muted'},'Für die gespeicherten Aufnahmen liegen noch keine vergleichbaren Scores vor.');
-  const view=svg('svg',{class:'chart',viewBox:'0 0 700 176',role:'img','aria-label':'Verlauf vergleichbarer Gesundheitsscores von 0 bis 100'});
-  const W=700,left=36,right=W-17,bottom=143,top=14;
-  const start=Date.parse(rows[0].time),end=Date.parse(rows.at(-1).time);
-  const x=t=>end>start?left+(Date.parse(t)-start)/(end-start)*(right-left):(left+right)/2;
-  const y=n=>bottom-(bottom-top)*Math.max(0,Math.min(100,n))/100;
-  for(const n of [0,25,50,75,100]){
-   view.append(svg('line',{class:'gridline',x1:left,y1:y(n),x2:right,y2:y(n)}),svg('text',{x:left-7,y:y(n)+4,'text-anchor':'end'},String(n)));
-  }
-  let path='',lastGroup;
-  for(const r of rows){
-   if(!number(r.score)){lastGroup=undefined;continue;}
-   path+=(number(r.group)&&r.group===lastGroup?' L':' M')+x(r.time).toFixed(1)+' '+y(r.score).toFixed(1);
-   lastGroup=r.group;
-  }
-  view.append(svg('path',{class:'score-line',d:path}));
-  for(const r of valid){
-   const circle=svg('circle',{class:'point',cx:x(r.time),cy:y(r.score),r:3.7});
-   circle.append(svg('title',{},datefmt.format(new Date(r.time))+': '+value(r.score,' Pkt.')));view.append(circle);
-  }
-  const ticks=start===end?[start]:[start,end];
-  for(const [i,t] of ticks.entries())view.append(svg('text',{x:x(new Date(t).toISOString()),y:164,
-    'text-anchor':ticks.length===1?'middle':i===0?'start':'end'},dayfmt.format(new Date(t))));
-  return view;
- }
- const body=el('tbody');
- for(const r of data.recent)body.append(el('tr',{},el('td',{class:'nowrap'},time(r.time)),el('td',{class:'nowrap'},value(r.score)),el('td',{},r.status)));
- const table=el('table',{class:'recent'},el('thead',{},el('tr',{},...['Aufnahme','Score','Status'].map(t=>el('th',{scope:'col'},t)))),body);
- app.append(el('section',{class:'panel block'},el('div',{class:'row-title'},el('h2',{},'Gesundheitsverlauf'),
-  el('span',{class:'muted'},data.total+(data.total===1?' Aufnahme':' Aufnahmen'))),
-  el('div',{class:'timeline'},chart(data.history),el('p',{class:'hint'},'Die Kurve verbindet nur Scores mit derselben Referenz und Vergleichsmethode.')),
-  el('details',{class:'meta'},el('summary',{},'Letzte Aufnahmen'),el('div',{class:'table-wrap'},table))));
- app.append(el('p',{class:'foot'},'Der Score beschreibt Veränderungen gegenüber der Referenz.'));
+ const measurePanel=el('section',{class:'panel block traits-panel'},el('h2',{},'Blattmerkmale'),stat);
+ app.append(el('div',{class:'dashboard'},fig,overview,partPanel,measurePanel));
 })();
 """
 

@@ -225,7 +225,7 @@ Nach der Analyse kann `gesundheitssystem/gesundheitssystem.html` per Doppelklick
 python analyse.py --gesundheit
 ```
 
-Neben dem neuesten Foto werden Gesundheitsscore, Teilbewertungen, Warnungen und gemessene Blattmerkmale gezeigt. Der Verlauf verbindet ausschließlich Scores mit demselben Referenzbezug und Vergleichsverfahren. Eine nicht bewertbare letzte Aufnahme bleibt als solche sichtbar. Die vier Dateien werden automatisch erzeugt; beim Doppelklick wird kein Webserver benötigt.
+Neben dem neuesten Foto werden der Gesundheitsscore, die fünf farbbezogenen Teilbewertungen und die Blattmerkmale gezeigt. Die Ergebnishistorie bleibt in `auswertung/`. Eine nicht bewertbare letzte Aufnahme bleibt als solche sichtbar. Die vier Dateien werden automatisch erzeugt; beim Doppelklick wird kein Webserver benötigt.
 
 ### Digital Twin öffnen
 

@@ -36,7 +36,7 @@
     "analysis": {
       "version": "4.13.0",
       "health_status": "referenzfoto_start_der_ansicht",
-      "pipeline_sha256": "a08cebfe6d4d6d40ef9cf43969f039ee3e334b06423ad085310b584466c0f478",
+      "pipeline_sha256": "5763b088763102b0b4ff19120045dcb2ce2ec83f80571433b83c291353e45be8",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -6838,7 +6838,7 @@
     "analysis": {
       "version": "4.13.0",
       "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche",
-      "pipeline_sha256": "a08cebfe6d4d6d40ef9cf43969f039ee3e334b06423ad085310b584466c0f478",
+      "pipeline_sha256": "5763b088763102b0b4ff19120045dcb2ce2ec83f80571433b83c291353e45be8",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -16825,7 +16825,7 @@
     "analysis": {
       "version": "4.13.0",
       "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche;blattfarbverteilung",
-      "pipeline_sha256": "a08cebfe6d4d6d40ef9cf43969f039ee3e334b06423ad085310b584466c0f478",
+      "pipeline_sha256": "5763b088763102b0b4ff19120045dcb2ce2ec83f80571433b83c291353e45be8",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -28219,7 +28219,7 @@
     "analysis": {
       "version": "4.13.0",
       "health_status": "vorlaeufige_referenz;farbverhaeltnis_teilflaeche;blattfarbverteilung",
-      "pipeline_sha256": "a08cebfe6d4d6d40ef9cf43969f039ee3e334b06423ad085310b584466c0f478",
+      "pipeline_sha256": "5763b088763102b0b4ff19120045dcb2ce2ec83f80571433b83c291353e45be8",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -46063,7 +46063,7 @@
     "analysis": {
       "version": "4.13.0",
       "health_status": "vorlaeufige_referenz",
-      "pipeline_sha256": "a08cebfe6d4d6d40ef9cf43969f039ee3e334b06423ad085310b584466c0f478",
+      "pipeline_sha256": "5763b088763102b0b4ff19120045dcb2ce2ec83f80571433b83c291353e45be8",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -61369,7 +61369,7 @@
     "analysis": {
       "version": "4.13.0",
       "health_status": "zu_wenig_bestaetigte_farbteilflaeche",
-      "pipeline_sha256": "a08cebfe6d4d6d40ef9cf43969f039ee3e334b06423ad085310b584466c0f478",
+      "pipeline_sha256": "5763b088763102b0b4ff19120045dcb2ce2ec83f80571433b83c291353e45be8",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -82672,7 +82672,7 @@
     "analysis": {
       "version": "4.13.0",
       "health_status": "vorlaeufige_referenz",
-      "pipeline_sha256": "a08cebfe6d4d6d40ef9cf43969f039ee3e334b06423ad085310b584466c0f478",
+      "pipeline_sha256": "5763b088763102b0b4ff19120045dcb2ce2ec83f80571433b83c291353e45be8",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -105401,7 +105401,7 @@
     "analysis": {
       "version": "4.13.0",
       "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
-      "pipeline_sha256": "a08cebfe6d4d6d40ef9cf43969f039ee3e334b06423ad085310b584466c0f478",
+      "pipeline_sha256": "5763b088763102b0b4ff19120045dcb2ce2ec83f80571433b83c291353e45be8",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -128363,7 +128363,7 @@
     "analysis": {
       "version": "4.13.0",
       "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
-      "pipeline_sha256": "a08cebfe6d4d6d40ef9cf43969f039ee3e334b06423ad085310b584466c0f478",
+      "pipeline_sha256": "5763b088763102b0b4ff19120045dcb2ce2ec83f80571433b83c291353e45be8",
       "series_id": "pflanze-01",
       "image_size": [
         2000,
@@ -152719,7 +152719,7 @@
     "analysis": {
       "version": "4.13.0",
       "health_status": "vorlaeufige_referenz;nur_farbvergleich;blattfarbverteilung",
-      "pipeline_sha256": "a08cebfe6d4d6d40ef9cf43969f039ee3e334b06423ad085310b584466c0f478",
+      "pipeline_sha256": "5763b088763102b0b4ff19120045dcb2ce2ec83f80571433b83c291353e45be8",
       "series_id": "pflanze-01",
       "image_size": [
         2000,

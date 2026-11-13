@@ -4,7 +4,7 @@
 |---|---|
 | Dokument-ID | BB-SPEC-HEALTH-001 |
 | Meilenstein | A-M3 · Gesundheitsbewertung |
-| Version | 1.8 |
+| Version | 1.10 |
 | Datum | 13.11.2026 |
 | Autorin | Atida Ashta |
 | Implementierung | analyse.py 4.13.0 |
@@ -118,7 +118,7 @@ Die Gesundheitsdaten werden unter `health_assessment` ausgegeben, getrennt von `
 
 Beim normalen Analyselauf werden `gesundheitssystem.html`, `gesundheitssystem.css`, `gesundheitssystem.js` und `gesundheitssystem.json` im Projektordner `gesundheitssystem/` erzeugt. Die HTML-Datei kann per Doppelklick geöffnet werden. Mit `python analyse.py --gesundheit` kann die Ansicht aus vorhandenen Ergebnissen neu erzeugt und geöffnet werden, ohne eine Aufnahme abzurufen.
 
-Neben dem letzten zeitlich zuordenbaren Foto werden der geglättete Score, der Rohscore, der 24-Stunden-Trend, die Teilbewertungen und die belegten Auffälligkeiten angezeigt. Farbanteile stammen aus dem Rohbild. Angaben zu Bildqualität, Lichtabgleich und Referenzbezug werden weiterhin in `auswertung/ergebnis.json` gespeichert. Die neuesten Einträge bleiben im Verlauf auch dann sichtbar, wenn kein Score vorliegt. Nur Werte derselben Referenz und desselben Bewertungsverfahrens werden in der Kurve verbunden. Im Zeitverlauf werden keine zukünftigen Werte ergänzt.
+Neben dem letzten zeitlich zuordenbaren Foto werden der geglättete Gesundheitsscore, die fünf farbbezogenen Teilbewertungen und die Blattmerkmale angezeigt. Auf schmalen Bildschirmen werden Foto und Messwerte untereinander angezeigt. Farbanteile stammen aus dem Rohbild. Der Rohscore, der 24-Stunden-Trend, Warnungen und Angaben zu Bildqualität, Lichtabgleich und Referenzbezug bleiben in den Ergebnisdateien verfügbar. Die Strukturwertung fließt weiterhin in den Score ein, wenn die Voraussetzungen aus Abschnitt 5 erfüllt sind.
 
 Die Vorschau wird aus dem lokalen Original mit passender Prüfsumme erstellt. Fehlt das Original, bleiben die gespeicherten Bewertungen lesbar. Die Ansicht verwendet dieselben gerundeten Gesundheitswerte wie die Ergebnisausgabe.
 
