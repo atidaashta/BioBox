@@ -1,0 +1,58 @@
+# BioBox – Git-Dateiattribute
+
+# Textdateien einheitlich speichern (Windows und Raspberry Pi).
+* text=auto
+.gitattributes text eol=lf
+.gitignore text eol=lf
+*.py text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.csv text eol=crlf
+
+# Bilder, Kalibrierdaten und Office-Dateien als Binärdateien behandeln.
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.gif binary
+*.bmp binary
+*.tif binary
+*.tiff binary
+*.webp binary
+*.npz binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+
+# Quellcode der Browseransichten in GitHub Languages berücksichtigen.
+"/digital twin/digital_twin_3d.html" -linguist-generated
+"/digital twin/digital_twin_3d.css" -linguist-generated
+"/digital twin/digital_twin_3d.js" -linguist-generated
+/gesundheitssystem/gesundheitssystem.html -linguist-generated
+/gesundheitssystem/gesundheitssystem.css -linguist-generated
+/gesundheitssystem/gesundheitssystem.js -linguist-generated
+/grafiken/grafiken.html -linguist-generated
+/grafiken/grafiken.css -linguist-generated
+/grafiken/grafiken.js -linguist-generated
+
+# Nur die bekannten automatisch erzeugten Ausgaben kennzeichnen.
+/auswertung/ergebnis.csv linguist-generated
+/auswertung/ergebnis.json linguist-generated
+/auswertung/masken/** linguist-generated
+/auswertung/kontrolle/** linguist-generated
+"/digital twin/digital_twin.json" linguist-generated
+/gesundheitssystem/gesundheitssystem.json linguist-generated
+/grafiken/grafiken.json linguist-generated
+/grafiken/01_wachstum.png linguist-generated
+/grafiken/02_wachstumsrate.png linguist-generated
+/grafiken/03_farbverlauf.png linguist-generated
+/grafiken/04_gesundheit.png linguist-generated
+/grafiken/05_teilscores.png linguist-generated
+
+# Standard: README und Meilensteindokumente bleiben Dokumentation.
+*.md linguist-documentation
+
+# Optional: Entferne das # der nächsten Zeile, um Markdown mitzuzählen.
+# *.md linguist-detectable -linguist-documentation
