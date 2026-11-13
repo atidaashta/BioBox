@@ -4,7 +4,7 @@
 |---|---|
 | Dokument-ID | BB-SPEC-HEALTH-001 |
 | Meilenstein | A-M3 · Gesundheitsbewertung |
-| Version | 1.10 |
+| Version | 1.11 |
 | Datum | 13.11.2026 |
 | Autorin | Atida Ashta |
 | Implementierung | analyse.py 4.13.0 |
@@ -121,6 +121,8 @@ Beim normalen Analyselauf werden `gesundheitssystem.html`, `gesundheitssystem.cs
 Neben dem letzten zeitlich zuordenbaren Foto werden der geglättete Gesundheitsscore, die fünf farbbezogenen Teilbewertungen und die Blattmerkmale angezeigt. Auf schmalen Bildschirmen werden Foto und Messwerte untereinander angezeigt. Farbanteile stammen aus dem Rohbild. Der Rohscore, der 24-Stunden-Trend, Warnungen und Angaben zu Bildqualität, Lichtabgleich und Referenzbezug bleiben in den Ergebnisdateien verfügbar. Die Strukturwertung fließt weiterhin in den Score ein, wenn die Voraussetzungen aus Abschnitt 5 erfüllt sind.
 
 Die Vorschau wird aus dem lokalen Original mit passender Prüfsumme erstellt. Fehlt das Original, bleiben die gespeicherten Bewertungen lesbar. Die Ansicht verwendet dieselben gerundeten Gesundheitswerte wie die Ergebnisausgabe.
+
+Die Diagramme zu Gesundheit und Teilbewertungen können separat in `grafiken/grafiken.html` geöffnet werden.
 
 ### Verhalten bei ausgefallenem Pi-Abruf
 

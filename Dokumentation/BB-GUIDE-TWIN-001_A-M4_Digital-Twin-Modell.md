@@ -4,7 +4,7 @@
 | --- | --- |
 | Dokument-ID | BB-GUIDE-TWIN-001 |
 | Meilenstein | A-M4 · Digital-Twin-Modell |
-| Version | 1.9 |
+| Version | 1.11 |
 | Datum | 13.11.2026 |
 | Software | analyse.py 4.13.0 · Modell 0.1.0 · 3D-Ansicht 0.7.0 |
 | Status | Prototyp für lokale Darstellung, Projektion und Szenarien |

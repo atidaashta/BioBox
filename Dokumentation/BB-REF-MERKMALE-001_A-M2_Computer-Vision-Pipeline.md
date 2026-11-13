@@ -4,7 +4,7 @@
 |---|---|
 | Dokument-ID | BB-REF-MERKMALE-001 |
 | Meilenstein | A-M2 · Computer-Vision-Pipeline |
-| Version | 3.11 |
+| Version | 3.13 |
 | Datum | 13.11.2026 |
 | Autorin | Atida Ashta |
 | Pipeline | analyse.py 4.13.0 |
@@ -177,14 +177,15 @@ Die automatische Trennung beginnt mit Blattkernen, die aus dem Abstand zum Maske
 
 Alle Schritte werden durch `analyse.py` ausgeführt.
 
-| Datei unter `auswertung/grafiken/` | Inhalt |
+| Datei unter `grafiken/` | Inhalt |
 |---|---|
 | `01_wachstum.png` | sichtbare Blattfläche, in cm² bei durchgehendem Maßstab der brauchbaren Aufnahmen, sonst in Pixeln |
 | `02_wachstumsrate.png` | geprüfte Wachstumsrate, separate direkte Pixeländerung und Status je Aufnahme |
 | `03_farbverlauf.png` | gemessene Rohfarben und Farbanteile; ausdrücklich lichtabhängig |
 | `04_gesundheit.png` | relative Bewertung vor und nach zeitlicher Glättung, Referenzfoto und Status je Aufnahme |
 | `05_teilscores.png` | Heatmap der fünf Teilbewertungen für jede Aufnahme; Referenzstarts und fehlende Werte bleiben erkennbar |
-| `06_digital_twin.png` | Modellreihe der sichtbaren Blattfläche und gegebenenfalls die 24-Stunden-Projektion |
+
+Die Galerie `grafiken/grafiken.html` zeigt die Diagramme einzeln. `grafiken.css`, `grafiken.js` und `grafiken.json` werden im selben Ordner erzeugt. Mit `python analyse.py --grafiken` wird die Galerie aus den vorhandenen PNG-Dateien geöffnet. Bei der Umstellung werden ältere Grafiken aus `auswertung/grafiken/` übernommen. Die Ergebnisdateien werden bei diesem Aufruf nicht neu berechnet.
 
 Die Bildliste wird nach jedem normalen Abrufversuch frisch aus dem lokalen Ordner gebildet, unabhängig von dessen Erfolg. Auch selbst hinzugefügte Bilder werden erfasst. Die vorhandenen Originale werden neu ausgewertet. `--nur-bild` überspringt die Analyse. Automatische Masken und Kontrollen werden in `masken/` und `kontrolle/` aktualisiert; dateigenaue Korrekturen bleiben in `masken_korrektur/`. Die Diagramme werden auch bei fehlenden Einzelwerten mit dem jeweiligen Status ausgegeben. Die vier Modell- und Viewer-Dateien werden unter `digital twin/` erzeugt, die vier Gesundheitsdateien unter `gesundheitssystem/`. Die Browseransichten werden in [A-M4](BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) und [A-M3](BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md) beschrieben.
 

@@ -30,6 +30,7 @@ Die 100-Bilder-Grenze betrifft Kamera-JPEGs, nicht die Ergebnishistorie.
 Grafiken zeigen auch die gespeicherten Werte; alte Bilddateien werden nicht kopiert.
 Digital Twin: digital twin/digital_twin_3d.html und digital_twin.json.
 Gesundheitsansicht: gesundheitssystem/gesundheitssystem.html oder --gesundheit.
+Grafiken: grafiken/grafiken.html oder --grafiken.
 Die zugehoerigen JS- und CSS-Dateien bleiben jeweils im selben Ordner.
 Vorhandenes JSON ansehen: python analyse.py --3d
 Anderes JSON ansehen: python analyse.py --3d-aus-json auswertung/ergebnis.json
@@ -146,6 +147,7 @@ TWIN_DATEN_PREFIX = "const BIOBOX_DATA = "
 TWIN_JSON_DATEI = "digital_twin.json"
 TWIN_DATEIEN = (TWIN_3D_DATEI, TWIN_3D_CSS_DATEI, TWIN_3D_JS_DATEI, TWIN_JSON_DATEI)
 GESUND_DATEIEN = tuple("gesundheitssystem."+end for end in ("html","css","js","json"))
+GRAFIK_VIEWER_DATEIEN = tuple("grafiken."+end for end in ("html","css","js","json"))
 CSV_NICHT_VERFUEGBAR = "Nicht verfügbar"
 OLLAMA_PFLEGEMODELL = "qwen2.5:3b"
 TWIN_VERSION = "0.1.0"
@@ -156,7 +158,7 @@ TWIN_MIN_SPANNE_STUNDEN = 24
 TWIN_MAX_LUECKE_STUNDEN = 6
 TWIN_MAX_ALTER_STUNDEN = 3
 TWIN_ZIEL_TOLERANZ_MINUTEN = 40
-TWIN_GRAFIK = "06_digital_twin.png"
+ALTE_TWIN_GRAFIK = "06_digital_twin.png"  # Nur bei der Übernahme alter Ausgaben entfernen.
 PIPELINE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 ENDUNGEN = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")
 CSV_DEZIMALKOMMA = True
@@ -2462,6 +2464,10 @@ def viewer_ordner(ausgabe):
     return basis/"digital twin",basis/"gesundheitssystem"
 
 
+def grafik_ordner(ausgabe):
+    return viewer_ordner(ausgabe)[0].parent/"grafiken"
+
+
 def twin_historie_datei(pfad):
     try:
         daten = json.loads(pfad.read_text(encoding="utf-8-sig"))
@@ -2729,52 +2735,12 @@ def digital_twin(zeilen, historie=None, einzelbilder=False, jetzt=None):
     return json_sicher(daten)
 
 
-def twin_speichern(daten, zeilen, ausgabe, twin_ordner):
-    """Messung und Prognose getrennt anzeigen; alte Prognosen im JSON erhalten."""
+def twin_speichern(daten, twin_ordner):
+    """Modellzustand und Prognosehistorie im JSON erhalten."""
     twin_ordner.mkdir(parents=True,exist_ok=True)
     tmp = twin_ordner/".digital_twin.json.tmp"
     tmp.write_text(json.dumps(daten, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     tmp.replace(twin_ordner/TWIN_JSON_DATEI)
-    ordner = ausgabe/"grafiken"; ordner.mkdir(exist_ok=True)
-    fig, ax = plt.subplots(figsize=(11, 5.6))
-    ax.set_title("06 | Digital Twin · sichtbare Blattfläche und 24-h-Prognose", loc="left", fontweight="semibold")
-    gruppe = daten["training"].get("comparison_group")
-    reihe = []
-    for z in zeilen:
-        p, _ = twin_messpunkt(z)
-        if p is not None and p["group"] == gruppe:
-            reihe.append(p)
-    reihe.sort(key=lambda p: p["time"])
-    if reihe:
-        reihe = [p for p in reihe if p["time"] >= reihe[-1]["time"]-timedelta(hours=TWIN_FENSTER_STUNDEN)]
-        ax.plot([p["time"] for p in reihe], [p["pixels"] for p in reihe], "o-", ms=3,
-                color="#32816c", label="Gemessene Blattpixel")
-    forecast = daten.get("forecast")
-    if forecast:
-        start, ziel = historienzeit(forecast["as_of"]), historienzeit(forecast["target_at"])
-        label = "Prognose (vorläufig)" if forecast["is_current"] else "Projektion ab alter Aufnahme"
-        ax.plot([start, ziel], [forecast["source_px"], forecast["predicted_px"]], "--D", ms=5,
-                color="#76548b", label=label)
-        ax.axvline(start, color="#9aa9a6", lw=1, ls=":")
-    if not reihe:
-        ax.text(.5, .56, "Noch keine ausreichende vergleichbare Zeitreihe.", transform=ax.transAxes,
-                ha="center", color="#62737b", fontsize=12)
-        if not forecast:
-            ax.set_xticks([]); ax.set_yticks([])
-    if reihe or forecast:
-        locator = mdates.AutoDateLocator(minticks=3, maxticks=7)
-        ax.xaxis.set_major_locator(locator)
-        ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator, tz=timezone.utc))
-        ax.legend(loc="best")
-    ax.set_xlabel("Aufnahmezeit / Prognosezeit (UTC)"); ax.set_ylabel("Sichtbare Blattfläche [Pixel]")
-    ax.grid(alpha=.16)
-    zustand = daten["status"].replace("_", " ")
-    fig.text(.015, .055, f"Status: {zustand} | Datenbasis: {daten['training']['points']} Aufnahmen, "
-             f"{daten['training']['span_hours']:.1f} h", fontsize=9, color="#62737b")
-    fig.text(.015, .018, "Technischer Prototyp · keine 3D-Vermessung · keine biologisch validierte Wachstumsprognose", fontsize=8.5, color="#62737b")
-    fig.tight_layout(rect=(0, .10, 1, 1))
-    fig.savefig(ordner/TWIN_GRAFIK, dpi=150, facecolor="white")
-    plt.close(fig)
 
 
 def gesundheit_pro_foto_grafik(zeilen, ordner):
@@ -3103,6 +3069,57 @@ def alte_referenzdateien_entfernen(ausgabe):
             print(f"Alter Ordner kamera_referenzen konnte nicht entfernt werden: {fehler}.")
 
 
+def dateien_uebernehmen(dateien, work):
+    """Ausgaben gemeinsam ersetzen und bei einem Fehler die Originale zurückholen."""
+    backup = work/"vorher"; backup.mkdir()
+    changes = []
+    try:
+        for i,(neu,ziel) in enumerate(dateien):
+            sicherung = backup/str(i)
+            item = {"ziel":ziel,"backup":sicherung,"old":False,"new":False}
+            changes.append(item)
+            if ziel.exists() or ziel.is_symlink():
+                ziel.replace(sicherung);item["old"] = True
+            if neu is not None:
+                neu.replace(ziel);item["new"] = True
+    except OSError as fehler:
+        blockiert = []
+        for item in reversed(changes):
+            try:
+                ziel = item["ziel"]
+                if item["new"] and (not item["old"] or ziel.is_dir()):
+                    ziel.replace(work/("rollback-"+item["backup"].name))
+                if item["old"]:
+                    item["backup"].replace(ziel)
+            except OSError:
+                blockiert.append(str(item["ziel"]))
+        if blockiert:
+            (work/"sicherung_behalten").touch()
+            raise OSError("Wiederherstellung blockiert. Sicherung: "+str(backup)+": "+", ".join(blockiert)) from fehler
+        raise OSError("Ausgaben konnten nicht ersetzt werden. Offene Dateien schließen und erneut versuchen. "
+                      "Die bisherigen Ausgaben wurden wiederhergestellt.") from fehler
+
+
+def eigene_grafiken_kopieren(quelle,ziel,bekannte):
+    """Eigene Bilder und Ordner bei der Umstellung erhalten."""
+    if quelle.is_symlink() or (quelle.exists() and not quelle.is_dir()):
+        raise ValueError(f"Grafikordner kann nicht sicher übernommen werden: {quelle}")
+    if not quelle.exists():
+        return
+    for pfad in quelle.iterdir():
+        if pfad.name in bekannte:
+            if pfad.is_dir():
+                raise ValueError(f"Ausgabedateiname wird von einem Ordner belegt: {pfad}")
+            continue
+        kopie = ziel/pfad.name
+        if kopie.exists() or kopie.is_symlink():
+            raise ValueError(f"Datei liegt in beiden Grafikordnern: {pfad.name}. Bitte eine davon umbenennen.")
+        if pfad.is_dir() and not pfad.is_symlink():
+            shutil.copytree(pfad,kopie,symlinks=True)
+        else:
+            shutil.copy2(pfad,kopie,follow_symlinks=False)
+
+
 def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=False,zeitdaten=None):
     """Alle Eingaben erneut auswerten; zusammenpassende Ausgaben gemeinsam ersetzen.
 
@@ -3114,12 +3131,12 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
     if not pfade:raise ValueError('Keine Eingabebilder; vorhandene Auswertung bleibt erhalten.')
     ausgabe.mkdir(parents=True,exist_ok=True)
     twin_ziel,gesund_ziel = viewer_ordner(ausgabe)
+    grafik_ziel,grafik_alt = grafik_ordner(ausgabe),ausgabe/"grafiken"
     with auswertung_sperren(ausgabe):
         historie = ergebnishistorie_laden(ausgabe)
         twin_historie = twin_historie_laden(ausgabe)
         work=Path(tempfile.mkdtemp(prefix='.biobox-auswertung-',dir=ausgabe.parent))
-        fertig=work/'neu';fertig.mkdir();backup=work/'vorher';backup.mkdir()
-        cleanup=True
+        fertig=work/'neu';fertig.mkdir()
         try:
             # Referenzen werden waehrend jeder Auswertung im Arbeitsspeicher
             # aufgebaut. Nur die optional gespeicherte Lineal-Kalibrierung bleibt.
@@ -3140,50 +3157,42 @@ def analysieren(pfade,ausgabe,manuell=None,einzelbilder=False,neue_referenz=Fals
                             if path.is_dir():shutil.copytree(path,target,symlinks=True)
                             else:shutil.copy2(path,target,follow_symlinks=False)
             twin_neu,gesund_neu = work/"twin",work/"gesundheit"
+            grafik_neu = work/"grafiken"; grafik_neu.mkdir()
+            erwartete_grafiken = (*GRAFIK_DATEIEN,*GRAFIK_VIEWER_DATEIEN)
+            bekannte_grafiken = (*erwartete_grafiken,ALTE_TWIN_GRAFIK)
+            eigene_grafiken_kopieren(grafik_ziel,grafik_neu,bekannte_grafiken)
+            if grafik_alt!=grafik_ziel:
+                eigene_grafiken_kopieren(grafik_alt,grafik_neu,bekannte_grafiken)
             rows=_analysieren(pfade,fertig,manuell,einzelbilder,neue_referenz,historie,twin_historie,
-                              zeitdaten,twin_neu,gesund_neu)
+                              zeitdaten,twin_neu,gesund_neu,grafik_neu)
             dateien = [(fertig/name,ausgabe/name) for name in
-                       ('ergebnis.csv','ergebnis.json','masken','kontrolle','grafiken')]
+                       ('ergebnis.csv','ergebnis.json','masken','kontrolle')]
             dateien += [(twin_neu/name,twin_ziel/name) for name in TWIN_DATEIEN]
             dateien += [(gesund_neu/name,gesund_ziel/name) for name in GESUND_DATEIEN]
-            # Alte Viewer erst gemeinsam mit einem vollständigen neuen Stand verschieben.
+            dateien.append((grafik_neu,grafik_ziel))
+            # Alte Ausgaben erst gemeinsam mit einem vollständigen neuen Stand verschieben.
             alte_viewer = [(None,ausgabe/name) for name in (*TWIN_DATEIEN,*GESUND_DATEIEN)
                            if (ausgabe/name).is_file()]
-            if not all(neu.exists() for neu,_ in dateien):
+            if grafik_alt!=grafik_ziel and grafik_alt.is_dir():
+                alte_viewer.append((None,grafik_alt))
+            if not all(neu.exists() for neu,_ in dateien) or not all((grafik_neu/name).is_file() for name in erwartete_grafiken):
                 raise OSError('Neue Auswertung ist unvollstaendig; alte Ausgabe bleibt erhalten.')
             if any(ziel.is_dir() for _,ziel in dateien if ziel.name.endswith((".html",".css",".js",".json",".csv"))):
                 raise OSError("Ein Ausgabe-Dateiname wird bereits für einen Ordner verwendet.")
-            changes=[]
-            try:
-                twin_ziel.mkdir(parents=True,exist_ok=True)
-                gesund_ziel.mkdir(parents=True,exist_ok=True)
-                for i,(new,old) in enumerate(dateien+alte_viewer):
-                    sicherung = backup/str(i)
-                    item={'ziel':old,'backup':sicherung,'old':False,'new':False};changes.append(item)
-                    if old.exists():old.replace(sicherung);item['old']=True
-                    if new is not None:new.replace(old);item['new']=True
-            except OSError as error:
-                rollback=[]
-                for item in reversed(changes):
-                    try:
-                        if item['new'] and (not item['old'] or item['ziel'].is_dir()):
-                            item['ziel'].replace(work/("rollback-"+item['backup'].name))
-                        if item['old']:
-                            item['backup'].replace(item['ziel'])
-                    except OSError:rollback.append(str(item['ziel']))
-                if rollback:
-                    cleanup=False
-                    raise OSError('Wiederherstellung blockiert. Sicherung erhalten unter '+str(backup)+': '+', '.join(rollback)) from error
-                raise OSError('Ausgaben konnten nicht ersetzt werden. ergebnis.csv in Excel und offene Vorschauen schliessen. Bisherige Auswertung bleibt erhalten.') from error
+            twin_ziel.mkdir(parents=True,exist_ok=True)
+            gesund_ziel.mkdir(parents=True,exist_ok=True)
+            dateien_uebernehmen(dateien+alte_viewer,work)
         finally:
-            if cleanup:shutil.rmtree(work)
+            if not (work/"sicherung_behalten").exists():
+                shutil.rmtree(work)
     alte_referenzdateien_entfernen(ausgabe)
     erhalten = sum(bool(z.get('_historisch')) for z in rows)
     print(f'\n{len(pfade)} vorhandene Bilder verarbeitet; {erhalten} fruehere Messungen erhalten.')
     print(f'{len(rows)} Datensaetze insgesamt -> {ausgabe/"ergebnis.csv"}')
-    print('Masken, Kontrollbilder, Grafiken, Ergebnishistorie und beide Browseransichten aktualisiert.')
+    print('Masken, Kontrollbilder, Grafiken, Ergebnishistorie und Browseransichten aktualisiert.')
     print('3D-Ansicht:', twin_ziel/TWIN_3D_DATEI)
     print('Gesundheitsansicht:', gesund_ziel/GESUND_DATEIEN[0])
+    print('Grafikansicht:', grafik_ziel/GRAFIK_VIEWER_DATEIEN[0])
     n_rate = sum(z.get("wachstumsrate_pct_pro_tag") is not None for z in rows)
     n_score = sum(z.get("gesundheit") is not None for z in rows)
     n_pixel = sum(z.get("blattpixel_aenderung_pro_tag") is not None for z in rows)
@@ -3562,7 +3571,7 @@ def twin_blattgeometrie(bild, maske, labelpfad, punktpfad=None):
 
 
 def _analysieren(pfade, ausgabe, manuell, einzelbilder, neue_referenz, historie,
-                 twin_historie, zeitdaten, twin_ordner, gesund_ordner):
+                 twin_historie, zeitdaten, twin_ordner, gesund_ordner, grafiken_ordner):
     ausgabe.mkdir(parents=True, exist_ok=True)
     masken, kontrolle = ausgabe/"masken", ausgabe/"kontrolle"
     masken.mkdir(exist_ok=True)
@@ -3779,9 +3788,10 @@ def _analysieren(pfade, ausgabe, manuell, einzelbilder, neue_referenz, historie,
     csv_aktuell = ergebnisse_speichern(zeilen,hauptref,ausgabe)
     if not csv_aktuell:
         raise PermissionError("CSV konnte nicht erstellt werden; bisherige Auswertung bleibt erhalten.")
-    grafiken(zeilen,ausgabe/"grafiken")
+    grafiken(zeilen,grafiken_ordner)
     twin = digital_twin(zeilen, twin_historie, einzelbilder)
-    twin_speichern(twin, zeilen, ausgabe, twin_ordner)
+    twin_speichern(twin,twin_ordner)
+    grafikseite_speichern(grafiken_ordner)
     twin_3d_speichern(zeilen, twin_ordner)
     gesundheit_speichern(zeilen, gesund_ordner, pfade)
     print("Digital Twin:", twin["status"], f"| {twin['training']['points']} vergleichbare Aufnahmen")
@@ -4684,6 +4694,124 @@ GESUND_JS = r"""
 """
 
 
+GRAFIK_HTML = """<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BioBox · Grafiken</title>
+<link rel="stylesheet" href="grafiken.css">
+<script src="grafiken.js" defer></script>
+</head>
+<body>
+<main id="app"></main>
+<noscript>Die PNG-Dateien können direkt im Ordner geöffnet werden.</noscript>
+</body>
+</html>
+"""
+
+GRAFIK_CSS = """\
+:root{color-scheme:light;--ink:#203328;--muted:#536b5f;--line:#d9e4dc;--accent:#2c694d;--soft:#f0f5ef;font-family:system-ui,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#f6f8f5;color:var(--ink)}
+main{padding:clamp(18px,2.5vw,38px) clamp(14px,3vw,48px);display:grid;gap:clamp(12px,1.45vw,22px)}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+h1{margin:0;font-size:clamp(25px,4vw,34px);letter-spacing:-.045em;line-height:1.13}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px}
+nav{display:flex;flex-wrap:wrap;gap:6px}
+nav a,.open{display:inline-flex;align-items:center;min-height:39px;padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);text-decoration:none;font-size:.83rem;font-weight:600}
+nav a:hover,.open:hover{background:var(--soft)}
+nav a[aria-current]{background:var(--accent);border-color:var(--accent);color:white}
+nav a:focus-visible,.open:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.open{white-space:nowrap;color:var(--accent)}
+.open[hidden]{display:none}
+figure{margin:0;min-height:clamp(250px,65vh,630px);display:grid;place-items:center;background:#fff;border:1px solid var(--line);border-radius:16px;padding:clamp(8px,1.25vw,18px);overflow:hidden}
+figure img{display:block;width:auto;height:auto;max-width:100%;max-height:calc(100vh - 152px);object-fit:contain}
+.empty{margin:0;color:var(--muted);font-size:.9rem;text-align:center}
+@media(max-width:700px){figure{min-height:0;padding:5px}figure img{width:100%;max-height:none}nav a,.open{min-height:40px}figure .empty{padding:28px 10px}}
+"""
+
+GRAFIK_JS = r"""
+'use strict';
+(() => {
+ const app=document.getElementById('app'),charts=BIOBOX_CHARTS.charts;
+ function el(tag,attrs={},...children){
+  const node=document.createElement(tag);
+  for(const [key,value] of Object.entries(attrs))node.setAttribute(key,value);
+  node.append(...children);return node;
+ }
+ const view=el('figure',{'aria-label':'Aktuelle Grafik'});
+ app.append(el('header',{},el('h1',{},'BioBox')));
+ if(!charts.length){
+  view.append(el('p',{class:'empty'},'Keine Grafiken verfügbar.'));
+  app.append(view);return;
+ }
+ const nav=el('nav',{'aria-label':'Grafiken'});
+ const open=el('a',{class:'open',target:'_blank',rel:'noopener'},'PNG öffnen');
+ const tabs=charts.map(chart=>el('a',{href:'#'+chart.id},chart.label));
+ nav.append(...tabs);
+ app.append(el('div',{class:'toolbar'},nav,open),view);
+ function anzeigen(){
+  const index=charts.findIndex(chart=>window.location.hash==='#'+chart.id);
+  const i=index<0?0:index, chart=charts[i];
+  tabs.forEach((tab,j)=>j===i?tab.setAttribute('aria-current','true'):tab.removeAttribute('aria-current'));
+  open.hidden=false;open.setAttribute('href',chart.file);open.setAttribute('aria-label',chart.label+' als PNG öffnen');
+  const bild=el('img',{src:chart.file,alt:chart.label});
+  bild.addEventListener('error',()=>{
+   if(view.firstElementChild!==bild)return;
+   open.hidden=true;
+   view.replaceChildren(el('p',{class:'empty'},'Grafik nicht verfügbar.'));
+  });
+  view.replaceChildren(bild);
+ }
+ window.addEventListener('hashchange',anzeigen);
+ anzeigen();
+})();
+"""
+
+
+def grafikseite_speichern(ordner):
+    titel = ("Wachstum","Wachstumsrate","Farbverlauf","Gesundheit","Teilbewertungen")
+    daten = {"version":1,"charts":[{"id":Path(name).stem[3:],"label":label,"file":name}
+            for name,label in zip(GRAFIK_DATEIEN,titel) if (ordner/name).is_file()]}
+    js = "const BIOBOX_CHARTS = "+json.dumps(daten,ensure_ascii=False)+";\n"+GRAFIK_JS
+    for name,inhalt in zip(GRAFIK_VIEWER_DATEIEN,(GRAFIK_HTML,GRAFIK_CSS,js,
+                json.dumps(daten,ensure_ascii=False,indent=2)+"\n")):
+        (ordner/name).write_text(inhalt,encoding="utf-8")
+    return ordner/GRAFIK_VIEWER_DATEIEN[0]
+
+
+def grafikseite_aus_dateien(ausgabe):
+    """Vorhandene Diagramme bytegenau übernehmen, ohne eine Analyse auszulösen."""
+    ausgabe = Path(ausgabe).expanduser().resolve()
+    ziel,alt = grafik_ordner(ausgabe),ausgabe/"grafiken"
+    with auswertung_sperren(ausgabe):
+        if not ausgabe.parent.is_dir():
+            raise ValueError("Keine vorhandenen Grafiken. Zuerst python analyse.py ausführen.")
+        work = Path(tempfile.mkdtemp(prefix=".biobox-grafiken-",dir=ausgabe.parent))
+        try:
+            neu = work/"grafiken"; neu.mkdir()
+            quelle = (ziel,) if alt==ziel else (ziel,alt)
+            for ordner in quelle:
+                eigene_grafiken_kopieren(ordner,neu,(*GRAFIK_DATEIEN,*GRAFIK_VIEWER_DATEIEN,ALTE_TWIN_GRAFIK))
+            gefunden = 0
+            for name in GRAFIK_DATEIEN:
+                png = next((ordner/name for ordner in quelle if (ordner/name).is_file()),None)
+                if png is not None:
+                    shutil.copy2(png,neu/name); gefunden += 1
+            if not gefunden:
+                raise ValueError("Keine vorhandenen Grafiken. Zuerst python analyse.py ausführen.")
+            grafikseite_speichern(neu)
+            dateien = [(neu,ziel)]
+            if alt!=ziel and alt.is_dir():
+                dateien.append((None,alt))
+            dateien_uebernehmen(dateien,work)
+        finally:
+            if not (work/"sicherung_behalten").exists():
+                shutil.rmtree(work)
+    return ziel/GRAFIK_VIEWER_DATEIEN[0]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("ordner", nargs="?", help="Optional: nur diesen lokalen Ordner/dieses Bild analysieren")
@@ -4700,6 +4828,7 @@ def main():
     parser.add_argument("--3d", dest="drei_d", action="store_true", help="Lokale 3D-Ansicht im Browser öffnen; allein: vorhandene JSONs ohne Pi-Abruf ansehen")
     parser.add_argument("--3d-aus-json", dest="drei_d_json", type=Path, metavar="JSON", help="Persönliche 3D-Ansicht aus ergebnis.json oder digital_twin.json öffnen")
     parser.add_argument("--gesundheit", action="store_true", help="Gesundheitsansicht aus vorhandenen Ergebnissen öffnen; kein Pi-Abruf")
+    parser.add_argument("--grafiken", action="store_true", help="Vorhandene Grafiken übernehmen und im Browser öffnen; kein Pi-Abruf")
     parser.add_argument("--pflege-ki", metavar="FOTO", help="Lokale KI für einen gespeicherten Dateinamen oder * für alle brauchbaren Fotos")
     parser.add_argument("--ohne-browser", action="store_true", help="Bilder normal analysieren, die 3D-Ansicht anschließend nicht öffnen")
     parser.add_argument("--aufnahmezeiten", type=Path, metavar="CSV", help="Bekannte Aufnahmezeiten als CSV mit bild;captured_at und Zeitzone")
@@ -4716,6 +4845,26 @@ def main():
     parser.add_argument("--referenz-mm", type=float, help="Tatsaechlich gemessene Laenge zwischen den zwei Punkten, in mm")
     parser.add_argument("--punkte", nargs=4, type=float, metavar=("X1", "Y1", "X2", "Y2"), help="Messpunkte im Originalbild; ohne Angabe zwei Klicks im Bildfenster")
     args = parser.parse_args()
+    if args.grafiken:
+        if (args.ordner or args.lokal or args.abholen or args.nur_bild or args.drei_d or args.drei_d_json
+                or args.gesundheit or args.pflege_ki or args.massstab or args.massstab_bild or args.kalibrieren
+                or args.blattlabels or args.blaetter_markieren or args.maske_korrigieren or args.stundenaufnahme_einrichten
+                or args.stundenaufnahme_status or args.stundenaufnahme_ausschalten or args.aufnahmezeiten
+                or args.neue_referenz or args.einzelbilder):
+            parser.error("--grafiken separat ausführen; --ausgabe kann den Ergebnisordner angeben")
+        standard = Path("auswertung")
+        if not (standard.is_dir() or Path("grafiken").is_dir()):
+            standard = BILDER_ORDNER.parent/"auswertung"
+        try:
+            ansicht = grafikseite_aus_dateien(args.ausgabe or standard)
+            if args.ohne_browser:
+                print("Grafikansicht:",ansicht)
+            else:
+                browseransicht_oeffnen(ansicht,"Grafikansicht")
+        except (OSError,ValueError) as fehler:
+            print("Grafikansicht nicht erstellt:",fehler)
+            return 1
+        return 0
     if args.gesundheit:
         if (args.ordner or args.abholen or args.nur_bild or args.drei_d or args.drei_d_json or args.pflege_ki
                 or args.massstab or args.massstab_bild or args.kalibrieren or args.blattlabels

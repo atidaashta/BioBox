@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "charts": [
+    {
+      "id": "wachstum",
+      "label": "Wachstum",
+      "file": "01_wachstum.png"
+    },
+    {
+      "id": "wachstumsrate",
+      "label": "Wachstumsrate",
+      "file": "02_wachstumsrate.png"
+    },
+    {
+      "id": "farbverlauf",
+      "label": "Farbverlauf",
+      "file": "03_farbverlauf.png"
+    },
+    {
+      "id": "gesundheit",
+      "label": "Gesundheit",
+      "file": "04_gesundheit.png"
+    },
+    {
+      "id": "teilscores",
+      "label": "Teilbewertungen",
+      "file": "05_teilscores.png"
+    }
+  ]
+}

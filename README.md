@@ -227,6 +227,16 @@ python analyse.py --gesundheit
 
 Neben dem neuesten Foto werden der Gesundheitsscore, die fünf farbbezogenen Teilbewertungen und die Blattmerkmale gezeigt. Die Ergebnishistorie bleibt in `auswertung/`. Eine nicht bewertbare letzte Aufnahme bleibt als solche sichtbar. Die vier Dateien werden automatisch erzeugt; beim Doppelklick wird kein Webserver benötigt.
 
+### Grafiken öffnen
+
+Die Datei `grafiken/grafiken.html` kann per Doppelklick geöffnet werden. Über die Reiter wird das Diagramm ausgewählt; **PNG öffnen** zeigt die Grafik in einem eigenen Browser-Tab. Die Seite funktioniert auch ohne Internetverbindung.
+
+```powershell
+python analyse.py --grafiken
+```
+
+Der Befehl erzeugt die Seite aus vorhandenen PNG-Dateien. Liegen sie noch unter `auswertung/grafiken/`, werden sie in den Projektordner `grafiken/` übernommen. Fotos und Messwerte werden dabei nicht neu ausgewertet.
+
 ### Digital Twin öffnen
 
 Nach der Analyse wird die lokale Browseransicht geöffnet. Vorhandene Ergebnisse lassen sich auch ohne neue Analyse öffnen:
@@ -317,7 +327,7 @@ Die Grafiken `02_wachstumsrate.png` und `04_gesundheit.png` markieren jede Aufna
 | `bilder/` | Lokale Eingabebilder im üblichen Projektaufbau |
 | `auswertung/masken/` | Binäre Messmasken in Originalauflösung |
 | `auswertung/kontrolle/` | Je eine Kontrollansicht pro lesbarer Aufnahme, Foto bis 1500 Pixel breit |
-| `auswertung/grafiken/` | Fünf Auswertungsdiagramme |
+| `grafiken/` | Fünf PNG-Diagramme und lokale Galerie mit HTML, CSS, JS und JSON |
 | `auswertung/ergebnis.csv` | Tabellarische Kontrollausgabe |
 | `auswertung/ergebnis.json` | Strukturierte Datensätze für die weitere Verarbeitung |
 | `digital twin/digital_twin.json` | Modellzustand, 24-Stunden-Projektion und Prognosehistorie, sofern verfügbar |
@@ -328,7 +338,7 @@ Die Grafiken `02_wachstumsrate.png` und `04_gesundheit.png` markieren jede Aufna
 | `auswertung/blattlabels/` | Optionale Blattmarkierungen und importierte Blattlabels |
 | `kamera_kalibrierung.json` | Objektivprofil, sofern erstellt |
 
-Die Ausgabeordner werden bei der Verarbeitung erzeugt. Beim Pi-Abruf gilt der konfigurierte `BILDER_ORDNER`; bei lokalen Aufrufen kann `--ausgabe` den Zielordner festlegen. Ohne diese Option liegt `auswertung/` neben dem ausgewählten Bilderordner. Die Ordner `digital twin/` und `gesundheitssystem/` liegen neben dem Standardordner `auswertung/`. Bei einem anders benannten Ausgabeordner werden sie darin getrennt von anderen Messreihen erzeugt. Alte Twin-Dateien in `auswertung/` werden nach einem erfolgreichen Lauf übernommen; gespeicherte Prognosen bleiben erhalten. Maßstab und manuelle Korrekturen gehören zum jeweiligen Messaufbau. Frühere automatisch erzeugte Referenzdateien werden nach einem erfolgreichen Lauf gezielt entfernt.
+Die Ausgabeordner werden bei der Verarbeitung erzeugt. Beim Pi-Abruf gilt der konfigurierte `BILDER_ORDNER`; bei lokalen Aufrufen kann `--ausgabe` den Zielordner festlegen. Ohne diese Option liegt `auswertung/` neben dem ausgewählten Bilderordner. Die Ordner `grafiken/`, `digital twin/` und `gesundheitssystem/` liegen neben dem Standardordner `auswertung/`. Bei einem anders benannten Ausgabeordner werden sie darin getrennt von anderen Messreihen erzeugt. Alte Twin-Dateien in `auswertung/` werden nach einem erfolgreichen Lauf übernommen; gespeicherte Prognosen bleiben erhalten. Maßstab und manuelle Korrekturen gehören zum jeweiligen Messaufbau. Frühere automatisch erzeugte Referenzdateien werden nach einem erfolgreichen Lauf gezielt entfernt.
 
 ### Diagramme
 
@@ -340,7 +350,7 @@ Die Ausgabeordner werden bei der Verarbeitung erzeugt. Beim Pi-Abruf gilt der ko
 | `04_gesundheit.png` | Relativer Zustandsindex und zeitlicher Verlauf |
 | `05_teilscores.png` | Teilbewertungen je Aufnahme; fehlende Werte bleiben sichtbar |
 
-Die fünf Diagramme werden auch bei fehlenden Einzelwerten erstellt. Fehlende Daten werden als solche dargestellt.
+Die Diagramme werden auch bei fehlenden Einzelwerten erstellt. Fehlende Daten werden als solche dargestellt.
 
 ### Datensätze und fehlende Werte
 
@@ -467,6 +477,7 @@ Wenn die erzeugten Viewer-Dateien im Repository liegen, können sie über diese 
 ```gitattributes
 "digital twin/**" linguist-generated=true
 gesundheitssystem/** linguist-generated=true
+grafiken/** linguist-generated=true
 ```
 
 Große Bilddatensätze, automatisch erzeugte Ausgaben und die virtuelle Python-Umgebung werden von der Quellcode-Versionierung getrennt gehalten. Kleine gezielte Prüfdaten und ihre Herkunft können die spätere Regressionstest-Sammlung ergänzen. Gerätebezogene Kalibrierdaten und geprüfte Maskenkorrekturen gehören zum jeweiligen Messaufbau. Automatische Pflanzenreferenzen bestehen nur während eines Analyselaufs.
