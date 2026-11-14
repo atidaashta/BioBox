@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="biobox-viewer-version" content="0.7.0">
+  <title>BioBox · Digital Twin</title>
+  <link rel="stylesheet" href="digital_twin_3d.css">
+  <script src="digital_twin_3d.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>BioBox</h1>
+      <time id="capture-time" hidden></time>
+    </header>
+    <section class="viewer" aria-label="3D viewer">
+      <div class="stage">
+        <canvas id="plant" tabindex="0" aria-label="Interactive 3D plant model. Rotate with a mouse, touch, or the arrow keys." hidden></canvas>
+        <div class="leaf-tray" id="leaf-tray" tabindex="0" role="region" aria-label="Leaf count" hidden>
+          <ol id="leaf-list" role="list" aria-label="Individual leaves"></ol>
+        </div>
+        <button id="leaves-button" type="button" aria-controls="leaf-tray" aria-pressed="false" hidden>
+          <span id="count-text">Count leaves</span>
+          <span id="count-badge" class="leaf-count"></span>
+        </button>
+        <p id="twin-empty" class="empty" role="status">Loading leaf contours …</p>
+      </div>
+      <div class="controls">
+        <label for="days">Days after capture<output id="day-text" for="days">At capture</output></label>
+        <input id="days" type="range" min="0" max="14" value="0" disabled>
+      </div>
+    </section>
+    <div id="data-load" class="data-load" hidden>
+      <label for="data-file">Choose digital_twin.json</label>
+      <input id="data-file" type="file" accept=".json,application/json">
+    </div>
+  </main>
+  <noscript>JavaScript is required for the 3D viewer.</noscript>
+</body>
+</html>

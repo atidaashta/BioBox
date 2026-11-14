@@ -1,10 +1,14 @@
-# Python-Bytecode, erzeugt Python automatisch beim Import.
+# Images should not be stored in the Git repository.
+# Several gigabytes of images will accumulate during the project.
+images/
+
+# Results are regenerated on every run.
+results/
+
+# Python bytecode generated automatically during imports.
 __pycache__/
 *.pyc
 
-# Betriebssystem
+# Operating system files.
 Thumbs.db
 .DS_Store
-
-# Ohne Schraegstrich am Ende: der passt nur auf Ordner, nicht auf Dateien.
-~$*.docx

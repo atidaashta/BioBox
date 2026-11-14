@@ -1,487 +1,112 @@
-# BioBox · Bildanalyse und Pflanzenmonitoring
+# BioBox: Image Capture and Plant Analysis
 
-Bildgestützte Beobachtung von Pflanzen als Teil der Diplomarbeit **BioBox**. Aus Kameraaufnahmen werden sichtbare Blattflächen, Farbmerkmale und zeitliche Veränderungen ermittelt. Die Ergebnisse bilden eine Datengrundlage für die spätere Anbindung an die Webplattform und den digitalen Zwilling der Pflanze.
+BioBox is a diploma project at **HTL Shkodёr Peter Mahringer**. This repository covers the camera and image analysis work: it retrieves photographs from a Raspberry Pi, measures visible plant features, and presents the results in charts, a plant health dashboard, and a browser-based digital twin.
 
-Dieses Repository dokumentiert den Teilbereich **Bildaufnahme, Bildauswertung und Zustandsbewertung** von **Atida Ashta** an der HTL Shkodra. Einstiegspunkt für die Verarbeitung ist `analyse.py`.
+**Status:** Working prototype under validation. Image analysis is at version 4.13.0 and health scoring is at version 4.1.0. The tools work locally; sending the measurements to the BioBox platform is planned.
 
-**Projektstatus:** Entwicklung und Validierung · Bildanalyse 4.13.0, Zustandsindex 4.1.0 · Stand 13.11.2026. Der Aufnahme- und Analyseablauf ist implementiert. Die Genauigkeit der Blattmasken und die fachliche Aussage des Zustandsindex werden weiter untersucht; die direkte Backend-Anbindung ist geplant.
+## Quick start
 
-## Inhalt
-
-- [Projektziel und Funktionsumfang](#projektziel-und-funktionsumfang)
-- [Verarbeitungsablauf](#verarbeitungsablauf)
-- [Voraussetzungen und Installation](#voraussetzungen-und-installation)
-- [Bedienung](#bedienung)
-- [Messverfahren und Referenz](#messverfahren-und-referenz)
-- [Ausgaben und Datenmodell](#ausgaben-und-datenmodell)
-- [Konfiguration](#konfiguration)
-- [Validierung und bekannte Grenzen](#validierung-und-bekannte-grenzen)
-- [Roadmap](#roadmap)
-- [Fehlerbehebung](#fehlerbehebung)
-- [Dokumentation und Mitarbeit](#dokumentation-und-mitarbeit)
-
-## Projektziel und Funktionsumfang
-
-Die Entwicklung einer Pflanze soll anhand wiederholter Aufnahmen nachvollziehbar werden. Dafür werden messbare Bildmerkmale mit Aufnahmezeitpunkt, Qualitätsinformationen und einer eigenen Pflanzenreferenz verbunden. Im Mittelpunkt stehen die sichtbare Blattfläche und Veränderungen des Erscheinungsbildes.
-
-Der lokale digitale Zwilling stellt die gespeicherten Bildmesswerte je Aufnahme dar. Die spätere Verknüpfung mit weiteren BioBox-Daten ist geplant.
-
-### Verfügbare Funktionen
-
-- Vorhandene Stundenfotos über SSH abgleichen; für eine Linealmessung bei Bedarf eine neue Aufnahme auslösen.
-- Stündliche Aufnahmen direkt auf dem Pi einrichten, prüfen und ausschalten.
-- Fertige Kamera-JPEGs abgleichen und lokal die neuesten **100 importierten Kameraaufnahmen** behalten.
-- Alle lokalen Bilddateien auswerten, auch selbst hinzugefügte Fotos und bei fehlender Pi-Verbindung.
-- Externe Bilddatensätze ohne gemeinsame Pflanzenzeitreihe untersuchen.
-- Blattbereiche mit OpenCV erkennen und die Messmaske am Originalbild verfeinern.
-- Ein einzelnes Kontrollbild pro lesbarer Aufnahme und eine binäre Blattmaske erzeugen.
-- Blattpixel, kalibrierte Flächen und Ausdehnungen sowie Farb- und Qualitätsmerkmale bestimmen.
-- Einen relativen Zustandsindex von 0 bis 100 mit Teilbewertungen und zeitlichem Verlauf berechnen.
-- Ergebnisse als CSV und JSON sowie in fünf Analysediagrammen ausgeben.
-- Messwerte im Browser ansehen, das Pflanzenmodell zur letzten Aufnahme drehen und seine Entwicklung für einen gewählten Zeitraum ansehen.
-- Bereits vorhandene Aufnahmen mit einer neuen Skriptversion vollständig neu auswerten.
-
-> Der Zustandsindex beschreibt sichtbare Veränderungen gegenüber der Referenz derselben Pflanze. **100 Punkte bedeuten eine geringe Abweichung zur Referenz.** Eine biologisch gesunde Pflanze oder eine bestimmte Krankheit wird damit nicht nachgewiesen.
-
-## Verarbeitungsablauf
-
-```mermaid
-flowchart TD
-    Start["analyse.py starten"] --> Abruf["Pi-Fotos über SSH abgleichen"]
-    Abruf -->|Erfolg: JPEGs ergänzen| Bestand["Lokalen Bilderordner neu einlesen"]
-    Abruf -->|Fehler: Warnung ausgeben| Bestand
-    Lokal["Selbst hinzugefügte Fotos"] --> Bestand
-    Bestand --> Auswahl{"Lokale Bilder vorhanden?"}
-    Auswahl -->|Ja| Analyse["Masken, Kontrollbilder und Messwerte neu berechnen"]
-    Auswahl -->|Nein| Ende["Vorhandene Auswertung behalten"]
-    Analyse --> Ausgabe["Messwerte, Diagramme und JSON für die Ansichten aktualisieren"]
-```
-
-Der Fotoabruf und die lokale Analyse sind zwei unabhängige Arbeitsschritte. `analyse.py` ruft die Bilderfassung und die Auswertung nacheinander auf. Ein Timeout, ein fehlender SSH-Schlüssel oder eine abgelehnte Verbindung beendet nur den Abruf. Danach wird der konfigurierte lokale Bilderordner vollständig neu eingelesen und ausgewertet. Selbst hinzugefügte lokale Fotos werden mitverarbeitet.
-
-Der Pi kann nach der Einrichtung selbstständig stündlich fotografieren. Die Übertragung und Bildanalyse werden auf dem auswertenden Computer gestartet. Eine stündliche Aufnahme auf dem Pi startet keine automatische Windows-Auswertung. Der geplante Backend-Versand ist noch nicht Bestandteil dieses Ablaufs.
-
-### Verwendete Technik
-
-| Technik | Aufgabe |
-|---|---|
-| Python | Aufnahmeabruf, Verarbeitung, Berechnung und Dateiverwaltung |
-| OpenCV — Open Source Computer Vision Library | Farbverarbeitung, GrabCut, Maskenverfeinerung und geometrische Messungen |
-| NumPy | Numerische Berechnungen und Verarbeitung der Bildarrays |
-| Matplotlib | Erstellung der fünf Auswertungsdiagramme |
-| Secure Shell (SSH) und Tailscale | Zugriff auf den Kamera-Pi über eine bestehende Verbindung |
-| cron | Zeitgesteuerte Aufnahme direkt auf dem Raspberry Pi |
-
-## Voraussetzungen und Installation
-
-### Lokale Auswertung
-
-Benötigt werden Python 3 mit `pip` und die Pakete `opencv-contrib-python`, `numpy` und `matplotlib`. Die folgenden Beispiele verwenden PowerShell unter Windows und werden im Projektverzeichnis ausgeführt.
+Run these commands from the repository root in PowerShell. The folder can keep its current name, `Diploma`.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install opencv-contrib-python numpy matplotlib
+python -m pip install opencv-contrib-python numpy matplotlib Pillow
 ```
 
-Die späteren `python`-Befehle setzen diese aktivierte Umgebung voraus. Alternativ kann direkt `.\.venv\Scripts\python.exe` als Interpreter verwendet werden, etwa wenn die PowerShell-Aktivierung blockiert ist.
+If PowerShell blocks activation, use `.\.venv\Scripts\python.exe` instead of `python` in the following commands. Use a desktop OpenCV build for interactive mask editing and scale calibration.
 
-Für interaktive Maskenkorrekturen und das Markieren einer Referenzstrecke wird eine grafische OpenCV-Installation benötigt. Eine reine Headless-Installation stellt diese Bildfenster nicht bereit.
-
-### Kamera auf dem Raspberry Pi
-
-Für den Kameraabruf werden zusätzlich benötigt:
-
-- Ein eingerichteter Raspberry Pi mit funktionierender Kamera; der Referenzaufbau verwendet eine Camera Module 3 Wide.
-- Ein OpenSSH-Client auf dem auswertenden Computer und ein erreichbarer SSH-Zugang zum Pi, im BioBox-Aufbau über Tailscale.
-- Der vorhandene SSH-Schlüssel gemäß `PI_SSH_KEY`; dessen öffentlicher Schlüssel muss beim Pi-Benutzer hinterlegt sein. Ein geschützter Schlüssel muss im `ssh-agent` verfügbar sein.
-- Der bestehende BioBox-Aufnahmehelfer `biobox-photo-test` mit der Option `--single`.
-- Python 3 und das Linux-Werkzeug `flock` auf dem Pi; für den Stundenplan außerdem ein aktiver und beim Systemstart aktivierter `cron`-Dienst.
-
-Die Kamera-Grundeinrichtung und der vorhandene Aufnahmehelfer werden vorausgesetzt. `analyse.py` richtet bei Bedarf den zusätzlichen Stundenauftrag ein. Für diesen Aufnahmeauftrag werden auf dem Pi keine OpenCV-Pakete benötigt.
-
-Vor dem Fernzugriff sind die Pi-Adresse und die Pfade im [Konfigurationsbereich](#konfiguration) zu prüfen. Der Analyselauf verwendet `BatchMode=yes` und öffnet keinen Dialog für das Pi-Passwort. Der Standardschlüssel liegt unter `$env:USERPROFILE\.ssh\biobox_ed25519`. Bei einem bereits eingerichteten Schlüssel kann dieser in PowerShell in den laufenden Agent geladen werden:
+To **retrieve the latest completed Pi photos and update all outputs**:
 
 ```powershell
-ssh-add "$env:USERPROFILE\.ssh\biobox_ed25519"
+python -B image_capture.py; python -B computer_vision_pipeline.py images
 ```
 
-Die Einrichtung des Schlüssels und des Windows-Dienstes wird in der [Microsoft-Anleitung zu OpenSSH-Schlüsseln](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_keymanagement) beschrieben. Die lokale Auswertung mit `--lokal` benötigt keinen SSH-Zugang.
+The second command still runs if the Pi is unreachable. It reads all supported images in `images/` and updates the masks, overlays, charts, measurement history, and JSON used by both browser views. The `-B` option prevents Python from writing `__pycache__` files. The commands do not trigger an extra photograph.
 
-## Bedienung
-
-### Vorhandene Bilder auswerten
-
-Die Originalbilder werden in `bilder/` abgelegt. Anschließend wird die gesamte Auswahl neu verarbeitet:
+To use local photos only:
 
 ```powershell
-python analyse.py --lokal bilder --ausgabe auswertung
+python -B computer_vision_pipeline.py images
 ```
 
-Unterstützt werden JPG/JPEG, PNG, BMP, TIFF und WebP. Bei einem lokalen Ordner werden die direkt darin liegenden Bilddateien ausgewählt.
-
-### Normaler Start: Fotos abgleichen und lokal auswerten
+The pipeline reads JPG, JPEG, PNG, BMP, TIFF, and WebP files directly inside the selected folder. It also accepts a single image path. Use `--output PATH` for a separate output directory, or `--independent-images` for photographs of unrelated plants:
 
 ```powershell
-python analyse.py
+python -B computer_vision_pipeline.py sample_images --independent-images --output sample_results
 ```
 
-Es werden bereits vorhandene fertige Stundenfotos vom Pi abgeholt. Eine zusätzliche Aufnahme wird bei diesem Aufruf **nicht** ausgelöst. Anschließend werden sämtliche unterstützten Bilddateien direkt im konfigurierten `BILDER_ORDNER` neu analysiert.
+That mode produces individual measurements without treating the photos as a shared health or growth series.
 
-Der Standardpfad ist `Downloads/Diploma/bilder` im Benutzerverzeichnis. Er hängt nicht vom aktuellen PowerShell-Ordner ab. Bei einem anderen Projektstandort wird `BILDER_ORDNER` angepasst oder gezielt `python analyse.py --lokal bilder --ausgabe auswertung` ausgeführt.
+## Project layout
 
-| Fotoabruf | Lokaler Bildbestand | Verhalten |
+| Path | Purpose |
+|---|---|
+| `image_capture.py` | M1: Pi photo retrieval, hourly scheduling, lens calibration, and capture timestamps |
+| `computer_vision_pipeline.py` | M2: segmentation, measurements, CSV and JSON exports, charts, and the local viewer server |
+| `health_assessment.py` | M3: lighting correction, the relative health score, and the health dashboard |
+| `digital_twin.py` | M4: visible leaf geometry, the 24-hour projection, and the 3D viewer |
+| `images/` | Original photos and retrieved camera JPEGs |
+| `results/` | Measurement history in `results.csv` and `results.json`; generated images in `masks/` and `overlays/` |
+| `digital_twin/` | 3D viewer source files and generated `digital_twin.json` |
+| `plant_health/` | Health dashboard source files and generated `plant_health.json` |
+| `charts/` | Chart gallery source files, five generated PNG charts, and `charts.json` |
+| `docs/` | English technical documentation for the four milestones |
+| `.gitattributes` | Line endings and classification of generated files |
+
+If upgrading from the German layout, follow the [migration instructions](docs/migrate-to-english-layout.md) before running the new scripts. Move existing data rather than starting with empty folders, so the pipeline can carry forward the measurements and projections already saved.
+
+## Raspberry Pi capture
+
+The reference setup uses a Raspberry Pi 4 with a Camera Module 3 Wide. The existing `biobox-photo-test` helper must be available on the Pi, and the analysis computer needs an OpenSSH client and access to the Pi, normally through Tailscale. Configure `PI_ADRESSE`, `PI_AUFNAHME`, and `PI_SSH_KEY` in `image_capture.py` to match your setup. SSH runs in batch mode; if the private key has a passphrase, load it into your SSH agent first. Keep private keys outside the repository.
+
+Run `python -B image_capture.py --schedule-hourly` to test the camera and set up the hourly job. The job runs on the Pi at the start of each hour, according to the Pi's clock. `--schedule-status` shows the last attempt, and `--disable-schedule` removes the BioBox job while keeping saved photos. The Pi must be running, and its `cron` service must be enabled. See [M1](docs/m1-image-capture-system.md) for the setup and verification details.
+
+A successful sync keeps up to 100 of the latest imported camera JPEGs locally. This limit does not apply to manually added images or saved measurements. The Pi keeps its own copies.
+
+## Browser views
+
+Run the command for the view you want. Each starts a server on the current computer and loads the appropriate JSON automatically. An internet connection and a Pi connection are unnecessary once the data is available.
+
+| View | Command | What it shows |
 |---|---|---|
-| erfolgreich | Bilder vorhanden | Abgeholte und bereits vorhandene Fotos werden gemeinsam neu ausgewertet. |
-| Timeout oder anderer Abruffehler | Bilder vorhanden | Fehlermeldung zum Abruf; die lokale Auswertung wird trotzdem durchgeführt. |
-| erfolgreich oder fehlgeschlagen | keine Bilder vorhanden | Keine neue Auswertung; vorhandene Ergebnisse bleiben erhalten. |
-| `--nur-bild` beim Pi-Abruf | beliebig | Nur Abruf; die Analyse wird ausdrücklich übersprungen. |
+| Digital twin | `python -B digital_twin.py` | A rotatable model derived from the latest photo, individual visible leaves, and a 0–14 day scenario slider |
+| Plant health | `python -B health_assessment.py` | The latest photo, relative score, five colour subscores, and raw leaf measurements |
+| Charts | `python -B computer_vision_pipeline.py --charts` | Leaf area, growth rate, leaf colour, health score, and health subscores |
 
-Bei einer erfolgreichen lokalen Auswertung endet der normale Aufruf mit Rückgabecode `0`, auch wenn der vorherige Abruf fehlgeschlagen ist. Bei fehlenden Bildern oder einem Analysefehler wird `1` zurückgegeben. Bei `--nur-bild` hängt der Rückgabecode allein vom Abruf ab: `0` bei Erfolg, `1` bei Fehler. Eine erfolgreiche Analyse bestätigt keine neuen Aufnahmen auf dem Pi.
+Use these commands instead of opening the HTML files directly. On a local `file:` URL, the browser does not allow the page to fetch its neighbouring JSON automatically. If a series was saved to a custom output folder, pass the same `--output PATH` when opening its view. The browser server listens on `127.0.0.1` and stops after 15 minutes without requests.
 
-### Stündliche Aufnahme einrichten
+The HTML, CSS, and JavaScript files are source files. Running the analysis updates the data and PNG charts alongside them. The [digital twin guide](docs/m4-digital-twin.md) explains the difference between the scenario slider and the separate 24-hour projection.
 
-```powershell
-python analyse.py --stundenaufnahme-einrichten
-```
+## Measurement and validation
 
-Vor der Aktivierung wird eine Testaufnahme geprüft. Bei Erfolg wird beim Pi-Benutzer ein eigener cron-Auftrag für **jede volle Stunde nach der Pi-Uhr** eingerichtet. Der Pi muss dafür eingeschaltet sein; der Windows-PC kann ausgeschaltet bleiben.
+- **Leaf area:** OpenCV segments visible leaf tissue in the camera image. The final binary mask provides a pixel count. A verified scale in the leaf plane is needed for cm² or mm. Occlusion and leaf orientation can change the projected area even when the plant has not grown.
+- **Plant health:** The score ranges from 0 to 100 and compares the plant with its own reference photo. A value near 100 means the measured features are similar to the reference. It does not identify disease or establish that the plant is healthy.
+- **Growth:** A geometrically checked rate requires usable, comparable views and capture timestamps. Comparisons start at 30 minutes and prefer intervals of at least 12 hours. Direct changes in leaf pixel count appear separately, including when they cannot be treated as growth.
+- **Data quality:** Unknown measurements remain unknown. The JSON export records reasons in `analysis.missing_values`; the CSV uses `Nicht verfügbar` and the `fehlende_werte` column. The existing column names and machine-readable status codes are retained for compatibility.
 
-Bestehende andere Zeitplaneinträge werden erhalten. Wiederholtes Einrichten ersetzt den eigenen markierten BioBox-Auftrag. Bereits früher von Hand eingerichtete Aufnahmejobs werden nicht automatisch entfernt und sollten auf doppelte Aufnahmen geprüft werden. Der Stundenhelfer und die direkte Aufnahme zur Linealmessung verwenden eine gemeinsame Kamerasperre.
-
-Status prüfen oder den eigenen Stundenauftrag ausschalten:
+To correct the mask for one photo or set a scale from a ruler at leaf height:
 
 ```powershell
-python analyse.py --stundenaufnahme-status
-python analyse.py --stundenaufnahme-ausschalten
+python -B computer_vision_pipeline.py --correct-mask images/photo.jpg
+python -B computer_vision_pipeline.py --scale-image images/photo.jpg --reference-mm 50
 ```
 
-Das Ausschalten erhält bereits gespeicherte Fotos. Ausfallzeiten des Pi können keine rückwirkenden Kameraaufnahmen erzeugen.
+Replace `photo.jpg` and the example `50` with your file name and the actual distance between the marked points. Rerun the analysis after either operation. A stored mask correction is reused only for the matching source image and lens profile. Instructions for importing a mask, setting a scale, and calibrating the lens are in [M1](docs/m1-image-capture-system.md).
 
-### Bereits aufgenommene Fotos abholen
+Use actual capture times, rather than file modification times. If a photograph's timestamp is known but missing from its name or EXIF metadata, provide it with `--capture-times capture_times.csv`. See [M2](docs/m2-computer-vision-pipeline.md) for the format, export field definitions, and how existing results are merged.
 
-```powershell
-python analyse.py --abholen
-```
+Local development checks covered real photos, simulated lighting changes, manually introduced colour changes, and a simulated Pi timeout. The final installation still needs checks for the camera position, physical scale, segmentation accuracy, and consistency of the health score on an observed plant. The 3D reconstruction approximates depth and does not reconstruct hidden leaves. The current projection is not a model of the effect of watering, light, or other interventions.
 
-Dieser Aufruf entspricht beim normalen Betrieb `python analyse.py`: Vorhandene fertige Aufnahmen werden abgeglichen, ohne ein zusätzliches Foto auszulösen. Danach werden alle lokalen Bilder neu ausgewertet, auch bei einem Abruffehler.
+## Technical documentation
 
-Es werden nur fehlende Kamera-JPEGs übertragen. Die Aufnahmereihenfolge ergibt sich aus dem UTC-Zeitstempel im Sitzungsnamen. Lokal bleiben höchstens die neuesten 100 verfügbaren importierten Kamerabilder; die Bereinigung erfolgt erst nach einem erfolgreichen Download. Bilder auf dem Pi und andere lokale Dateien werden dabei nicht gelöscht.
-
-Nur übertragen, ohne neue Aufnahme und ohne Analyse:
-
-```powershell
-python analyse.py --abholen --nur-bild
-```
-
-`--nur-bild` ist für den Pi-Abruf vorgesehen und wird nicht mit `--lokal` oder einem lokalen Bildpfad kombiniert.
-
-### Verschiedene Pflanzen oder Datensätze untersuchen
-
-```powershell
-python analyse.py --lokal datensatz --einzelbilder --ausgabe auswertung_datensatz
-```
-
-Dieser Modus liefert Einzelmessungen ohne gemeinsame Gesundheits- oder Wachstumszeitreihe. Aufnahmen verschiedener Pflanzen werden dadurch nicht als Verlauf einer einzigen Pflanze interpretiert.
-
-### Masken prüfen und korrigieren
-
-```powershell
-python analyse.py --maske-korrigieren bilder/FOTO.jpg --ausgabe auswertung
-```
-
-`FOTO.jpg` wird durch den tatsächlichen Dateinamen ersetzt.
-
-| Bedienung | Wirkung |
+| Milestone | Document |
 |---|---|
-| Linke Maustaste | Blattbereich ergänzen |
-| Rechte Maustaste | Hintergrund entfernen |
-| `G` | GrabCut mit den gezeichneten Hinweisen erneut ausführen |
-| `+` / `-` | Pinselgröße ändern |
-| `U` | Letzte Änderung rückgängig machen |
-| `R` | Anfangszustand wiederherstellen |
-| Enter | Korrektur speichern |
-| Esc | Ohne Speichern schließen |
+| M1 | [Image Capture System](docs/m1-image-capture-system.md) |
+| M2 | [Computer Vision Pipeline and Measurement Reference](docs/m2-computer-vision-pipeline.md) |
+| M3 | [Plant Health Assessment](docs/m3-plant-health-assessment.md) |
+| M4 | [Digital Twin and 3D Viewer](docs/m4-digital-twin.md) |
 
-Die Korrektur wird an den Inhalt der Originaldatei und das Objektivprofil gebunden. Nach dem Speichern wird der normale Analyselauf erneut gestartet. Die Korrektur wird für genau diese Aufnahme als Messmaske verwendet.
+Use a separate series identifier (`MESSREIHE`) and output folder for another plant. Configure the region of interest and scale in `computer_vision_pipeline.py`, reference review and score weights in `health_assessment.py`, and the camera view and projection thresholds in `digital_twin.py`. Run any of the four scripts with `--help` to see its options.
 
-### Neue Skriptversion oder neue Pflanze
-
-Bei jedem Lauf werden alle ausgewählten Aufnahmen, automatischen Masken und Zustandsvergleiche vollständig neu berechnet. Die Referenzen und die zeitliche Glättung werden dabei ausschließlich im Arbeitsspeicher aus der aktuellen Bildauswahl aufgebaut. Eine Prüfsumme der Skriptdatei wird im JSON als Herkunft des Verfahrens dokumentiert. Manuelle Korrekturen und der vorhandene Maßstab werden wiederverwendet.
-
-Neue Masken, Kontrollbilder, Ergebnisse und Diagramme werden zunächst vollständig erstellt und anschließend gemeinsam übernommen. Bei einem Schreibfehler wird die vorherige Ausgabe wiederhergestellt; falls auch die Wiederherstellung blockiert wird, nennt die Fehlermeldung den erhaltenen Sicherungspfad. Parallel schreibende Analyseläufe im selben Ausgabeordner werden abgewiesen. Dafür wird keine `.analyse.lock` im Ausgabeordner angelegt.
-
-Für eine andere Pflanze wird eine eigene Bildserie und eine eigene Kennung in `MESSREIHE` verwendet. `--neue-referenz` verlangt zusätzlich eine brauchbare Referenz in der Auswahl. Fehlt diese, bleibt die bisherige Auswertung erhalten:
-
-```powershell
-python analyse.py --lokal bilder --neue-referenz --ausgabe auswertung
-```
-
-### Browseransichten
-
-HTML, CSS und JavaScript liegen als feste Projektdateien in `digital twin/`, `gesundheitssystem/` und `grafiken/`. Beim Analyselauf werden die JSON-Daten und PNG-Diagramme aktualisiert. JavaScript lädt diese Daten; die Webseiten bleiben als feste Dateien im Projekt.
-
-Die folgenden Befehle öffnen die Seiten über einen lokalen Server (`127.0.0.1`). Die JSON-Dateien werden automatisch geladen. Wird eine HTML-Datei per Doppelklick geöffnet, kann JavaScript die JSON-Datei aufgrund der Browserregeln für lokale Dateien nicht automatisch lesen. Für Digital Twin und Gesundheit werden daher die Python-Befehle verwendet. Internet und Pi-Verbindung sind dafür nicht erforderlich. Nach 15 Minuten ohne Zugriff beendet sich der Server. `--ohne-browser` aktualisiert nur die Daten.
-
-### Gesundheitsansicht öffnen
-
-Die Seite wird aus vorhandenen Ergebnissen ohne Pi-Abruf geöffnet:
-
-```powershell
-python gesundheitsbewertung.py
-```
-
-Neben dem neuesten Foto werden der Gesundheitsscore, die fünf farbbezogenen Teilbewertungen und die Blattmerkmale gezeigt. Die Ergebnishistorie bleibt in `auswertung/`. Eine nicht bewertbare letzte Aufnahme bleibt als solche sichtbar. Der bisherige Befehl `python analyse.py --gesundheit` funktioniert ebenfalls.
-
-### Grafiken öffnen
-
-Die Datei `grafiken/grafiken.html` kann per Doppelklick geöffnet werden. Über die Reiter wird das Diagramm ausgewählt; **PNG öffnen** zeigt die Grafik in einem eigenen Browser-Tab. Die Seite funktioniert auch ohne Internetverbindung.
-
-```powershell
-python computer_vision_pipeline.py --grafiken
-```
-
-Der Befehl öffnet die feste Galerie mit den vorhandenen PNG-Dateien. Liegen sie noch unter `auswertung/grafiken/`, werden sie in den Projektordner `grafiken/` übernommen. Fotos und Messwerte werden dabei nicht neu ausgewertet. Der bisherige Befehl `python analyse.py --grafiken` funktioniert ebenfalls.
-
-### Digital Twin öffnen
-
-Nach der Analyse wird die lokale Browseransicht geöffnet. Vorhandene Ergebnisse lassen sich auch ohne neue Analyse öffnen:
-
-```powershell
-python digital_twin.py
-python digital_twin.py --3d-aus-json auswertung/ergebnis.json
-```
-
-`--3d-aus-json` aktualisiert die Daten für die Ansicht aus dem gespeicherten Ergebnis, ohne Fotos neu auszuwerten. `python analyse.py --3d` und `python analyse.py --3d-aus-json` bleiben als Einstieg verfügbar.
-
-Der Browser zeigt die Pflanze aus der letzten Aufnahme. Aus den sichtbaren Konturen und Farben werden gewölbte Blattflächen aufgebaut. Ziehen dreht die Pflanze. Unter **Blätter zählen** werden dieselben Blätter einzeln und nummeriert angezeigt. Ein `≈` kennzeichnet die automatisch geschätzte Anzahl. Überlappende Blätter können bei der Erkennung zusammenfallen. Die Tiefe und verdeckte Pflanzenteile sind aus dem einzelnen Foto nicht messbar.
-
-Mit dem Regler werden 0 bis 14 Tage nach der Aufnahme ausgewählt. Das Szenario verändert die Größe anhand einer geeigneten gemessenen Änderungsrate oder ersatzweise einer Annahme von 2 % pro Tag. Die Anzahl der dargestellten Blätter bleibt gleich. Die gemessene sichtbare Blattfläche steht weiterhin in den Ergebnissen.
-
-Nach dem Austausch des Skripts werden vorhandene Fotos mit `python analyse.py --lokal bilder` neu ausgewertet. Ist die automatische Anzahl bei einem Foto ungenau, können die sichtbaren Blätter [einzeln markiert werden](dokumentation/BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md#sichtbare-blätter-nachzählen).
-
-## Messverfahren und Referenz
-
-### Blattmaske
-
-Die Blattkerne werden anhand der CIELAB-Farbachsen bestimmt. Kühle Halterungen und schwach grüne Bodenbereiche werden möglichst ausgeschlossen. Dünne Verbindungen werden nach ihrer Nähe zu breiten Blattflächen gefiltert. GrabCut verfeinert anschließend ein schmales Konturband am Original. Die Kontrollansicht zeigt genau diese Maske über dem Foto.
-
-Gemessen wird die **sichtbare projizierte Blattfläche**. Überdeckte Blattteile werden nicht ergänzt. Blattstellung, Perspektive und Verdeckung können deshalb die gemessene Fläche verändern, ohne dass biologisches Wachstum stattgefunden hat.
-
-### Physische Maße
-
-Ohne verifizierten Maßstab werden Blattpixel ausgegeben. Für cm² und mm wird eine tatsächlich bekannte Strecke auf Höhe der Blattebene benötigt, beispielsweise ein dort liegendes Lineal:
-
-```powershell
-python analyse.py --massstab-bild bilder/FOTO.jpg --referenz-mm 50 --ausgabe auswertung
-```
-
-Die zwei Endpunkte der Strecke werden im Bild markiert. **50 mm ist ein Beispielwert und muss zur wirklich gemessenen Strecke passen.**
-
-```text
-s [mm/Pixel] = Referenzlänge [mm] / Abstand der markierten Punkte [Pixel]
-Blattfläche [cm²] = Blattpixel × s² / 100
-```
-
-Die größte Ausdehnung der Blattmaske wird mit demselben Maßstab in Millimeter umgerechnet. Nach einer Änderung von Kamera- oder Blatthöhe muss der Maßstab überprüft werden. Geneigte Blätter und Blätter auf unterschiedlichen Höhen können mit einer einzelnen ebenen Referenz nur näherungsweise physisch vermessen werden.
-
-Für die Wide-Optik kann zusätzlich eine passende Objektivkalibrierung mit Schachbrettaufnahmen erstellt werden:
-
-```powershell
-python analyse.py --kalibrieren kalibrierbilder
-```
-
-Das verwendete Muster und seine echte Feldgröße müssen zu den Einstellungen passen. Details und die weitere Marker-Alternative stehen in der [Bildaufnahme-Spezifikation](dokumentation/BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md).
-
-### Relativer Zustandsindex
-
-Für jede bestätigte Kameraansicht wird innerhalb des aktuellen Laufs eine eigene brauchbare Referenz im Arbeitsspeicher aufgebaut. Bei einer anderen Ansicht beginnt ein neuer Bezug mit dem ersten geeigneten Foto. Der Referenzstart erscheint bei 100 im Diagramm, zählt aber nicht als gemessener Zustandsvergleich. Farbe wird an übereinstimmenden Blattpositionen oder anhand geprüfter Blattfarbverteilungen verglichen. Der Index berücksichtigt auch lokale Verfärbungen, die den mittleren Grünton kaum verändern. Bei geeigneter Kamerageometrie und vollständigem Bildausschnitt fließt sichtbarer Flächenverlust ergänzend ein. Ein fester gesunder Basilikum-Grünton wird nicht vorausgesetzt.
-
-Geeignete Lichtänderungen werden anhand des registrierten Hintergrunds ausgeglichen. Die Blattfarben werden nicht auf eine Sollfarbe gesetzt. Überbelichtete oder zu dunkle Vergleichsbereiche werden ausgeschlossen; bei ungleichmäßiger Helligkeit kann ein getrennt gekennzeichneter Teilvergleich über bestätigte Farbverhältnisse erfolgen. Dabei bleiben Braun- und Strukturwertung aus. Ohne verlässliche Farbreferenz wird kein Score ausgegeben. Die exportierten Rohfarbwerte bleiben lichtabhängig.
-
-Berechnete Werte mit automatisch gewählter Referenz werden zunächst als `vorlaeufige_referenz` gekennzeichnet. Die Referenzaufnahme selbst hat den Status `referenzfoto_start_der_ansicht` und erhält keinen gemessenen Score. Bei einer ungültigen Aufnahme wird kein alter Score übernommen.
-
-Es werden keine automatischen `referenz.npz`-Dateien und keine Dateien in `kamera_referenzen/` erzeugt oder eingelesen. Fällt das älteste Referenzfoto aus dem 100-Bilder-Fenster, wird beim nächsten Lauf eine neue Referenz aus den verbleibenden Bildern gewählt. Dadurch können sich der Beginn der Reihe und neu berechnete relative Scores ändern. Der Index bezieht sich damit auf die aktuelle Bildauswahl, nicht dauerhaft auf das erste jemals aufgenommene Foto.
-
-### Zeitbezug
-
-Aufnahmezeiten werden aus eindeutigen Zeitangaben im Dateinamen oder aus Foto-Metadaten (EXIF) mit vorhandenem Zeitzonenoffset gelesen und als Coordinated Universal Time (UTC, koordinierte Weltzeit) ausgegeben. Ein Download- oder Änderungsdatum wird nicht als Aufnahmezeit verwendet. Bei externen Bildern muss eine erkannte Zeitangabe im Dateinamen zum angenommenen UTC-Zeitbezug passen.
-
-Wachstumsraten für die sichtbare Blattfläche sind bei vergleichbaren Aufnahmen ab 30 Minuten Abstand möglich. Abstände ab zwölf Stunden werden bevorzugt; kürzere werden gekennzeichnet, weil Maskenschwankungen stark ins Gewicht fallen. Leicht verschobene, bestätigte Ansichten können über ihren gemeinsamen Bildausschnitt verglichen werden. Bei einem Wechsel der Kameraansicht wird keine Wachstumsrate über den Wechsel berechnet. Die direkt gemessene Änderung in Blattpixeln pro Tag ist bei gleicher Bildauflösung trotzdem sichtbar und separat gekennzeichnet. Der 24-Stunden-Trend benötigt einen passenden Vergleich im selben Bewertungsmodus vor 22 bis 26 Stunden. Fehlt diese Grundlage, bleibt die entsprechende Angabe unbekannt. Kurze Zeitabstände können kleine Masken- oder Blattstellungsänderungen zu großen Tagesraten hochrechnen.
-
-Wenn die tatsächliche Aufnahmezeit bekannt ist, aber nicht im Dateinamen oder in den Bildmetadaten steht, kann eine CSV-Datei mit den Spalten `bild;captured_at` verwendet werden. Beispiel:
-
-```csv
-bild;captured_at
-foto.png;2026-11-12T10:30:00+01:00
-```
-
-```powershell
-python analyse.py --lokal bilder --aufnahmezeiten aufnahmezeiten.csv
-```
-
-Die Zeitdatei ordnet bekannte Zeiten zu; ein Dateiänderungsdatum wird nicht als Aufnahmezeit angenommen.
-
-## Ausgaben und Datenmodell
-
-Die Grafiken `02_wachstumsrate.png` und `04_gesundheit.png` markieren jede Aufnahme im Statusbereich unter der Messkurve. Die Aufnahmenummer entspricht der Zeile in `ergebnis.csv` ohne Kopfzeile. Ein Kreuz ist ein fehlender Messwert mit Grund. Referenzstarts und reine Farbteilvergleiche werden im Zustandsindex gesondert markiert. Teilbewertungen werden in Grafik 05 je Aufnahme angezeigt. Die Konsole nennt nach der Auswertung die Anzahl berechneter Werte.
-
-### Dateien
-
-| Pfad | Inhalt |
-|---|---|
-| `analyse.py` | Einstieg für den gesamten Ablauf und die bisherigen Befehle |
-| `bilderfassungssystem.py` | A-M1 · Pi-Fotos, Stundenplan, Aufnahmezeiten und Objektivkalibrierung |
-| `computer_vision_pipeline.py` | A-M2 · Blattmasken, Messwerte, CSV/JSON, Grafiken und lokaler Browserstart |
-| `gesundheitsbewertung.py` | A-M3 · Lichtabgleich, Gesundheitsscore und Daten für die Gesundheitsansicht |
-| `digital_twin.py` | A-M4 · Sichtbare Blattgeometrie, Modell, Prognose und Daten für die 3D-Ansicht |
-| `dokumentation/` | Spezifikationen zu Aufnahme, Bewertung und Messfeldern |
-| `bilder/` | Lokale Eingabebilder im üblichen Projektaufbau |
-| `auswertung/masken/` | Binäre Messmasken in Originalauflösung |
-| `auswertung/kontrolle/` | Je eine Kontrollansicht pro lesbarer Aufnahme, Foto bis 1500 Pixel breit |
-| `grafiken/` | Fünf PNG-Diagramme und `grafiken.json`; feste Galerie aus HTML, CSS und JavaScript |
-| `auswertung/ergebnis.csv` | Tabellarische Kontrollausgabe |
-| `auswertung/ergebnis.json` | Strukturierte Datensätze für die weitere Verarbeitung |
-| `digital twin/digital_twin.json` | Modellzustand, 24-Stunden-Projektion, Prognosehistorie und Blattdaten für die Ansicht |
-| `digital twin/digital_twin_3d.html` mit `digital_twin_3d.js` und `digital_twin_3d.css` | Lokale Browseransicht, JavaScript und Gestaltung |
-| `gesundheitssystem/gesundheitssystem.html`, `.css`, `.js`, `.json` | Lokale Gesundheitsansicht und zugehörige Daten |
-| `auswertung/massstab.npz` | Gespeicherte Referenzstrecke, sofern eingerichtet |
-| `auswertung/masken_korrektur/` | Dateigenaue manuelle Maskenkorrekturen |
-| `auswertung/blattlabels/` | Optionale Blattmarkierungen und importierte Blattlabels |
-| `kamera_kalibrierung.json` | Objektivprofil, sofern erstellt |
-
-Alle fünf Python-Dateien liegen im selben Projektordner. `python analyse.py` startet den gesamten Ablauf. `python bilderfassungssystem.py` holt nur die Pi-Fotos. `python computer_vision_pipeline.py bilder` verarbeitet die lokalen Bilder samt Ergebnissen, ohne den Pi zu kontaktieren oder eine Seite zu öffnen.
-
-Die Ausgabeordner werden bei der Verarbeitung erzeugt. Beim Pi-Abruf gilt der konfigurierte `BILDER_ORDNER`; bei lokalen Aufrufen kann `--ausgabe` den Zielordner festlegen. Ohne diese Option liegt `auswertung/` neben dem ausgewählten Bilderordner. Die Datenordner `grafiken/`, `digital twin/` und `gesundheitssystem/` liegen neben dem Standardordner `auswertung/`. Bei einem anders benannten Ausgabeordner werden die Daten darin abgelegt. Die HTML-, CSS- und JS-Dateien bleiben in ihren bisherigen Projektordnern. Bei abweichendem Ausgabeort kann den Browserbefehlen der Ergebnisordner mit `--ausgabe` übergeben werden. Die Prognosehistorie aus einem alten `auswertung/digital_twin.json` wird beim nächsten Analyselauf übernommen. Maßstab und manuelle Korrekturen gehören zum jeweiligen Messaufbau. Frühere automatisch erzeugte Referenzdateien werden nach einem erfolgreichen Lauf gezielt entfernt.
-
-### Diagramme
-
-| Datei | Darstellung |
-|---|---|
-| `01_wachstum.png` | Sichtbare Blattfläche in cm² bei gültigem Maßstab, sonst in Pixeln |
-| `02_wachstumsrate.png` | Geometrisch geprüfte Rate, separate direkte Änderung in Pixel/Tag und Status je Aufnahme |
-| `03_farbverlauf.png` | Rohfarben sowie Gelb- und Braunanteile |
-| `04_gesundheit.png` | Relativer Zustandsindex und zeitlicher Verlauf |
-| `05_teilscores.png` | Teilbewertungen je Aufnahme; fehlende Werte bleiben sichtbar |
-
-Die Diagramme werden auch bei fehlenden Einzelwerten erstellt. Fehlende Daten werden als solche dargestellt.
-
-### Datensätze und fehlende Werte
-
-Bei vorhandenen Originalen werden die Messungen neu berechnet. Für ältere Aufnahmen ohne Original bleiben die Werte aus der gespeicherten Historie erhalten. Wenn dieselbe Aufnahme in JSON und CSV vorhanden ist, gelten die JSON-Werte. Datensätze, die nur in der CSV stehen, bleiben als historische Einträge erhalten.
-
-Pro ausgewähltem Eingabebild wird ein Datensatz erzeugt. Auch eine unlesbare oder nicht auswertbare Datei bleibt mit ihrem Fehlerstatus enthalten.
-
-CSV bedeutet Comma-Separated Values, ein tabellarisches Textformat. Die Kontrollausgabe verwendet hier Semikolon, Dezimalkomma und UTF-8 mit Byte Order Mark (BOM), einer Codierungskennung für Tabellenprogramme. Fehlende Werte werden als `Nicht verfügbar` gekennzeichnet. Der Grund steht in `fehlende_werte`. Keine erkannten Warnungen werden mit `Keine` bezeichnet. Eine gemessene Null bleibt die Zahl `0`.
-
-JSON bedeutet JavaScript Object Notation. `ergebnis.json` enthält eine Liste mit einem Datensatz je Bild. Verwendet werden echte Zahlen und boolesche Werte. Nicht verfügbare Felder werden ausgelassen; ihre fachlichen Gründe stehen unter `analysis.missing_values`. Die API — Application Programming Interface, also Programmierschnittstelle — soll später diese strukturierten Daten übernehmen; ein Einlesen der CSV ist dafür nicht vorgesehen.
-
-| JSON-Bereich | Inhalt |
-|---|---|
-| `device_id` | Gerätezuordnung, bis zur bestätigten Plattform-ID ausgelassen |
-| `image` | Dateiname, Aufnahmezeit, relativer Bildpfad und Dateiprüfsumme |
-| `image_measurements` | Flächen-, Farb-, Geometrie- und Qualitätsmesswerte |
-| `health_assessment` | Zustandsindex, Teilbewertungen, Status und Scoring-Version |
-| `analysis` | Herkunft, Referenzbezug, Skriptstand und Gründe für fehlende Werte |
-
-Pixel- und Farbwerte bleiben ohne Maßstab verfügbar. Metrische Werte und fehlende Vergleichsscores werden nicht geschätzt. Fehlt bei älteren Daten ein aus derselben Aufnahme eindeutig ableitbarer Wert, werden Blattanteil, metrische Maße oder Farbcode aus den gespeicherten Eingangsgrößen ergänzt.
-
-Die Aufnahme erhält eine SHA-256-Prüfsumme. `analysis.pipeline_sha256` ist die gemeinsame Prüfsumme der vier Meilensteindateien. Zusammen mit `pipeline_version` und `scoring_version` macht sie den Verarbeitungsstand nachvollziehbar. Der abgeleitete Bildpfad muss bei der späteren Serveranbindung mit den tatsächlichen Speicherpfaden abgeglichen werden.
-
-Die vollständigen Feldnamen, Einheiten und Zuordnungen stehen im [Merkmalsverzeichnis](dokumentation/BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md). Ein automatischer Versand an die Webplattform ist noch nicht implementiert.
-
-## Konfiguration
-
-Die Einstellungen stehen oben in der jeweiligen Meilensteindatei. Eigene Werte aus einer älteren `analyse.py` werden beim Umstieg in die zuständige Datei übernommen.
-
-| Datei | Einstellungen |
-|---|---|
-| `bilderfassungssystem.py` | `PI_ADRESSE`, `PI_AUFNAHME`, `PI_FOTO_ORDNER`, `PI_SSH_KEY`, `BILDER_ORDNER`, `MAX_KAMERA_BILDER`, Objektivkalibrierung |
-| `computer_vision_pipeline.py` | `MESSREIHE`, `DEVICE_ID`, `ROI_NORMIERT`, Maßstab und Bildverarbeitung |
-| `gesundheitsbewertung.py` | `REFERENZ_FREIGEGEBEN`, Gewichte und Kennlinien für den Score |
-| `digital_twin.py` | `TWIN_FOTOANSICHT` und Grenzen der Prognose |
-
-Der Standard für `BILDER_ORDNER` ist `Downloads/Diploma/bilder` im Benutzerverzeichnis. Bei einem anderen Projektstandort wird dieser Pfad angepasst. Kameraadressen, Kennungen und Kalibrierdaten müssen zum jeweiligen Aufbau passen. Persönliche Zugangsdaten gehören nicht in die Projektdateien.
-
-Alle verfügbaren Optionen werden mit folgendem Befehl angezeigt:
-
-```powershell
-python analyse.py --help
-```
-
-## Validierung und bekannte Grenzen
-
-| Meilenstein | Technischer Nachweis mit diesem Stand | Vor der praktischen Abnahme |
-|---|---|---|
-| A-M1 · Bilderfassungssystem | Ein echtes BioBox-Original wurde lokal eingelesen und ausgewertet. | Kameraansicht und Bildqualität am endgültigen Aufbau prüfen. Die automatische Aufnahme separat einrichten und am Pi testen. |
-| A-M2 · Computer-Vision-Pipeline | Maske, eine Kontrollansicht je lesbarem Bild, Pixel- und Maßstabsrechnung, CSV/JSON und fünf Grafiken wurden geprüft. | Originale des Endaufbaus sichten und Blattflächen mit einem Maßstab auf Blatthöhe kontrollieren. |
-| A-M3 · Gesundheitsbewertungssystem | Der Index wurde an kontrollierten Lichtvarianten, simulierter Gelb-/Braunfärbung und ungeeigneten Aufnahmen geprüft. | Eine eigene Folge realer Aufnahmen derselben Pflanze mit überprüfter Referenz auswerten. |
-
-Für Version 4.4.1 wurden 13 lokale Regressionstests für den getrennten Abruf- und Analyseablauf erfolgreich ausgeführt. Dazu gehörten simulierte SSH-Timeouts und Abruffehler, neu hinzugefügte lokale Bilder, die ausdrückliche Offline-Auswertung, der reine Download und ein leerer Bildbestand. Ein vollständiger Verarbeitungstest mit künstlichen Pflanzenbildern bestätigte, dass nach einem Timeout beide Bilddatensätze, die Masken, die Kontrollbilder und alle fünf Grafiken neu erzeugt und alte Ausgaben ersetzt wurden.
-
-Frühere Entwicklungsprüfungen verwendeten ein BioBox-Original und künstliche Licht- und Farbvarianten. Solche Versuche ersetzen keine Prüfung der Messgenauigkeit am endgültigen Aufbau. Für diese Dokumentationsaktualisierung wurde keine neue Live-Verbindung zum Pi und keine neue biologische Bewertung getestet.
-
-| Prüfbereich | Erwartetes Verhalten |
-|---|---|
-| Reine Belichtungsänderung | Möglichst stabiler Zustandsindex bei unverändertem Pflanzenbild |
-| Echte sichtbare Verfärbung | Nachvollziehbare Änderung der passenden Teilbewertungen |
-| Ungeeigneter Lichtvergleich | Fehlender Score mit erklärtem Status |
-| Fehlender Maßstab | Pixelmessung verfügbar, physische Maße unbekannt |
-| Geänderte Kamerageometrie | Ungeeignete Wachstumsvergleiche werden unterdrückt |
-| Neuer Lauf oder neue Skriptdatei | Alle ausgewählten Aufnahmen, Masken und Vergleiche werden erneut berechnet |
-| Abruffehler bei vorhandenen lokalen Bildern | Lokale Analyse mit vollständiger neuer Dateiauswahl wird fortgesetzt |
-| Neue lokale Fotos bei erfolgreichem Abruf | Werden gemeinsam mit den Kameraimporten analysiert |
-| Kein lokales Bild | Vorhandene Auswertung bleibt erhalten |
-| Gesperrte Ausgabedatei | Vorherige zusammengehörige Ausgabe bleibt erhalten |
-
-Helle Blattzeichnungen, Schatten, ähnliche Hintergrundfarben, schmale Blätter und Verdeckungen bleiben anspruchsvolle Fälle. Eine automatische Maske kann dabei fehlerhaft sein und muss am Kontrollbild überprüft werden. Das Messverfahren erfasst weder verdeckte Blattflächen noch Pflanzenhöhe oder die dreidimensionale Blattoberfläche.
-
-## Roadmap
-
-Die folgenden Schritte beschreiben die geplante Weiterentwicklung. Sie sind noch keine zugesicherten Funktionen.
-
-| Bereich | Nächster Entwicklungsschritt | Ziel der Prüfung |
-|---|---|---|
-| Segmentierung | Reale Testserien mit unterschiedlichen Pflanzen, Blattzeichnungen, Hintergründen und Lichtbedingungen aufbauen | Abweichung zu unabhängig markierten Blattgrenzen bestimmen und verringern |
-| Physische Messung | Kalibrierte Aufnahmen mit echten Referenzmessungen vergleichen | Flächenfehler und Einfluss von Perspektive und Blatthöhe dokumentieren |
-| Zustandsbewertung | Längere Beobachtungsreihen mit protokolliertem Pflanzenzustand auswerten | Parameter und Aussage des relativen Index fachlich prüfen |
-| Datenübergabe | Einen versionierten API-Vertrag mit Geräte-, Bild- und Referenzzuordnung umsetzen | Übertragung mit Fehlerbehandlung und Wiederholung ohne doppelte Datensätze |
-| Umweltbezug | Zeitlich passende Sensorwerte mit den Bildbeobachtungen verknüpfen | Veränderungen im Zusammenhang mit den Aufnahme- und Umweltbedingungen darstellen |
-| Digitaler Zwilling | Zeitlich passende Sensordaten mit den vorhandenen Bildmesswerten verknüpfen | Nachvollziehbarer gemeinsamer Zeitbezug von Bildern und Zustandsdaten |
-| Wartbarkeit | Konfiguration auslagern, Aufnahmeintervalle konfigurierbar machen und Regressionstests im Repository verankern | Reproduzierbare Einrichtung und überprüfbare Änderungen |
-
-CSV kann als lokale Kontrollansicht erhalten bleiben. Die spätere Datenbankübergabe soll direkt aus den strukturierten Ergebnissen erfolgen. Neue Funktionen werden mit ihren Messannahmen, Versionsänderungen und Prüfergebnissen dokumentiert.
-
-## Fehlerbehebung
-
-| Beobachtung | Nächster Prüfschritt |
-|---|---|
-| Keine Bilder gefunden | Eingabepfad und unterstützte Dateiendungen prüfen; beim lokalen Ordner Bilder direkt darin ablegen |
-| SSH-Verbindung scheitert | Vorhandene lokale Bilder werden trotzdem ausgewertet. Für neue Pi-Fotos Erreichbarkeit, Tailscale, Benutzer und SSH-Schlüssel prüfen. |
-| Schlüsseldatei fehlt oder Agent kann sie nicht verwenden | `PI_SSH_KEY` prüfen und den eingerichteten Schlüssel mit `ssh-add` laden; lokal bleibt `--lokal bilder` verfügbar. |
-| Stundenauftrag wird nicht eingerichtet | Ausgabe der Testaufnahme prüfen; auf dem Pi Verfügbarkeit, Aktivität und Startfreigabe von cron prüfen |
-| cm² oder mm fehlen | Tatsächliche Referenzstrecke in der Blattebene einrichten und passenden Maßstab prüfen |
-| Scores ändern sich nach dem Wegfall alter Fotos | Die aktuelle Auswahl bildet die Referenz neu. Referenzdateiname im Datensatz prüfen. |
-| Ergebnisdateien können nicht ersetzt werden | `ergebnis.csv` in Excel und offene Ausgabedateien schließen; Analyse erneut starten |
-| Maske enthält Hintergrund oder lässt Blätter aus | Original und Kontrollbild vergleichen; gegebenenfalls die dateigenaue Korrekturfunktion nutzen |
-| Altes Objektivprofil enthält keine Bildgröße | Eine passende Kalibrierung mit `--kalibrieren` neu erstellen |
-| Interaktives Bildfenster fehlt | Grafische OpenCV-Installation und lokale Bildschirmausgabe prüfen |
-
-Für einen Fehlerbericht helfen der verwendete Befehl, Python- und Paketversionen, die betreffende Originalaufnahme, das zugehörige Kontrollbild und die relevante Fehlermeldung. Ein Statushinweis allein beschreibt noch nicht die Ursache einer Pflanzenveränderung.
-
-## Dokumentation und Mitarbeit
-
-| Dokument | Schwerpunkt |
-|---|---|
-| [Bildaufnahme-Spezifikation](dokumentation/BB-SPEC-IMG-001_A-M1_Bilderfassungssystem.md) | Aufnahmebetrieb, Segmentierung und physische Messung |
-| [Gesundheitsbewertung](dokumentation/BB-SPEC-HEALTH-001_A-M3_Gesundheitsbewertung.md) | Referenz, Lichtausgleich, Teilbewertungen und Zustandsindex |
-| [Merkmalsverzeichnis](dokumentation/BB-REF-MERKMALE-001_A-M2_Computer-Vision-Pipeline.md) | Datentypen, Einheiten, fehlende Werte und Exportzuordnung |
-| [Digital-Twin-Modell](dokumentation/BB-GUIDE-TWIN-001_A-M4_Digital-Twin-Modell.md) | Browseransicht, Messwerte und Projektion |
-
-Änderungen sollen an passenden Originalbildern überprüft und in verständlichen, zusammengehörigen Commits dokumentiert werden. Bei Änderungen des Messverfahrens oder der Bewertung werden die zugehörigen Versionsfelder und Spezifikationen gepflegt.
-
-Die neun HTML-, CSS- und JavaScript-Dateien der Ansichten werden als Quellcode eingecheckt. Sind die ganzen Ansichtsordner noch in `.gitignore` oder als `linguist-generated` in `.gitattributes` eingetragen, werden diese Regeln auf die erzeugten JSON- und PNG-Dateien beschränkt.
-
-Große Bilddatensätze, automatisch erzeugte Ausgaben und die virtuelle Python-Umgebung werden von der Quellcode-Versionierung getrennt gehalten. Kleine gezielte Prüfdaten und ihre Herkunft können die spätere Regressionstest-Sammlung ergänzen. Gerätebezogene Kalibrierdaten und geprüfte Maskenkorrekturen gehören zum jeweiligen Messaufbau. Automatische Pflanzenreferenzen bestehen nur während eines Analyselaufs.
-
-**Autorin:** Atida Ashta · **Projekt:** BioBox · **Teilbereich:** Bildaufnahme, Bildanalyse und Pflanzenmonitoring
+Future work includes testing the deployed capture schedule and measurement accuracy, validating the condition score over a documented plant series, and agreeing on the device identifiers, image paths, and HTTP contract for platform integration.

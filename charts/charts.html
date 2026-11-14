@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BioBox · Charts</title>
+  <link rel="stylesheet" href="charts.css">
+  <script src="charts.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><h1>BioBox</h1></header>
+    <div class="toolbar" id="chart-toolbar" hidden>
+      <nav aria-label="Charts">
+        <a href="#leaf-area" data-file="01_leaf_area.png">Leaf area</a>
+        <a href="#growth-rate" data-file="02_growth_rate.png">Growth rate</a>
+        <a href="#leaf-colour" data-file="03_leaf_color.png">Leaf colour</a>
+        <a href="#plant-health" data-file="04_plant_health.png">Plant health</a>
+        <a href="#health-subscores" data-file="05_health_subscores.png">Health subscores</a>
+      </nav>
+      <a class="open" id="chart-open" target="_blank" rel="noopener" hidden>Open PNG</a>
+    </div>
+    <figure aria-label="Selected chart">
+      <img id="chart-image" alt="" hidden>
+      <p id="chart-status" class="empty" role="status">Loading charts …</p>
+    </figure>
+  </main>
+  <noscript>You can open the PNG files directly from the charts folder.</noscript>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>BioBox · Plant Health</title>
+  <link rel="stylesheet" href="plant_health.css">
+  <script src="plant_health.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="masthead">
+      <h1>BioBox</h1>
+      <div class="timestamp" id="timestamp" hidden>
+        <time id="capture-time" hidden></time>
+        <span id="capture-unknown">Capture time unknown</span>
+      </div>
+    </header>
+    <section class="panel block" id="empty">
+      <h2>No photos available</h2>
+      <p class="muted" id="data-status" role="status">Loading data …</p>
+      <div id="data-load" class="data-load" hidden>
+        <label for="data-file">Choose plant_health.json</label>
+        <input id="data-file" type="file" accept=".json,application/json">
+      </div>
+    </section>
+    <div class="dashboard" id="dashboard" hidden>
+      <figure class="panel capture">
+        <div class="stage">
+          <img id="plant-photo" alt="Latest plant photo" hidden>
+          <p id="no-photo" class="muted no-photo">Original photo unavailable</p>
+        </div>
+      </figure>
+      <section class="panel hero-info" aria-label="Plant health score">
+        <div class="row-title">
+          <h2>Plant health score</h2>
+          <span id="health-category" class="status-pill check">No score</span>
+        </div>
+        <div>
+          <p id="score" class="score absent">
+            <strong id="score-value">—</strong><span id="score-unit" hidden>/ 100</span>
+          </p>
+          <div id="score-meter" class="score-track" data-meter aria-label="Plant health score" hidden><span class="fill"></span></div>
+          <p id="score-status" class="hint" hidden></p>
+        </div>
+      </section>
+      <section class="panel block parts-panel">
+        <h2>Health subscores</h2>
+        <ul class="part-list">
+          <li data-part="score_green">
+            <div class="part-label"><span>Colour distribution</span><strong>—</strong></div>
+            <div class="part-track" data-meter aria-label="Colour distribution"><span class="fill"></span></div>
+          </li>
+          <li data-part="score_yellow">
+            <div class="part-label"><span>Yellow and warm tones</span><strong>—</strong></div>
+            <div class="part-track" data-meter aria-label="Yellow and warm tones"><span class="fill"></span></div>
+          </li>
+          <li data-part="score_brown">
+            <div class="part-label"><span>Brown tones</span><strong>—</strong></div>
+            <div class="part-track" data-meter aria-label="Brown tones"><span class="fill"></span></div>
+          </li>
+          <li data-part="score_saturation">
+            <div class="part-label"><span>Colour saturation</span><strong>—</strong></div>
+            <div class="part-track" data-meter aria-label="Colour saturation"><span class="fill"></span></div>
+          </li>
+          <li data-part="score_hue">
+            <div class="part-label"><span>Hue</span><strong>—</strong></div>
+            <div class="part-track" data-meter aria-label="Hue"><span class="fill"></span></div>
+          </li>
+        </ul>
+      </section>
+      <section class="panel block traits-panel">
+        <h2>Leaf measurements</h2>
+        <dl class="stats">
+          <div><dt>Yellow fraction</dt><dd data-field="yellow_fraction_pct" data-unit=" %">—</dd></div>
+          <div><dt>Brown fraction</dt><dd data-field="brown_fraction_pct" data-unit=" %">—</dd></div>
+          <div><dt>Normalised green fraction</dt><dd data-field="greenness_index" data-digits="4">—</dd></div>
+          <div><dt>Mean leaf colour</dt><dd><i id="color-swatch" class="swatch" aria-hidden="true" hidden></i><span id="color-hex">—</span></dd></div>
+          <div><dt>Hue (OpenCV)</dt><dd data-field="mean_hue" data-unit=" / 180">—</dd></div>
+          <div><dt>Saturation</dt><dd data-field="mean_saturation" data-unit=" / 255">—</dd></div>
+        </dl>
+      </section>
+    </div>
+  </main>
+  <noscript>JavaScript is required for the health dashboard.</noscript>
+</body>
+</html>

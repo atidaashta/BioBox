@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "charts": [
+    {
+      "id": "leaf_area",
+      "label": "Leaf area",
+      "file": "01_leaf_area.png"
+    },
+    {
+      "id": "growth_rate",
+      "label": "Growth rate",
+      "file": "02_growth_rate.png"
+    },
+    {
+      "id": "leaf_color",
+      "label": "Leaf colour",
+      "file": "03_leaf_color.png"
+    },
+    {
+      "id": "plant_health",
+      "label": "Plant health",
+      "file": "04_plant_health.png"
+    },
+    {
+      "id": "health_subscores",
+      "label": "Health subscores",
+      "file": "05_health_subscores.png"
+    }
+  ]
+}
