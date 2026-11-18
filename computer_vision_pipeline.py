@@ -192,10 +192,9 @@ MARKER_HEIGHT_MM = 0.0
 MARKER_MM = 40.0
 NORMALISED_ROI = None  # Optional: (left, top, right, bottom), each from 0 to 1.
 PROCESSING_WIDTH = 960
-CHROMA_MIN = 4            # Minimum CIELAB a* distance from neutral grey.
 RATE_MIN_MINUTES = 30    # Minimum interval; daily rates can fluctuate over short intervals.
 RATE_STABLE_HOURS = 12  # Prefer a longer interval when available.
-ANALYSIS_VERSION = "4.13.0"
+ANALYSIS_VERSION = "4.14.0"
 CSV_UNAVAILABLE = "Unavailable"
 OBSOLETE_TWIN_CHART = "06_digital_twin.png"  # Remove only this obsolete generated chart when migrating older outputs.
 
@@ -664,105 +663,173 @@ def plant_roi(image_shape):
     return roi
 
 
-def broad_leaf_regions(leaf_mask):
-    "Remove narrow stems while retaining short leaf tips connected to wide regions."
-    if not np.any(leaf_mask):
-        return leaf_mask
-    radius = max(2.2, .0065*min(leaf_mask.shape))
-    stroke_width = cv2.distanceTransform(leaf_mask, cv2.DIST_L2, 5)
-    core = np.uint8(stroke_width >= radius)*255
-    if not np.any(core):
-        return np.zeros_like(leaf_mask)
-    span_px = cv2.dilate(core, _ellipse_kernel(2*round(radius*2.15)+1))
-    return cv2.bitwise_and(leaf_mask, span_px)
+def _green_evidence(image):
+    "Separate clear foliage colour from weaker green edges, including olive and pale green."
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    hue, value = hsv[:, :, 0], hsv[:, :, 2]
+    blue, green, red = [channel.astype(np.int16) for channel in cv2.split(image)]
+    green_red, green_blue = green-red, green-blue
+    chroma = value-np.minimum(np.minimum(blue, green), red)
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    lab_green = 128-lab[:, :, 1].astype(np.int16)
+
+    # Scale colour differences with brightness. The small absolute floors reject
+    # quantisation noise in black areas and colourless highlights in bright ones.
+    signal = (value >= 12) & (chroma >= np.maximum(4, .042*value))
+    # A blue cast can make a grey wall look green on the red-green axis alone.
+    # Require some separation from blue as well, including for cool greens.
+    green_hue = ((hue >= 30) & (hue <= 84) & (lab[:, :, 2] >= 129)
+                 & (green_blue >= np.maximum(2, .016*value))
+                 & ((lab_green >= 3) | (green_red >= np.maximum(2, .018*value))))
+    olive_hue = ((hue >= 26) & (hue < 30) & (lab_green >= 3)
+                 & (green_red >= -np.maximum(3, .042*value))
+                 & (green_blue >= np.maximum(5, .080*value)))
+    weak = signal & (green_hue | olive_hue)
+    strong = (weak & (chroma >= np.maximum(7, .135*value))
+              & ((lab_green >= 8) | ((green_red >= np.maximum(3, .065*value))
+                                    & (green_blue >= np.maximum(4, .030*value)))))
+    return strong, weak, hsv
 
 
-def segment_leaves(working_image, prior=None, prior_scene=None):
-    "Find leaf cores and nearby boundary pixels before refining the original image."
-    green, yellow = greenness(working_image)
-    roi = plant_roi(green.shape)
-    signal = np.max(working_image, axis=2) >= 23
-    dark = cv2.cvtColor(working_image, cv2.COLOR_BGR2GRAY) < 43
-    # Cyan hardware contains little yellow. Retain cool regions with strong green tones.
-    # Use Otsu's method only to initialise the threshold.
-    plant_colour = (((yellow >= 3) | ((yellow >= -4) & (green >= 19))) & signal
-                     & (~dark | (green >= 16)) & (roi > 0))
-    chroma = np.where(plant_colour, green, 0).astype(np.uint8)
-    otsu, _ = cv2.threshold(chroma, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    threshold_value = max(8, min(19, float(otsu)))
-    core = np.uint8(chroma >= threshold_value)*255
-    h, w = core.shape
-    image_width = max(3, 2*round(.0035*min(h,w))+1)
-    core = cv2.morphologyEx(core, cv2.MORPH_OPEN, _ellipse_kernel(image_width))
-    core = filter_components(core, max(20, round(.00007*core.size)))
-    near = cv2.dilate(core, _ellipse_kernel(5)) > 0
-    weak = (green >= max(CHROMA_MIN, 10)) & (yellow >= -2) & signal & (~dark | (green >= 17))
-    leaf_mask = np.uint8((core > 0) | (near & weak))*255
-
-    if prior is not None and prior_scene is not None and prior.shape == leaf_mask.shape:
-        # Keep warm pixels only within the previous leaf region
-        # and next to tissue visible in the current photo.
-        interior = cv2.erode(prior, _ellipse_kernel(image_width)) > 0
-        previous_l = cv2.cvtColor(prior_scene, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.int16)
-        current = cv2.cvtColor(working_image, cv2.COLOR_BGR2LAB)
-        current_l = current[:, :, 0].astype(np.int16)
-        current_a = current[:, :, 1].astype(np.int16)-128
-        contact = cv2.dilate(core, _ellipse_kernel(2*round(.047*min(h,w))+1)) > 0
-        warm = (yellow >= 12) & (current_a <= 30) & (current_l >= np.maximum(27, previous_l*.42))
-        leaf_mask[interior & contact & warm] = 255
-    leaf_mask = cv2.morphologyEx(leaf_mask, cv2.MORPH_CLOSE, _ellipse_kernel(3))
-    leaf_mask = fill_holes(leaf_mask)
-    leaf_mask = broad_leaf_regions(leaf_mask)
-    return filter_components(cv2.bitwise_and(leaf_mask, roi), max(24, round(.00009*leaf_mask.size)))
+def _connected_green(eligible, seeds):
+    "Keep eligible components supported by seed pixels without painting across gaps."
+    n, labels = cv2.connectedComponents(eligible.astype(np.uint8), connectivity=8)
+    selected = np.zeros(n, dtype=bool)
+    selected[labels[seeds & eligible]] = True
+    selected[0] = False
+    return selected[labels].astype(np.uint8)*255
 
 
-def fill_holes(leaf_mask):
-    "Fill only small holes fully enclosed by the mask."
-    count_items, labels, stats, _ = cv2.connectedComponentsWithStats(255-leaf_mask, connectivity=8)
-    retained = stats[:, cv2.CC_STAT_AREA] <= max(16, round(.00045*leaf_mask.size))
-    retained[0] = False
-    retained[np.unique(np.r_[labels[0], labels[-1], labels[:, 0], labels[:, -1]])] = False
-    leaf_mask[retained[labels]] = 255
-    return leaf_mask
+def _frame_border(values):
+    "Use the physical edge of the image, not the edge of a user-defined crop."
+    return np.concatenate((values[0], values[-1], values[1:-1, 0], values[1:-1, -1]))
 
 
-def refine_mask(image, small_mask, prior_scene=None):
-    "Use GrabCut to refine boundaries in a limited band of the original image."
+def _border_background(hsv, strong, weak):
+    "Identify a broad, uniform greenish cast connected to the frame border."
+    edges = _frame_border(weak)
+    minimum_contact = max(12, round(.14*edges.size))
+    if np.count_nonzero(edges) < minimum_contact:
+        return None
+    boundary_colours = _frame_border(hsv)[edges]
+    hue_count = np.bincount(boundary_colours[:, 0], minlength=180)
+    peak = int(np.argmax(np.convolve(hue_count, np.ones(13,dtype=int), mode='same')))
+    band = np.abs(boundary_colours[:, 0].astype(np.int16)-peak) <= 6
+    if np.count_nonzero(band) < minimum_contact:
+        return None
+    peak = float(np.median(boundary_colours[band, 0]))
+    q = boundary_colours[band, 1].astype(np.int16)
+    mid = float(np.median(q))
+    tolerance = float(np.clip(np.percentile(np.abs(q-mid), 94)+9, 18, 34))
+    similar = ((np.abs(hsv[:, :, 0].astype(np.int16)-peak) <= 8)
+               & (np.abs(hsv[:, :, 1].astype(np.int16)-mid) <= tolerance))
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(similar.astype(np.uint8), connectivity=8)
+    touch = np.bincount(_frame_border(labels), minlength=n)
+    backdrop = (touch >= minimum_contact) & (stats[:, cv2.CC_STAT_AREA] >= .09*weak.size)
+    backdrop[0] = False
+    if not np.any(backdrop):
+        return None
+    blocked = backdrop[labels]
+    # A leaf can touch the frame. Do not reinterpret it as the background
+    # unless a separate, clearly green foreground still remains.
+    if np.count_nonzero(strong & ~blocked) < max(24, .008*weak.size):
+        return None
+    return blocked.astype(np.uint8)*255
+
+
+def _working_leaf_mask(working_image):
+    "Find a coherent canopy and preserve nearby separate pale or small leaves."
+    strong, weak, hsv = _green_evidence(working_image)
+    background = _border_background(hsv, strong, weak) if NORMALISED_ROI is None else None
+    allowed = plant_roi(weak.shape) > 0
+    if background is not None:
+        allowed &= background == 0
+    weak &= allowed
+    strong &= allowed
+    minimum = max(6, round(.000012*weak.size))
+    coherent = cv2.erode(weak.astype(np.uint8), _ellipse_kernel(3))
+    core = cv2.bitwise_and(coherent, strong.astype(np.uint8))
+    if np.count_nonzero(core) < minimum:
+        core = coherent  # An entirely pale plant has no stronger anchors.
+    if np.count_nonzero(core) < minimum:
+        return np.zeros(weak.shape, np.uint8), background
+    span = max(3, round(.017*min(weak.shape)))
+    groups = cv2.dilate(core, _ellipse_kernel(2*span+1))
+    n, labels = cv2.connectedComponents(groups, connectivity=8)
+    counts = np.bincount(labels[core != 0], minlength=n)
+    counts[0] = 0
+    main = labels == np.argmax(counts)
+    distance = cv2.distanceTransform((~main).astype(np.uint8), cv2.DIST_L2, 5)
+    close = (core != 0) & (distance <= 2.65*span)
+    neighbors = np.zeros(n, dtype=bool)
+    neighbors[labels[close]] = True
+    neighbors &= counts >= minimum
+    neighbors[0] = False
+    active = neighbors[labels]
+    reach = round((1.8 if background is not None else 2.2)*span)
+    support = cv2.dilate(active.astype(np.uint8), _ellipse_kernel(2*reach+1)) > 0
+    return _connected_green(weak & support, (coherent != 0) & support), background
+
+
+def segment_leaves(working_image):
+    "Locate the plant and its candidate leaves at working resolution."
+    return _working_leaf_mask(working_image)[0]
+
+
+def _trim_thin_stems(mask, image_side, minimum):
+    "Trim long, narrow extensions while retaining small blades and short leaf tips."
+    distance = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+    radius = max(1.5, min(11.0, .0050*image_side))
+    cores = np.uint8(distance >= radius)
+    if not np.any(cores):
+        return filter_components(mask, minimum)
+    span = max(4, round(2.55*radius))
+    cross = _ellipse_kernel(3)
+    box = np.ones((3,3), np.uint8)
+    allowed = (mask > 0).astype(np.uint8)
+    # Follow the actual green surface when restoring tapered tips. A nearby
+    # disconnected stem on the other side of a gap does not inherit the core.
+    for step in range(span):
+        cores = cv2.bitwise_and(cv2.dilate(cores, box if step % 3 == 2 else cross), allowed)
+    return filter_components(cores*255, minimum)
+
+
+def _refine_supported_leaves(image, small_mask, background):
+    "Recheck leaf colour on the original pixels instead of expanding the mask into background."
     h, w = image.shape[:2]
     base = cv2.resize(small_mask, (w,h), interpolation=cv2.INTER_NEAREST)
     if not np.any(base):
         return base
-    edge = max(3, round(.004*min(h,w)))
+    edge = max(3, round((.005 if background is not None else .010)*min(h,w)))
     x,y,b,hb = cv2.boundingRect(base)
     x0,y0,x1,y1 = max(0,x-edge-2),max(0,y-edge-2),min(w,x+b+edge+2),min(h,y+hb+edge+2)
-    reduced = base[y0:y1,x0:x1]
-    original = np.ascontiguousarray(image[y0:y1,x0:x1])
-    exterior = cv2.dilate(reduced, _ellipse_kernel(2*edge+1))
-    interior = cv2.erode(reduced, _ellipse_kernel(2*max(1,edge//2)+1))
-    gc = np.full(reduced.shape, cv2.GC_BGD, np.uint8)
-    gc[exterior > 0] = cv2.GC_PR_BGD
-    gc[reduced > 0] = cv2.GC_PR_FGD
-    gc[interior > 0] = cv2.GC_FGD
-    # Prevent cool and weakly green hardware at the edge from joining the mask.
-    green, yellow = greenness(original)
-    cool = (yellow < -4) & (green < 19)
-    dark = (cv2.cvtColor(original, cv2.COLOR_BGR2GRAY) < 43) & (green < 16)
-    gc[((reduced == 0) & (cool | dark)) | ((yellow < -3) & (green < 16))] = cv2.GC_BGD
-    fine = reduced.copy()
-    if np.any(gc == cv2.GC_BGD) and np.any(gc == cv2.GC_FGD):
-        try:
-            cv2.setRNGSeed(0)
-            cv2.grabCut(original, gc, None, np.zeros((1,65), np.float64),
-                        np.zeros((1,65), np.float64), 1, cv2.GC_INIT_WITH_MASK)
-            fine = np.uint8((gc == cv2.GC_FGD) | (gc == cv2.GC_PR_FGD))*255
-        except cv2.error:
-            # Fall back to the usable initial mask if the colour distribution degenerates.
-            pass
-    fine = broad_leaf_regions(fill_holes(fine))
-    fine[(yellow < -3) & (green < 16)] = 0
-    base[y0:y1,x0:x1] = fine
-    base = cv2.bitwise_and(base, plant_roi((h,w)))
-    return filter_components(base, max(48, round(.00009*base.size)))
+    region = (slice(y0,y1),slice(x0,x1))
+    reduced = base[region].copy()
+    strong, weak, _ = _green_evidence(image[region])
+    support = cv2.dilate(reduced, _ellipse_kernel(2*edge+1)) > 0
+    if background is not None:
+        blocked = cv2.resize(background, (w,h), interpolation=cv2.INTER_NEAREST)[region]
+        support &= blocked == 0
+    seeds = (reduced != 0) | strong
+    fine = _connected_green(weak & support, seeds)
+    base[region] = _trim_thin_stems(fine, min(h,w), max(8, round(.000009*h*w)))
+    return cv2.bitwise_and(base, plant_roi((h,w)))
+
+
+def refine_mask(image, small_mask):
+    "Refine a supplied working mask using the same green/background criteria."
+    background = None
+    if NORMALISED_ROI is None:
+        h, w = small_mask.shape
+        frame = cv2.resize(image, (w,h), interpolation=cv2.INTER_AREA)
+        strong, weak, hsv = _green_evidence(frame)
+        background = _border_background(hsv, strong, weak)
+    return _refine_supported_leaves(image, small_mask, background)
+
+
+def _automatic_leaf_mask(image, working_image=None):
+    small, background = _working_leaf_mask(downscale(image) if working_image is None else working_image)
+    return _refine_supported_leaves(image, small, background)
 
 
 def leaf_colour_metrics(image, leaf_mask):
@@ -997,15 +1064,29 @@ def _text(panel, text, pos, size, colour, thickness=1):
 
 
 def review_overlay(image, leaf_mask, z, file_path):
-    "Draw fine leaf outlines and a short header on the original photo."
-    h, w = image.shape[:2]
+    "Show one inspection image, with a padded close-up of the measured leaf area."
+    h, w = leaf_mask.shape
+    if np.any(leaf_mask):
+        x, y, width, height = cv2.boundingRect(leaf_mask)
+        pad_x = max(20, round(.055*w), round(.10*width))
+        pad_y = max(20, round(.065*min(h,w)), round(.16*height))
+        view = (slice(max(0,y-pad_y), min(h,y+height+pad_y)),
+                slice(max(0,x-pad_x), min(w,x+width+pad_x)))
+        image, leaf_mask = image[view], leaf_mask[view]
+    h, w = leaf_mask.shape
     factor = min(1.,1500/w,1150/h)
     image_width, image_height = max(1,round(w*factor)),max(1,round(h*factor))
     camera_view = cv2.resize(image,(image_width,image_height),interpolation=cv2.INTER_AREA)
-    m = cv2.resize(leaf_mask,(image_width,image_height),interpolation=cv2.INTER_NEAREST)
-    camera_view[m > 0] = np.rint(.94*camera_view[m > 0]+.06*np.array([225,75,211])).astype(np.uint8)
+    coverage = cv2.resize(leaf_mask,(image_width,image_height),interpolation=cv2.INTER_AREA)
+    m = np.uint8(coverage >= 128)*255
+    marked = coverage > 0
+    opacity = .10*coverage[marked,None]/255
+    camera_view[marked] = np.rint((1-opacity)*camera_view[marked]+opacity*(206,190,32)).astype(np.uint8)
     contours, _ = cv2.findContours(m,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(camera_view,contours,-1,(240,45,228),max(1,round(image_width/1000)),cv2.LINE_AA)
+    # Tiny boundaries remain visible in the tint without filling the preview
+    # with outlines around every sensor-sized gap.
+    contours = [contour for contour in contours if cv2.contourArea(contour) >= 5]
+    cv2.drawContours(camera_view,contours,-1,(204,181,27),1,cv2.LINE_AA)
 
     panel_width = max(625,image_width)
     header = 94
@@ -1031,7 +1112,7 @@ def review_overlay(image, leaf_mask, z, file_path):
     timestamp = captured_at.replace("T", " ").replace("Z", " UTC") if captured_at else "Capture time unknown"
     row(timestamp,44,.48,(89,98,93))
     area = (f"{z['leaf_area_cm2']:.2f} cm2" if z.get("leaf_area_cm2") is not None
-               else f"{z.get('plant_pixels') or 0:,} Blattpixel".replace(","," "))
+               else f"{z.get('plant_pixels') or 0:,} leaf pixels")
     index = f"Health score {z['health_score']:.1f}/100" if z.get("health_score") is not None else "No health score available"
     source = "Manual mask" if z.get("_mask_source")=="manual" else "Automatic mask"
     row(f"{area}  |  {index}  |  {source}",65,.55,(39,52,45))
@@ -1111,7 +1192,7 @@ def correct_mask(image_path, output_dir, carry_forward=None):
         return save_mask_override(output_dir,sha,leaf_mask,image.shape[:2])
     leaf_mask = load_mask_override(output_dir,sha,image.shape[:2])
     if leaf_mask is None:
-        leaf_mask = refine_mask(image,segment_leaves(downscale(image)))
+        leaf_mask = _automatic_leaf_mask(image)
     original = leaf_mask.copy()
     h,w = leaf_mask.shape
     factor = min(1.,1400/w,800/h)
@@ -2417,7 +2498,7 @@ def _analyse_images(paths, output_dir, manual, independent_images, new_reference
     from digital_twin import leaf_points_path, update_twin_model, merge_twin_views, twin_leaf_geometry
     from health_assessment import (
         SCORE_WEIGHTS, REFERENCE_APPROVED, SCORING_VERSION, assess_health, save_health,
-        health_features, health_history, match_lighting, apply_lighting, health_status_label,
+        health_features, health_history, match_lighting, health_status_label,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2481,10 +2562,9 @@ def _analyse_images(paths, output_dir, manual, independent_images, new_reference
                 leaf_mask=ref["original_mask"].copy()
                 manually_corrected=ref["meta"].get("mask_source")=="manual"
             if leaf_mask is None:
-                small_mask = segment_leaves(normal if normal is not None else working_image,prior if normal is not None else None,
-                                          reference_image if normal is not None else None)
-                leaf_mask = refine_mask(apply_lighting(image,lighting_info) if normal is not None else image,
-                                         small_mask,reference_image)
+                # Use the same evidence for a photo whether analysed on its own
+                # or in a series. Lighting alignment is still used for health.
+                leaf_mask = _automatic_leaf_mask(image, working_image)
             small_mask = cv2.resize(leaf_mask,(working_image.shape[1],working_image.shape[0]),interpolation=cv2.INTER_NEAREST)
             z["_mask_source"] = "manual" if manually_corrected else "automatic"
             scale_mm_per_px, source = (measure_scale(image,manual,ruler) if not independent_images else
