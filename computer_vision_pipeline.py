@@ -194,7 +194,7 @@ NORMALISED_ROI = None  # Optional: (left, top, right, bottom), each from 0 to 1.
 PROCESSING_WIDTH = 960
 RATE_MIN_MINUTES = 30    # Minimum interval; daily rates can fluctuate over short intervals.
 RATE_STABLE_HOURS = 12  # Prefer a longer interval when available.
-ANALYSIS_VERSION = "4.14.0"
+ANALYSIS_VERSION = "4.15.0"
 CSV_UNAVAILABLE = "Unavailable"
 OBSOLETE_TWIN_CHART = "06_digital_twin.png"  # Remove only this obsolete generated chart when migrating older outputs.
 
@@ -776,22 +776,56 @@ def segment_leaves(working_image):
     return _working_leaf_mask(working_image)[0]
 
 
-def _trim_thin_stems(mask, image_side, minimum):
-    "Trim long, narrow extensions while retaining small blades and short leaf tips."
+def _trim_thin_stems(mask, image_side, minimum, value):
+    "Keep wide, green blades and trim thin connections, especially against dark gaps."
     distance = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
     radius = max(1.5, min(11.0, .0050*image_side))
-    cores = np.uint8(distance >= radius)
-    if not np.any(cores):
+    original_cores = distance >= radius
+    if not np.any(original_cores):
         return filter_components(mask, minimum)
-    span = max(4, round(2.55*radius))
+    allowed = (mask > 0).astype(np.uint8)
+    # Use the plant's own brightness as the reference. A blade in shadow can
+    # still pass; dark space beside a thin stem calls for stronger shape evidence.
+    leaf_value = float(np.percentile(value[original_cores], 60))
+    dark_gap = ((allowed == 0) & (value < .53*leaf_value)).astype(np.float32)
+    window = round(6*radius) | 1
+    dark_context = cv2.boxFilter(dark_gap, -1, (window,window), borderType=cv2.BORDER_REPLICATE)
+    shadow_weight = np.clip((dark_context-.22)/.35, 0., 1.)
+    cores = np.uint8(distance >= radius*(1.18+1.70*shadow_weight))
+    if not np.any(cores):
+        # A distant plant may consist of small blades throughout the picture.
+        cores = original_cores.astype(np.uint8)
+    span, shaded_span = max(4, round(2.55*radius)), max(4, round(1.65*radius))
     cross = _ellipse_kernel(3)
     box = np.ones((3,3), np.uint8)
-    allowed = (mask > 0).astype(np.uint8)
-    # Follow the actual green surface when restoring tapered tips. A nearby
-    # disconnected stem on the other side of a gap does not inherit the core.
+    unshaded = allowed & (dark_context <= .25)
     for step in range(span):
-        cores = cv2.bitwise_and(cv2.dilate(cores, box if step % 3 == 2 else cross), allowed)
+        # Grow along green pixels only. Shorter growth beside the pot prevents
+        # a wide blade from pulling in the long stem attached beneath it.
+        reachable = cv2.dilate(cores, box if step % 3 == 2 else cross)
+        if step < shaded_span:
+            cores = cv2.bitwise_and(reachable, allowed)
+        else:
+            cores |= cv2.bitwise_and(reachable, unshaded)
     return filter_components(cores*255, minimum)
+
+
+def _restore_pale_interior(image, mask, hue, value, support):
+    "Restore small, faint-green patches surrounded by a measured blade."
+    # Limit the search to gaps a narrow closing would fill. Neither this step
+    # nor the shape filter may fill a neutral wall gap or the dark pot itself.
+    enclosed = (cv2.morphologyEx(mask, cv2.MORPH_CLOSE, _ellipse_kernel(5)) > 0) & (mask == 0) & support
+    if not np.any(enclosed):
+        return mask
+    saturation_floor = np.maximum(2, .006*value[enclosed])
+    blue, green, red = image[enclosed].astype(np.int16).T
+    chroma = np.maximum(np.maximum(red,green),blue)-np.minimum(np.minimum(red,green),blue)
+    faint_green = ((green-red >= saturation_floor) & (green-blue >= saturation_floor)
+                   & (chroma <= np.maximum(5, .083*value[enclosed]))
+                   & (hue[enclosed] >= 30) & (hue[enclosed] <= 82) & (value[enclosed] >= 25))
+    dense = cv2.boxFilter(mask, -1, (7,7), borderType=cv2.BORDER_REPLICATE)
+    mask[enclosed] = np.uint8(faint_green & (dense[enclosed] >= 196))*255
+    return mask
 
 
 def _refine_supported_leaves(image, small_mask, background):
@@ -805,14 +839,16 @@ def _refine_supported_leaves(image, small_mask, background):
     x0,y0,x1,y1 = max(0,x-edge-2),max(0,y-edge-2),min(w,x+b+edge+2),min(h,y+hb+edge+2)
     region = (slice(y0,y1),slice(x0,x1))
     reduced = base[region].copy()
-    strong, weak, _ = _green_evidence(image[region])
+    crop = image[region]
+    strong, weak, hsv = _green_evidence(crop)
     support = cv2.dilate(reduced, _ellipse_kernel(2*edge+1)) > 0
     if background is not None:
         blocked = cv2.resize(background, (w,h), interpolation=cv2.INTER_NEAREST)[region]
         support &= blocked == 0
     seeds = (reduced != 0) | strong
     fine = _connected_green(weak & support, seeds)
-    base[region] = _trim_thin_stems(fine, min(h,w), max(8, round(.000009*h*w)))
+    blades = _trim_thin_stems(fine, min(h,w), max(8, round(.000009*h*w)), hsv[:, :, 2])
+    base[region] = _restore_pale_interior(crop, blades, hsv[:, :, 0], hsv[:, :, 2], support)
     return cv2.bitwise_and(base, plant_roi((h,w)))
 
 
@@ -1080,13 +1116,16 @@ def review_overlay(image, leaf_mask, z, file_path):
     coverage = cv2.resize(leaf_mask,(image_width,image_height),interpolation=cv2.INTER_AREA)
     m = np.uint8(coverage >= 128)*255
     marked = coverage > 0
-    opacity = .10*coverage[marked,None]/255
-    camera_view[marked] = np.rint((1-opacity)*camera_view[marked]+opacity*(206,190,32)).astype(np.uint8)
-    contours, _ = cv2.findContours(m,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
-    # Tiny boundaries remain visible in the tint without filling the preview
-    # with outlines around every sensor-sized gap.
-    contours = [contour for contour in contours if cv2.contourArea(contour) >= 5]
-    cv2.drawContours(camera_view,contours,-1,(204,181,27),1,cv2.LINE_AA)
+    # Keep every measured area visible in the tint. Outline the silhouette and
+    # larger gaps only, and clip the stroke to the measured side of each edge.
+    contours, hierarchy = cv2.findContours(m,cv2.RETR_CCOMP,cv2.CHAIN_APPROX_SIMPLE)
+    ink = np.zeros_like(m)
+    if hierarchy is not None:
+        significant = [contour for i,contour in enumerate(contours)
+                       if cv2.contourArea(contour) >= (22 if hierarchy[0,i,3] >= 0 else 6)]
+        cv2.drawContours(ink,significant,-1,255,2,cv2.LINE_AA)
+    opacity = np.maximum(.16*coverage, .76*np.minimum(ink,coverage))[marked,None]/255
+    camera_view[marked] = np.rint((1-opacity)*camera_view[marked]+opacity*(219,192,30)).astype(np.uint8)
 
     panel_width = max(625,image_width)
     header = 94
