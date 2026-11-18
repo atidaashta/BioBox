@@ -5,7 +5,7 @@ import base64
 import hashlib
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import cv2
@@ -16,19 +16,21 @@ from image_capture import parse_saved_time, find_images
 from computer_vision_pipeline import (
     select_input_images,
     HEALTH_JSON_FILE, _ellipse_kernel, lock_results, open_browser_view,
-    export_record, default_results_dir, load_result_history, leaf_colour_metrics,
+    export_record, default_results_dir, load_result_history,
     write_json_output, make_json_safe, omit_null_fields, viewer_directories,
 )
 
 
 # Reference and score settings
 REFERENCE_APPROVED = False  # Label the reference as reviewed or provisional without blocking the score.
-SCORING_VERSION = "4.1.0"
+SCORING_VERSION = "5.0.0"
 
 # Colour component weights and scoring response curves.
-SCORE_WEIGHTS = {"green": .30, "yellow": .20, "brown": .25, "saturation": .15, "hue": .10}
-SCORE_HALF_POINTS = {"hist": .20, "greenness_index": .024, "yellow": 8., "brown": 4.5,
-             "saturation": .23, "hue": 8., "area": .19, "image_shape": .52, "local_path": 12.}
+SCORE_WEIGHTS = {"green": .30, "yellow": .26, "brown": .26, "saturation": .08, "hue": .10}
+_SRGB = np.arange(256, dtype=np.float32)/255
+_LINEAR = np.where(_SRGB<=.04045, _SRGB/12.92, ((_SRGB+.055)/1.055)**2.4)
+_LOG_LIGHT = np.log(np.maximum(_LINEAR, 1e-5))
+_COLOUR_QUANTILES = [.20,.50,.75,.85,.92,.97]
 
 
 def continuous_score(deviation, half_point):
@@ -52,53 +54,79 @@ def apply_lighting(image, info):
     return np.rint(np.clip(out,0,1)*255).astype(np.uint8)
 
 
-def colour_without_brightness(image, gain=None):
-    rgb = image.astype(np.float32)
-    if gain is not None:
-        rgb *= np.asarray(gain,dtype=np.float32)
-    rgb *= 160./np.maximum(1.,rgb.max(axis=2,keepdims=True))
-    return np.rint(rgb).clip(0,255).astype(np.uint8)
+def log_leaf_colour(bgr):
+    "Two brightness-independent colour coordinates: log(red/green), log(blue/green)."
+    linear = _LOG_LIGHT[bgr]
+    return linear[..., [2,0]]-linear[..., 1,None]
+
+
+def _coords(x, y, width, height):
+    return np.column_stack((np.ones(len(x)), 2*x/max(1,width-1)-1, 2*y/max(1,height-1)-1))
 
 
 def match_chromaticity(working_image, ref_image, idx, xx, yy, info):
-    "Estimate white balance from colour ratios in verified stable parts of the image."
+    "Verify a colour-cast correction on separate background samples, never on the plant."
     h,w = working_image.shape[:2]
-    cur = working_image.reshape(-1,3)[idx].astype(float)
-    previous = ref_image.reshape(-1,3)[idx].astype(float)
-    ok = (cur.min(axis=1)>=12)&(previous.min(axis=1)>=12)
+    cur = working_image.reshape(-1,3)[idx]
+    previous = ref_image.reshape(-1,3)[idx]
+    ok = (cur.min(axis=1)>=11)&(previous.min(axis=1)>=11)
     train = ok & (np.arange(len(idx))%4!=0)
     test = ok & ~train
     if np.count_nonzero(train)<300 or np.count_nonzero(test)<120:
         return None
-    def log_chroma(bgr):
-        return np.log(bgr[:,[0,2]]/bgr[:,[1]])
-    delta = log_chroma(previous)-log_chroma(cur)
-    gain = np.median(delta[train],axis=0)
-    if np.max(np.abs(gain))>.40:
-        return None
-    error = np.max(np.abs(delta-gain),axis=1)
+    delta = log_leaf_colour(previous)-log_leaf_colour(cur)
+    design = _coords(xx,yy,w,h)
+    coeffs = np.zeros((3,2), np.float64)
+    coeffs[0] = np.median(delta[train],axis=0)
+    if np.max(np.abs(coeffs[0])) > .92:
+        return None  # A very large cast cannot be distinguished from a scene change.
+    error = np.max(np.abs(delta-design@coeffs),axis=1)
+    # Only use a spatial correction if independently sampled background pixels
+    # support it. Regularisation keeps corners with little data from drifting.
+    train_design, train_delta = design[train], delta[train]
+    fit = coeffs.copy()
+    reg = np.diag([.01,1.0,1.0])
+    for _ in range(4):
+        residual = np.max(np.abs(train_delta-train_design@fit),axis=1)
+        weight = np.sqrt(np.minimum(1.,max(.045, 2.5*float(np.median(residual)))/(residual+1e-7)))
+        fit = np.linalg.lstsq(np.vstack((train_design*weight[:,None],reg)),
+                              np.vstack((train_delta*weight[:,None],reg@coeffs)),rcond=None)[0]
+    fitted_error = np.max(np.abs(delta-design@fit),axis=1)
+    spatial = (np.max(np.abs(fit[1:])) < .45 and np.max(np.abs(fit[0])+np.abs(fit[1:]).sum(axis=0)) < 1.05
+               and np.median(fitted_error[test])+.012 < .80*np.median(error[test])
+               and np.percentile(fitted_error[test],80) <= np.percentile(error[test],80))
+    if spatial:
+        coeffs,error = fit,fitted_error
     sampling_grid = (4*yy//h)*4+4*xx//w
-    fields = []
+    good, bad = [], []
     for i in range(16):
         sample = error[test & (sampling_grid==i)]
-        if len(sample)>=45 and np.median(sample)<=.09 and np.percentile(sample,75)<=.145:
-            fields.append(i)
-    stable = test & np.isin(sampling_grid,fields)
-    if (len(fields)<4 or len({i//4 for i in fields})<2 or len({i%4 for i in fields})<2
-            or np.count_nonzero(stable)<.30*np.count_nonzero(test)):
+        if len(sample)<24:
+            continue
+        (good if np.median(sample)<=.10 and np.percentile(sample,75)<=.20 else bad).append(i)
+    stable = test & np.isin(sampling_grid,good)
+    if (len(good)<4 or len({i//4 for i in good})<2 or len({i%4 for i in good})<2
+            or np.count_nonzero(stable)<.32*np.count_nonzero(test)):
         return None
-    zone = np.zeros((h,w),np.uint8)
-    for i in fields:
+    whole_view = (len(good)>=7 and len({i//4 for i in good})>=3 and len({i%4 for i in good})>=3
+                  and np.median(error[test])<=.068 and np.percentile(error[test],90)<=.22)
+    zone = np.full((h,w),255 if whole_view else 0,np.uint8)
+    for i in (bad if whole_view else good):
         y,x = divmod(i,4)
-        zone[y*h//4:(y+1)*h//4,x*w//4:(x+1)*w//4] = 255
-    zone = cv2.dilate(zone,_ellipse_kernel(max(3,round(.10*min(h,w)))))
-    info.update(model="chromatic_region",corrected=True,_lighting_region=zone,
-                chroma_residual=round(float(np.median(error[stable])),4))
-    return colour_without_brightness(working_image,[np.exp(gain[0]),1.,np.exp(gain[1])])
+        # The proportions match the boundaries used to label each sample.
+        ys = slice((y*h+3)//4,((y+1)*h+3)//4)
+        xs = slice((x*w+3)//4,((x+1)*w+3)//4)
+        zone[ys,xs] = 0 if whole_view else 255
+    exposure = float(np.median((_LOG_LIGHT[cur[:,1]]-_LOG_LIGHT[previous[:,1]])[stable]))
+    info.update(model=("chromaticity_spatial" if spatial else "chromaticity_global") if whole_view else "chromatic_region",
+                corrected=bool(np.max(np.abs(coeffs))>.015),_lighting_region=zone,_colour_offset=coeffs,
+                chroma_residual=round(float(np.median(error[stable])),4),
+                exposure_ratio=round(math.exp(exposure),3))
+    return working_image  # The measured features use the corrected log ratios, not rendered RGB.
 
 
 def match_lighting(working_image, leaf_mask, ref_image=None, reference_mask=None, allow_chroma=False):
-    """Estimate exposure and white balance using the background alone. Validate the linear, gamma and gradual lighting models on held-out pixels. Return no verified correction if validation fails."""
+    "Estimate a background correction for colour scoring or for the sharpness check."
     info = {"model":"reference", "corrected":False, "background_error":None,
             "background_fraction_pct":None}
     if ref_image is None:
@@ -106,7 +134,7 @@ def match_lighting(working_image, leaf_mask, ref_image=None, reference_mask=None
     if reference_mask is None or working_image.shape != ref_image.shape:
         return None, ["unverified_lighting_comparison"], info
     if np.array_equal(working_image,ref_image):
-        info.update(model="identical",background_error=0.)
+        info.update(model="identical",background_error=0.,chroma_residual=0.,exposure_ratio=1.)
         return working_image.copy(),[],info
     h,w = leaf_mask.shape
     bg = cv2.dilate(cv2.bitwise_or(leaf_mask,reference_mask),np.ones((31,31),np.uint8)) == 0
@@ -118,6 +146,9 @@ def match_lighting(working_image, leaf_mask, ref_image=None, reference_mask=None
         return None, ["insufficient_background_for_lighting"], info
     idx = idx[np.linspace(0,len(idx)-1,min(len(idx),14000)).astype(int)]
     yy,xx = np.divmod(idx,w)
+    if allow_chroma:
+        colour = match_chromaticity(working_image,ref_image,idx,xx,yy,info)
+        return (colour,[],info) if colour is not None else (None,["unstable_lighting_correction"],info)
     x,y = 2*xx/max(w-1,1)-1,2*yy/max(h-1,1)-1
     cur = working_image.reshape(-1,3)[idx].astype(float)/255
     previous = ref_image.reshape(-1,3)[idx].astype(float)/255
@@ -173,9 +204,6 @@ def match_lighting(working_image, leaf_mask, ref_image=None, reference_mask=None
         fully_verified = (np.median(errors)<=5. and np.percentile(errors,90)<=16.
                              and (not regional or max(regional)<=13.))
     if not fully_verified:
-        colour = match_chromaticity(working_image,ref_image,idx,xx,yy,info) if allow_chroma else None
-        if colour is not None:
-            return colour,[],info
         return None,["unstable_lighting_correction"],info
     info["_coefficients"] = best
     normal = apply_lighting(working_image,info)
@@ -183,229 +211,317 @@ def match_lighting(working_image, leaf_mask, ref_image=None, reference_mask=None
     return normal,[],info
 
 
-def compare_leaf_distribution(working_image, leaf_mask, corrected, ref_image, reference_mask, info):
-    """Compare leaf colour distributions after verifying camera alignment and lighting against the background. New leaves do not need pixel matches."""
-    core = cv2.erode(leaf_mask, _ellipse_kernel(3)) > 0
-    old_core = cv2.erode(reference_mask, _ellipse_kernel(3)) > 0
-    counts = [int(np.count_nonzero(core)), int(np.count_nonzero(old_core))]
-    if min(counts) < 100:
-        return None, ["too_little_leaf_area_for_distribution"]
-    chromatic = info.get("model") == "chromatic_region"
-    if chromatic:
-        zone = info.get("_lighting_region")
-        if zone is None or zone.shape != leaf_mask.shape:
-            return None, ["unverified_lighting_comparison"]
-        fractions = [np.count_nonzero(core & (zone > 0))/counts[0],
-                   np.count_nonzero(old_core & (zone > 0))/counts[1]]
-        info["verified_color_region_pct"] = round(100*min(fractions), 2)
-        if min(fractions) < .65:
-            return None, ["too_little_verified_colour_region"]
-        core &= zone > 0
-        old_core &= zone > 0
-    elif info.get("model") not in ("linear", "curve", "gradient", "identical"):
-        return None, ["unverified_lighting_comparison"]
-    # Exclude clipped or very dark leaf pixels in each photo.
-    # Allow new leaves to appear in regions previously occupied by the background.
-    for image, selection in ((working_image, core), (ref_image, old_core)):
-        bad = (np.any(image >= 254, axis=2) | (np.max(image, axis=2) < 12))
-        bad = cv2.dilate(bad.astype(np.uint8), _ellipse_kernel(3)) > 0
-        selection[bad] = False
-    retained = [int(np.count_nonzero(core)), int(np.count_nonzero(old_core))]
-    fraction = min(retained[0]/counts[0], retained[1]/counts[1])
-    info["excluded_leaf_pct"] = round(100*(1-fraction), 2)
-    if min(retained) < 100 or fraction < .65:
-        return None, ["too_little_leaf_tissue_for_lighting_comparison"]
-    current_image = corrected
-    prior_image = colour_without_brightness(ref_image) if chromatic else ref_image
-    cur = leaf_colour_metrics(current_image, core.astype(np.uint8)*255)
-    previous = leaf_colour_metrics(prior_image, old_core.astype(np.uint8)*255)
-    def lab_pixel(image, selection):
-        pixel = image[selection].reshape(-1, 1, 3).astype(np.float32)/255
-        return cv2.cvtColor(pixel, cv2.COLOR_BGR2LAB).reshape(-1, 3)
-    current_time, prior = lab_pixel(current_image, core), lab_pixel(prior_image, old_core)
-    quantile = np.linspace(.02, .98, 49)
-    # Quantiles do not require matching leaf positions or pixel counts.
-    delta = np.quantile(current_time[:, 1:], quantile, axis=0)-np.quantile(prior[:, 1:], quantile, axis=0)
-    cur["_local_colour_pp"] = 100*float(np.clip((np.linalg.norm(delta, axis=1)-4)/17, 0, 1).mean())
-    def warm_colour_metrics(lab):
-        l, a, b = lab.T
-        yellow = np.clip((a+18)/22, 0, 1)*np.clip((b-9)/23, 0, 1)
-        brown = np.clip((a+8)/18, 0, 1)*np.clip((b-3)/14, 0, 1)*np.clip((64-l)/35, 0, 1)
-        return (yellow if chromatic else np.maximum(yellow, brown), brown)
-    warm, brown = warm_colour_metrics(current_time)
-    previous_warm, old_brown = warm_colour_metrics(prior)
-    cur["_warm_delta"] = 100*max(0., float(warm.mean()-previous_warm.mean()))
-    cur["_brown_delta"] = 100*max(0., float(brown.mean()-old_brown.mean()))
-    cur.update(_comparison_baseline=previous, _chromatic=chromatic, _leaf_distribution=True)
-    return cur, ["compared_leaf_colour_distribution"]
+def _valid_leaf_pixels(image, core, zone):
+    # Clipped highlights and near-black channels do not contain reliable colour.
+    measured = (image.min(axis=2) >= 7) & (image.max(axis=2) >= 23) & (image.max(axis=2) < 250)
+    return core & measured & zone
+
+
+def _profile(image, selected, offset=None):
+    y,x = np.nonzero(selected)
+    if len(y)>30000:
+        take = np.linspace(0,len(y)-1,30000,dtype=int)
+        y,x = y[take],x[take]
+    colour = log_leaf_colour(image[y,x])
+    if offset is not None:
+        colour = colour + _coords(x,y,image.shape[1],image.shape[0])@offset
+    return colour
+
+
+def _ramp(values, start, end):
+    t = np.clip((values-start)/(end-start),0.,1.)
+    return t*t*(3.-2.*t)
+
+
+def _warm_colour(colour):
+    red,blue = colour.T
+    # Yellow and red-brown evidence are colour shifts, not absolute darkness.
+    # This is intentionally unable to label a neutral shadow as browning.
+    warm = _ramp(-blue,.40,1.35)
+    red_brown = _ramp(red,.35,1.10)
+    return _ramp(red,-.92,-.11)*warm*(1.-red_brown),red_brown*warm
+
+
+def _colour_profile(colour):
+    red,blue = colour.T
+    yellow,red_brown = _warm_colour(colour)
+    log_saturation = np.maximum(0.,np.maximum(red,blue))-np.minimum(0.,np.minimum(red,blue))
+    centre = np.median(colour,axis=0)
+    r,b = np.exp(np.clip(centre,-7.,7.))
+    hue = math.degrees(math.atan2(math.sqrt(3)*(1.-b),2.*r-1.-b))
+    return {"colour_points":np.quantile(colour,_COLOUR_QUANTILES,axis=0),
+            "yellow":100.*float(np.mean(yellow)), "brown":100.*float(np.mean(red_brown)),
+            "saturation":float(np.median(log_saturation)), "hue":hue,
+            "hue_strength":float(np.ptp([r,1.,b])/max(r,1.,b))}
+
+
+def _local_colour_changes(working_image, ref_image, shared, offset, n_leaf, error):
+    "Measure coherent warm patches without treating isolated pixels as a symptom."
+    if np.count_nonzero(shared) < max(150,.50*n_leaf):
+        return 0.,0.
+    y,x = np.nonzero(shared)
+    now = log_leaf_colour(working_image[y,x])
+    if offset is not None:
+        now = now+_coords(x,y,working_image.shape[1],working_image.shape[0])@offset
+    old = log_leaf_colour(ref_image[y,x])
+    red_shift = now[:,0]-old[:,0] > .20+1.6*error
+    before,after = _warm_colour(old),_warm_colour(now)
+    changed_fractions = []
+    for start,end in zip(before,after):
+        candidates = np.zeros(shared.shape,np.uint8)
+        candidates[y,x] = np.uint8(red_shift & (end-start>.26))*255
+        opened = cv2.morphologyEx(candidates,cv2.MORPH_OPEN,_ellipse_kernel(3))
+        _,_,counts,_ = cv2.connectedComponentsWithStats(opened,connectivity=8)
+        sizes = counts[1:,cv2.CC_STAT_AREA]
+        changed_fractions.append(100.*float(sizes[sizes>=max(16,.0012*n_leaf)].sum())/n_leaf)
+    return tuple(changed_fractions)
+
+
+def _enclosed_leaf_patches(leaf_mask, reference_core, n_leaf):
+    "Look for small holes still surrounded by leaves and covered by the old blade."
+    # A green area mask can leave out a patch that has actually browned. Use
+    # such pixels only as local corroboration, without editing the saved mask.
+    solid = cv2.morphologyEx(leaf_mask,cv2.MORPH_CLOSE,_ellipse_kernel(5))
+    n,labels,stats,_ = cv2.connectedComponentsWithStats(255-solid,connectivity=8)
+    size = stats[:,cv2.CC_STAT_AREA]
+    covered = np.bincount(labels[reference_core],minlength=n)
+    keep = ((size>=max(16,.0005*n_leaf)) & (size<=.025*n_leaf) & (covered>=.85*size))
+    keep[0] = False
+    keep[np.unique(np.r_[labels[0],labels[-1],labels[:,0],labels[:,-1]])] = False
+    return keep[labels] & reference_core
 
 
 def health_features(working_image, leaf_mask, ref_image=None, reference_mask=None, alignment=None):
-    "Compare shared leaf tissue or, when the plant grows, verified colour distributions."
-    corrected, flags, info = alignment if alignment is not None else match_lighting(working_image,leaf_mask,ref_image,reference_mask)
-    if corrected is None or ref_image is None or reference_mask is None:
+    "Compare brightness-normalised leaf profiles, using only a verified field of view."
+    if ref_image is None or reference_mask is None:
+        return None, ["unverified_lighting_comparison"]
+    matched, flags, info = (alignment if alignment is not None else
+                           match_lighting(working_image,leaf_mask,ref_image,reference_mask,allow_chroma=True))
+    if matched is None:
         return None, flags or ["unverified_lighting_comparison"]
-    # Inset the mask by one pixel to reduce mixed leaf and background colours.
-    core = cv2.erode(leaf_mask, _ellipse_kernel(3))
-    reference_core = cv2.erode(reference_mask, _ellipse_kernel(3))
-    overlap = (core > 0) & (reference_core > 0)
-    n = int(np.count_nonzero(overlap))
-    n_cur, n_ref = cv2.countNonZero(core), cv2.countNonZero(reference_core)
-    fraction = n/max(1,min(n_cur,n_ref))
-    info["common_leaf_pct"] = round(100*fraction,2)
-    if n < 50 or fraction < .60 or n < .35*max(n_cur,n_ref):
-        cur, verification = compare_leaf_distribution(working_image, leaf_mask, corrected, ref_image, reference_mask, info)
-        return cur, flags+verification
-    # Discard pixels already clipped or too dark before lighting correction.
-    bad = (np.any(working_image >= 254,axis=2) | (np.max(working_image,axis=2) < 12)
-                | np.any(ref_image >= 254,axis=2) | (np.max(ref_image,axis=2) < 12))
-    bad = cv2.dilate(bad.astype(np.uint8), _ellipse_kernel(3)) > 0
-    chromatic = info.get("model")=="chromatic_region"
-    if chromatic:
-        overlap &= info["_lighting_region"]>0
-        part_number = int(np.count_nonzero(overlap))
-        info["verified_color_region_pct"] = round(100*part_number/max(1,n),2)
-        if part_number<max(50,.30*n):
-            return None,flags+["too_little_verified_colour_region"]
-        n = part_number
-    valid_mask = overlap & ~bad
-    comparable = int(np.count_nonzero(valid_mask))
-    info["excluded_leaf_pct"] = round(100*(1-comparable/max(1,n)),2)
-    if comparable < 50 or comparable < .65*n:
-        return None, flags + ["too_little_leaf_tissue_for_lighting_comparison"]
-    g = valid_mask.astype(np.uint8)*255
-    if chromatic:
-        ref_image = colour_without_brightness(ref_image)
-    cur = leaf_colour_metrics(corrected,g)
-    cur["_chromatic"] = chromatic
-    previous = leaf_colour_metrics(ref_image,g)
-    # Measure local colour changes continuously at matching image positions.
-    # Stable natural variegation cancels out in the comparison.
-    def lab_pixel(image):
-        pixel = image[valid_mask].reshape(-1,1,3).astype(np.float32)/255
-        return cv2.cvtColor(pixel,cv2.COLOR_BGR2LAB).reshape(-1,3)
-    current_time, prior = lab_pixel(corrected), lab_pixel(ref_image)
-    delta = current_time[:,1:]-prior[:,1:]
-    colour_distance = np.linalg.norm(delta,axis=1)
-    def warm_colour_metrics(lab):
-        l,a,b = lab.T
-        yellow = np.clip((a+18)/22,0,1)*np.clip((b-9)/23,0,1)
-        brown = np.clip((a+8)/18,0,1)*np.clip((b-3)/14,0,1)*np.clip((64-l)/35,0,1)
-        return (yellow,brown) if chromatic else (np.maximum(yellow,brown),brown)
-    warm,brown = warm_colour_metrics(current_time)
-    previous_warm,old_brown = warm_colour_metrics(prior)
-    # A darker patch does not count as increased browning without a red shift.
-    signal = np.clip((delta[:,0]-2)/7,0,1)
-    cur["_warm_delta"] = 100*float(np.maximum(0.,warm-previous_warm).mean())
-    cur["_brown_delta"] = 100*float((np.maximum(0.,brown-old_brown)*signal).mean())
-    cur["_local_colour_pp"] = 100*float(np.clip((colour_distance-4)/17,0,1).mean())
-    cur["_comparison_baseline"] = previous
-    return cur, flags
+    now_core = cv2.erode(leaf_mask,_ellipse_kernel(3)) > 0
+    ref_core = cv2.erode(reference_mask,_ellipse_kernel(3)) > 0
+    n_now,n_ref = np.count_nonzero(now_core),np.count_nonzero(ref_core)
+    common = now_core & ref_core
+    info["common_leaf_pct"] = round(100*np.count_nonzero(common)/max(1,min(n_now,n_ref)),2)
+    if min(n_now,n_ref)<100:
+        return None, ["too_little_leaf_tissue_for_lighting_comparison"]
+    zone = info.get("_lighting_region")
+    if zone is None:
+        if info.get("model")!="identical":
+            return None, ["unverified_lighting_comparison"]
+        zone = np.ones(leaf_mask.shape,bool)
+    else:
+        zone = zone > 0
+    now = _valid_leaf_pixels(working_image,now_core,zone)
+    before = _valid_leaf_pixels(ref_image,ref_core,zone)
+    reliable = min(np.count_nonzero(now)/n_now,np.count_nonzero(before)/n_ref)
+    info["verified_color_region_pct"] = round(100*reliable,2)
+    coefficients = info.get("_colour_offset")
+    exposure = info.get("exposure_ratio")
+    area_shift = max(n_now,n_ref)>1.22*min(n_now,n_ref)
+    lighting_shift = ((exposure is not None and not .60<=exposure<=1.65)
+                      or (coefficients is not None and np.max(np.abs(coefficients))>.19))
+    partial = info.get("model")=="chromatic_region" or reliable<.70 or (lighting_shift and area_shift)
+    if partial:
+        # If only part of the room has verified lighting, compare the same
+        # photographed leaf patch on both dates rather than two different crops.
+        paired = now & before
+        if np.count_nonzero(paired)<max(120,.24*min(n_now,n_ref)):
+            return None, ["too_little_verified_colour_region"]
+        before = now = paired
+    elif min(np.count_nonzero(now),np.count_nonzero(before)) < 120:
+        return None, ["too_little_leaf_tissue_for_lighting_comparison"]
+    if reliable<.35 and info.get("model")!="chromatic_region":
+        return None, ["too_little_leaf_tissue_for_lighting_comparison"]
+    info["excluded_leaf_pct"] = round(100*(1.-reliable),2)
+    cur = _colour_profile(_profile(working_image,now,coefficients))
+    previous = _colour_profile(_profile(ref_image,before))
+    error = float(info.get("chroma_residual",0.))
+    local = (0.,0.)
+    # Only use the position of a spot when the two masks still substantially
+    # cover the same plant. An expanding canopy is compared by distribution.
+    if np.count_nonzero(common)>=.72*max(n_now,n_ref) and reliable>=.65:
+        integral_leaf = min(n_now,n_ref)
+        shared = now & before
+        if not partial and np.count_nonzero(common)>=.85*max(n_now,n_ref):
+            patches = _enclosed_leaf_patches(leaf_mask,ref_core,integral_leaf)
+            trusted = _valid_leaf_pixels(working_image,patches,zone)
+            shared |= trusted & before
+        local = _local_colour_changes(working_image,ref_image,shared,coefficients,integral_leaf,error)
+    return {"current":cur,"previous":previous,"partial":partial,
+            "calibration_error":error, "local_warm":local,
+            "exposure_ratio":exposure,"coverage":reliable}, []
 
 
 def assess_health(z, condition_features, ref, allow_structure=True):
+    "Record the current comparison; health_history confirms changes across dates."
     if condition_features is None or not z["usable"]:
         z["health_status"] = "unusable"
         z["health_category"] = "no_data"
         return
-    cur, previous = condition_features, condition_features["_comparison_baseline"]
-    histogram_distance = float(cv2.compareHist(cur["_hist"],previous["_hist"],cv2.HISTCMP_BHATTACHARYYA))
-    green_loss = max(0.,previous["greenness_index"]-cur["greenness_index"]-.002)
-    local_path = cur["_local_colour_pp"]
-    z["score_green"] = (.42*continuous_score(max(0.,histogram_distance-.018), SCORE_HALF_POINTS["hist"])
-                        + .26*continuous_score(green_loss,SCORE_HALF_POINTS["greenness_index"])
-                        + .32*continuous_score(local_path,SCORE_HALF_POINTS["local_path"]))
-    # Warm colours include yellow and brown.
-    # A decrease in yellow does not imply recovery if that area has turned brown.
-    yellow_delta = cur["_warm_delta"]
-    brown_delta = cur["_brown_delta"]
-    z["score_yellow"] = continuous_score(max(0.,yellow_delta-.4),SCORE_HALF_POINTS["yellow"])
-    chromatic = cur.get("_chromatic",False)
-    z["score_brown"] = None if chromatic else continuous_score(max(0.,brown_delta-.3),SCORE_HALF_POINTS["brown"])
-    saturation_delta = abs(math.log((cur["mean_saturation"]+8)/(previous["mean_saturation"]+8)))
-    z["score_saturation"] = continuous_score(max(0.,saturation_delta-.025),SCORE_HALF_POINTS["saturation"])
-    hue_delta = 0.
-    if cur["mean_hue"] is not None and previous["mean_hue"] is not None:
-        d = abs(cur["mean_hue"]-previous["mean_hue"])
-        hue_delta = min(d,180-d)
-    lab_delta = float(np.linalg.norm(cur["_lab"][1:]-previous["_lab"][1:]))
-    z["score_hue"] = continuous_score(max(0.,max(hue_delta,lab_delta/2)-.7),SCORE_HALF_POINTS["hue"])
-    total_weight = sum(SCORE_WEIGHTS[k] for k in SCORE_WEIGHTS if z["score_"+k] is not None)
-    parts = [(SCORE_WEIGHTS[k]/total_weight,z["score_"+k]) for k in SCORE_WEIGHTS if z["score_"+k] is not None]
-    allow_structure = allow_structure and not chromatic and not cur.get("_leaf_distribution", False)
-    area_loss = max(0., 1-z["plant_pixels"]/max(1,ref["meta"]["plant_pixels"]))
-    z["_structure_score"] = None
-    if allow_structure:
-        # Use shape only as supporting evidence when visible leaf area decreases.
-        # A new leaf or growth alone does not lower the score.
-        form_delta = 0.
-        if z["compactness"] and ref["meta"].get("compactness"):
-            form_delta = max(0.,abs(math.log(z["compactness"]/ref["meta"]["compactness"]))-.15)
-        area = continuous_score(max(0.,area_loss-.035),SCORE_HALF_POINTS["area"])
-        image_shape = continuous_score(form_delta,SCORE_HALF_POINTS["image_shape"])
-        structure = area*(1-.2*min(1.,area_loss/.15)*(1-image_shape/100))
-        z["_structure_score"] = structure
-        parts = [(component_weight*.85,score) for component_weight,score in parts] + [(.15,structure)]
-    # Combine arithmetic and geometric means.
-    # One strong symptom can lower the score without forcing it to zero.
-    arith = sum(value*component_weight for component_weight,value in parts)
-    geo = math.exp(sum(component_weight*math.log(max(.01,value)) for component_weight,value in parts))
-    z["health_score_raw"] = z["health_score"] = min(100.,.65*arith+.35*geo)
+    cur,previous = condition_features["current"],condition_features["previous"]
+    partial = condition_features["partial"]
+    error = min(.12,condition_features["calibration_error"])
+    delta = cur["colour_points"]-previous["colour_points"]
+    red_change = np.maximum(0.,delta[:,0])
+    green_loss = .58*red_change[1]+.42*float(red_change[2:].mean())
+    local_yellow,local_brown = condition_features["local_warm"]
+    yellow_delta = max(2.4*local_yellow,cur["yellow"]-previous["yellow"])
+    brown_delta = max(2.4*local_brown,cur["brown"]-previous["brown"])
+    saturation_delta = abs(cur["saturation"]-previous["saturation"])
+    hue_delta = abs((cur["hue"]-previous["hue"]+180)%360-180)
+    hue_delta *= min(1.,min(cur["hue_strength"],previous["hue_strength"])/.34)
+    # Let verified background residuals absorb small residual casts or JPEG noise.
+    # Do not penalise higher green dominance or higher brightness by themselves.
+    z["score_green"] = continuous_score(green_loss-(.042+.85*error),.35)
+    z["score_yellow"] = continuous_score(yellow_delta-(.9+12*error),10.)
+    z["score_brown"] = continuous_score(brown_delta-(.7+9*error),8.)
+    z["score_saturation"] = continuous_score(saturation_delta-(.055+1.2*error),.55)
+    z["score_hue"] = continuous_score(hue_delta-(1.8+25*error),29.)
+    parts = [(weight,z["score_"+name]) for name,weight in SCORE_WEIGHTS.items()]
+    arith = sum(weight*score for weight,score in parts)
+    geo = math.exp(sum(weight*math.log(max(.01,score)) for weight,score in parts))
+    z["health_score_raw"] = z["health_score"] = min(100.,.73*arith+.27*geo)
     z["health_status"] = "reviewed_reference" if z.get("_reference_verified") else "provisional_reference"
-    z["_score_mode"] = "colour_and_structure" if allow_structure else "colour_only"
-    if chromatic:
-        z["_score_mode"] = "colour_ratio_verified_regions"
+    z["_score_mode"] = "chromatic_profile_partial" if partial else "chromatic_profile"
+    if partial:
         z["health_status"] += ";colour_ratio_verified_regions"
-    elif not allow_structure:
-        z["health_status"] += ";colour_comparison_only"
-    if cur.get("_leaf_distribution"):
-        z["_score_mode"] = "leaf_distribution_chromatic" if chromatic else "leaf_distribution_normalised"
-        z["health_status"] += ";leaf_colour_distribution"
     warnings = []
-    if local_path >= 7 or histogram_distance > .25 or hue_delta > 10:
+    if green_loss > .30+error or hue_delta > 18+30*error:
         warnings.append("leaf_colour_changed")
-    if yellow_delta >= 5:
+    if yellow_delta > max(5+12*error,.28*brown_delta):
         warnings.append("yellow_fraction_increased")
-    if not chromatic and brown_delta >= 2.5:
+    if brown_delta > 3.5+9*error:
         warnings.append("brown_fraction_increased")
-    if saturation_delta > .22:
+    if saturation_delta > .34+error:
         warnings.append("saturation_changed")
-    if allow_structure and area_loss > .15:
-        warnings.append("visible_leaf_area_decreased")
-    z["health_warnings"] = ";".join(warnings)
+    z["_photo_warnings"] = tuple(warnings)
+    z["health_warnings"] = ""
+    exposure = condition_features["exposure_ratio"]
+    # The size of a mask can still shrink in heavy shadow. Area is only
+    # supporting evidence, and only when exposure and camera pose are suitable.
+    z["_health_area_reliable"] = bool(allow_structure and not partial and exposure is not None
+                                      and .63<=exposure<=1.54 and condition_features["coverage"]>=.72)
+    z["_health_exposure"] = exposure
+
+
+def _area_observation(row):
+    if not row.get("usable") or row.get("_clipped") or not row.get("plant_pixels"):
+        return None
+    if row.get("_is_reference"):
+        return float(row["plant_pixels"]),1.
+    if not row.get("_health_area_reliable") or row.get("_pose") is None:
+        return None
+    scale = abs(float(np.linalg.det(np.asarray(row["_pose"])[:,:2])))
+    return ((float(row["plant_pixels"])/scale,float(row["_health_exposure"]))
+            if .96<=scale<=1.04 else None)
+
+
+def _persistent_area_score(now, area, previous):
+    "Require repeat area loss against a confirmed recent level, at similar exposures."
+    if area is None or len(previous)<3:
+        return None
+    value,exposure = area
+    comparable = [p for p in previous if .78 <= p[2]/exposure <= 1.28]
+    mature = [i for i,p in enumerate(comparable) if (now-p[0]).total_seconds()>=2*3600]
+    if not mature or mature[-1]<2:
+        return None
+    i = mature[-1]
+    most_recent = max(value,*(p[1] for p in comparable[i:]))
+    anchor = float(np.median(sorted(p[1] for p in comparable[:i])[-3:]))
+    if not anchor or most_recent>.88*anchor:
+        return None
+    loss = 1.-most_recent/anchor
+    return continuous_score(loss-.09,.23)
+
+
+def _set_category(row):
+    score = row["health_score"]
+    row["health_category"] = next(name for cutoff,name in
+        [(85,"very_good"),(70,"good"),(50,"monitor"),(30,"significant_change"),(0,"critical")] if score>=cutoff)
 
 
 def health_history(rows, prior_history):
-    "Smooth scores within each view and add comparable 24-hour changes."
-    first_selection = min((z["_capture_time"] for z in rows if z["_capture_time"]),default=None)
-    timeline = {}
-    if first_selection:
-        for camera_view,points in prior_history.items():
-            prior = [(datetime.fromisoformat(p["captured_at"].replace("Z","+00:00")),
-                        p["health_score"],p["mode"]) for p in points]
-            timeline[camera_view] = sorted(p for p in prior if p[0]<first_selection)
+    "Follow repeated changes over time without treating an isolated photo as a trend."
+    groups = {}
+    areas = {}
+    # The caller passes one run's photos in capture order. Legacy scores used a
+    # different scale; do not blend them into the brightness-independent series.
     for z in rows:
-        t = z["_capture_time"]
-        group = z.get("_camera_view_id")
-        raw_value = z.get("health_score_raw")
-        if raw_value is None:
+        t = z.get("_capture_time")
+        group = (z.get("_camera_view_id"),z.get("scoring_version",SCORING_VERSION))
+        raw = z.get("health_score_raw")
+        sha = z.get("_sha256")
+        if not t or not group[0]:
+            if raw is not None:
+                z["health_score"] = raw
+                _set_category(z)
             continue
-        scores = timeline.setdefault(group,[])
-        mode = z.get("_score_mode")
-        if t and scores and scores[-1][0]<t and scores[-1][2]==mode:
-            elapsed_hours = (t-scores[-1][0]).total_seconds()/3600
-            alpha = min(1.,max(.25,1-math.exp(-elapsed_hours/2.)))
-            z["health_score"] = alpha*raw_value+(1-alpha)*scores[-1][1]
-        score = z["health_score"]
-        z["health_category"] = next(n for limit,n in
-            [(85,"very_good"),(70,"good"),(50,"monitor"),(30,"significant_change"),(0,"critical")] if score>=limit)
-        if t:
-            previous_24h = [p for p in scores if p[2]==mode and 22<=(t-p[0]).total_seconds()/3600<=26]
-            if previous_24h:
-                comparison = min(previous_24h,key=lambda p:abs((t-p[0]).total_seconds()/3600-24*3600))
-                z["health_trend_24h"] = score-comparison[1]
-            if not scores or t>scores[-1][0]:
-                scores.append((t,score,mode))
+        line = groups.setdefault(group,[])
+        size_line = areas.setdefault(group,[])
+        earliest = t-timedelta(days=7)
+        eligible = [p for p in line if earliest<=p["time"]<t and (not sha or p["sha"]!=sha)]
+        recent = eligible[-5:]
+        recent_areas = [p[:3] for p in size_line if earliest<=p[0]<t and (not sha or p[3]!=sha)]
+        area = _area_observation(z)
+        if area is not None and (not size_line or t>size_line[-1][0]) and not any(sha and p[3]==sha for p in size_line):
+            size_line.append((t,*area,sha))
+        if raw is None:
+            continue
+        warning_candidates = set(z.get("_photo_warnings",()))
+        confirmed = set()
+        for symptom in warning_candidates:
+            for point in reversed(recent):
+                if symptom not in point["symptoms"]:
+                    break
+                if (t-point["time"]).total_seconds()>=2*3600:
+                    confirmed.add(symptom)
+                    break
+        structure = _persistent_area_score(t,area,recent_areas)
+        z["_structure_score"] = structure
+        target = raw
+        if structure is not None:
+            target = min(raw,.80*raw+.20*structure)
+            confirmed.add("visible_leaf_area_decreased")
+        if recent:
+            last = recent[-1]
+            elapsed = (t-last["time"]).total_seconds()/3600
+            difference = target-last["score"]
+            prior_direction = last["target"]-last["score"]
+            repeats = bool(confirmed or (elapsed>=2 and (
+                (difference < -5 and prior_direction < -3 and last["target"]<=target+6)
+                or (difference > 5 and prior_direction > 3 and last["target"]>=target-6))))
+            prior_level = .72*last["score"]+.28*float(np.median([p["target"] for p in recent[-3:]]))
+            weight = min(.66,max(.24,1.-2.**(-elapsed/26.)))
+            if repeats:
+                weight = max(.62,weight)
+            elif (len(recent)>1 and abs(last["target"]-recent[-2]["score"])>8
+                  and abs(target-recent[-2]["score"])<3.5):
+                weight = max(.78,weight)  # Return quickly from an isolated excursion.
+            elif abs(difference)>5:
+                weight = min(.33,weight)
+                # A one-off outlier must not enter twice via the recent centre.
+                prior_level = last["score"]
+            if z.get("_score_mode")=="chromatic_profile_partial":
+                weight = min(.55,weight)
+            score = weight*target+(1.-weight)*prior_level
+        else:
+            score = target
+        z["health_score"] = min(100.,max(0.,float(score)))
+        _set_category(z)
+        z["health_warnings"] = ";".join(sorted(confirmed))
+        if warning_candidates-confirmed and not confirmed:
+            z["health_status"] += ";change_awaiting_confirmation"
+        comparisons = [p for p in eligible if p["mode"]==z.get("_score_mode") and
+                       22<=(t-p["time"]).total_seconds()/3600<=26]
+        if comparisons:
+            near = min(comparisons,key=lambda p:abs((t-p["time"]).total_seconds()-86400))
+            z["health_trend_24h"] = z["health_score"]-near["score"]
+        # Only distinct captures can confirm the direction of a change.
+        if (not line or t>line[-1]["time"]) and not any(sha and p["sha"]==sha for p in line):
+            line.append({"time":t,"score":z["health_score"],"target":target,"mode":z.get("_score_mode"),
+                         "symptoms":warning_candidates,"sha":sha})
 
 
 HEALTH_STATUS_CODES = {
@@ -433,6 +549,9 @@ HEALTH_LABELS = {
     "colour_ratio_verified_regions": "Colour comparison in verified regions",
     "leaf_distribution_chromatic": "Leaf colour distribution without brightness",
     "leaf_distribution_normalised": "Leaf colour distribution with lighting correction",
+    "chromatic_profile": "Brightness-normalised leaf colour",
+    "chromatic_profile_partial": "Brightness-normalised colour in verified regions",
+    "change_awaiting_confirmation": "Visible change: compare the next suitable photo",
     "leaf_colour_distribution": "Leaf colour distribution",
     "no_comparable_score_22_to_26_hours_earlier": "No comparable score from 22 to 26 hours earlier",
     "brown_requires_verified_lighting": "Brown tones require verified lighting",

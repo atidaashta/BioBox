@@ -1124,8 +1124,8 @@ def review_overlay(image, leaf_mask, z, file_path):
         significant = [contour for i,contour in enumerate(contours)
                        if cv2.contourArea(contour) >= (22 if hierarchy[0,i,3] >= 0 else 6)]
         cv2.drawContours(ink,significant,-1,255,2,cv2.LINE_AA)
-    opacity = np.maximum(.16*coverage, .76*np.minimum(ink,coverage))[marked,None]/255
-    camera_view[marked] = np.rint((1-opacity)*camera_view[marked]+opacity*(219,192,30)).astype(np.uint8)
+    opacity = np.maximum(.11*coverage, .91*np.minimum(ink,coverage))[marked,None]/255
+    camera_view[marked] = np.rint((1-opacity)*camera_view[marked]+opacity*(235,67,187)).astype(np.uint8)
 
     panel_width = max(625,image_width)
     header = 94
@@ -1170,8 +1170,10 @@ def review_overlay(image, leaf_mask, z, file_path):
         notices.append("Colour comparison only")
     if z.get("_is_reference"):
         notices.append("Reference photo for this camera view")
-    if z.get("_score_mode")=="colour_ratio_verified_regions":
+    if z.get("_score_mode") in ("colour_ratio_verified_regions", "chromatic_profile_partial"):
         notices.append("Colour comparison in verified regions only")
+    if "change_awaiting_confirmation" in (z.get("health_status") or "").split(";"):
+        notices.append("Check the next photo to confirm a change")
     if notices:
         row(" | ".join(notices),84,.43,(96,106,100))
     save_png(file_path,panel)
@@ -1898,6 +1900,8 @@ def build_api_record(z, ref=None):
                      "illumination": {"method": z.get("_lighting_info",{}).get("model"),
                                       "corrected": z.get("_lighting_info",{}).get("corrected",False),
                                       "background_error": z.get("_lighting_info",{}).get("background_error"),
+                                      "background_chroma_residual": z.get("_lighting_info",{}).get("chroma_residual"),
+                                      "relative_exposure": z.get("_lighting_info",{}).get("exposure_ratio"),
                                       "excluded_leaf_pct": z.get("_lighting_info",{}).get("excluded_leaf_pct"),
                                       "common_leaf_pct": z.get("_lighting_info",{}).get("common_leaf_pct"),
                                       "verified_color_region_pct":z.get("_lighting_info",{}).get("verified_color_region_pct")},
@@ -2043,21 +2047,28 @@ def write_json_output(target, data):
 
 # Charts and analysis
 def plot_health_by_photo(rows, directory_path):
-    "Distinguish missing scores, reference photos and measured zeroes."
+    "Show the trend within each reference and distinguish gaps from a measured zero."
     from health_assessment import health_status_label
 
     n = len(rows)
     image_width = max(10., min(26., 5.+.52*n))
     fig, (ax, status_ax) = plt.subplots(2, 1, figsize=(image_width, 7.8), sharex=True,
                                      gridspec_kw={"height_ratios": [4, 1.5]})
-    x = np.arange(1, n+1)
     labels_text, colours, labels = [], [], []
+    previous_point = None
     for i, z in enumerate(rows, 1):
         score = z.get("health_score")
         valid_mask = isinstance(score, (int, float)) and math.isfinite(score) and 0 <= score <= 100
         reference = bool(z.get("_is_reference"))
+        timestamp = z.get("_capture_time") or parse_saved_time(z.get("captured_at"))
         if valid_mask:
-            ax.bar(i, score, width=.67, color="#32816c", zorder=3)
+            ax.bar(i, score, width=.67, color="#32816c", alpha=.57, zorder=3)
+            code = (z.get("_camera_view_id"),z.get("scoring_version"))
+            if previous_point and code[0] and previous_point[3]==code and timestamp:
+                p, old_score, old_stamp, _ = previous_point
+                if 0 < (timestamp-old_stamp).total_seconds() <= 7*86400:
+                    ax.plot([p,i],[old_score,score],color="#245c4e",lw=1.9,zorder=4)
+            previous_point = (i,score,timestamp,code) if timestamp else None
             # Show a genuinely measured zero.
             ax.scatter([i], [score], s=22, color="#245c4e", zorder=4)
             if n <= 45:
@@ -2065,15 +2076,17 @@ def plot_health_by_photo(rows, directory_path):
             raw_value = z.get("health_score_raw")
             if isinstance(raw_value, (int, float)) and math.isfinite(raw_value):
                 ax.scatter([i], [raw_value], marker="_", s=65, color="#795d91", zorder=5)
-            labels_text.append("Calculated")
+            labels_text.append("Verified region only" if z.get("_score_mode")=="chromatic_profile_partial" else "Calculated")
             colours.append("#32816c")
         elif reference:
+            previous_point = None
             ax.scatter([i], [100], marker="D", s=55, facecolor="white", edgecolor="#547da0", zorder=4)
             if n <= 45:
                 ax.text(i, 105, "Ref.", ha="center", fontsize=8, color="#547da0")
             labels_text.append("Reference photo")
             colours.append("#547da0")
         else:
+            previous_point = None
             # The grey placeholder does not represent a score.
             ax.axvspan(i-.34, i+.34, ymin=.02, ymax=.92, facecolor="#e9edef", hatch="///",
                        edgecolor="#c4cdd0", linewidth=0, zorder=0)
@@ -2082,16 +2095,15 @@ def plot_health_by_photo(rows, directory_path):
             status = (z.get("health_status") or "").split(";", 1)[0]
             labels_text.append(health_status_label(status) if status else "No score recorded")
             colours.append("#9b7141")
-        timestamp = z.get("_capture_time") or parse_saved_time(z.get("captured_at"))
         labels.append(f"{i}\n{timestamp:%d.%m. %H:%M}" if timestamp else str(i))
-    ax.set_title("04 | Plant condition by photo", loc="left", fontweight="bold", pad=14)
+    ax.set_title("04 | Plant condition over time", loc="left", fontweight="bold", pad=14)
     ax.set_ylabel("Relative index [0–100]")
     ax.set_ylim(-3, 114)
     ax.set_yticks([0, 25, 50, 75, 100])
     ax.grid(axis="y", alpha=.18, zorder=0)
     ax.axhline(100, color="#aebcbd", ls=":", lw=1)
-    ax.plot([], [], "s", color="#32816c", label="Score by photo")
-    ax.plot([], [], "_", color="#795d91", label="Score before smoothing")
+    ax.plot([], [], "o-", color="#245c4e", label="Health trend")
+    ax.plot([], [], "_", color="#795d91", label="Score before using history")
     ax.plot([], [], "D", markerfacecolor="white", color="#547da0", label="Reference photo (no measured score)")
     ax.legend(loc="upper left", bbox_to_anchor=(0, 1.02), fontsize=8, ncol=3)
     groups = list(dict.fromkeys(labels_text))

@@ -29,14 +29,14 @@
     },
     "health_assessment": {
       "health_status": "reference_photo_start_of_view",
-      "scoring_version": "4.1.0",
+      "scoring_version": "5.0.0",
       "health_category": "no_data",
       "health_warnings": ""
     },
     "analysis": {
       "version": "4.15.0",
       "health_status": "reference_photo_start_of_view",
-      "pipeline_sha256": "08479f53783165059431844d67c98d23de2a7c131e30184e07bb321e64932c56",
+      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -14182,21 +14182,22 @@
       "usable": true
     },
     "health_assessment": {
-      "health_status": "provisional_reference;colour_ratio_verified_regions",
-      "scoring_version": "4.1.0",
-      "health_score": 76.9,
-      "health_score_raw": 76.9,
-      "health_category": "good",
-      "health_warnings": "leaf_colour_changed",
-      "score_green": 55.6,
-      "score_yellow": 99.7,
-      "score_saturation": 84.0,
-      "score_hue": 90.8
+      "health_status": "provisional_reference",
+      "scoring_version": "5.0.0",
+      "health_score": 100.0,
+      "health_score_raw": 100.0,
+      "health_category": "very_good",
+      "health_warnings": "",
+      "score_green": 100.0,
+      "score_yellow": 100.0,
+      "score_brown": 100.0,
+      "score_saturation": 100.0,
+      "score_hue": 100.0
     },
     "analysis": {
       "version": "4.15.0",
-      "health_status": "provisional_reference;colour_ratio_verified_regions",
-      "pipeline_sha256": "08479f53783165059431844d67c98d23de2a7c131e30184e07bb321e64932c56",
+      "health_status": "provisional_reference",
+      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -36832,12 +36833,13 @@
       "view_number": 1,
       "mask_source": "automatic",
       "illumination": {
-        "method": "chromatic_region",
+        "method": "chromaticity_global",
         "corrected": true,
-        "background_error": 11.89,
-        "excluded_leaf_pct": 4.18,
+        "background_chroma_residual": 0.0243,
+        "relative_exposure": 0.393,
+        "excluded_leaf_pct": 16.24,
         "common_leaf_pct": 83.07,
-        "verified_color_region_pct": 100.0
+        "verified_color_region_pct": 83.76
       },
       "measurement_mode": "pixels",
       "scale_status": "not_calibrated",
@@ -36847,7 +36849,7 @@
       "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "reference_approved": false,
       "is_reference": false,
-      "health_comparison_mode": "colour_ratio_verified_regions",
+      "health_comparison_mode": "chromatic_profile",
       "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "growth_reference_file": "basil03_20250116T120005Z.png",
       "growth_interval_hours": 72.0,
@@ -36864,7 +36866,6 @@
         "mm_per_px": "not_calibrated",
         "growth_rate_cm2_per_day": "no_shared_scale_for_pair",
         "health_trend_24h": "no_comparable_score_22_to_26_hours_earlier",
-        "score_brown": "brown_requires_verified_lighting",
         "device_id": "device_not_assigned"
       }
     }
@@ -36900,20 +36901,21 @@
     },
     "health_assessment": {
       "health_status": "provisional_reference;colour_ratio_verified_regions",
-      "scoring_version": "4.1.0",
-      "health_score": 76.4,
-      "health_score_raw": 76.4,
-      "health_category": "good",
-      "health_warnings": "leaf_colour_changed",
-      "score_green": 55.3,
-      "score_yellow": 99.7,
-      "score_saturation": 82.4,
-      "score_hue": 90.5
+      "scoring_version": "5.0.0",
+      "health_score": 100.0,
+      "health_score_raw": 100.0,
+      "health_category": "very_good",
+      "health_warnings": "",
+      "score_green": 100.0,
+      "score_yellow": 100.0,
+      "score_brown": 100.0,
+      "score_saturation": 100.0,
+      "score_hue": 100.0
     },
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference;colour_ratio_verified_regions",
-      "pipeline_sha256": "08479f53783165059431844d67c98d23de2a7c131e30184e07bb321e64932c56",
+      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -57947,12 +57949,13 @@
       "view_number": 1,
       "mask_source": "automatic",
       "illumination": {
-        "method": "chromatic_region",
+        "method": "chromaticity_global",
         "corrected": true,
-        "background_error": 8.682,
-        "excluded_leaf_pct": 4.15,
+        "background_chroma_residual": 0.0216,
+        "relative_exposure": 0.404,
+        "excluded_leaf_pct": 15.19,
         "common_leaf_pct": 77.32,
-        "verified_color_region_pct": 100.0
+        "verified_color_region_pct": 84.81
       },
       "measurement_mode": "pixels",
       "scale_status": "not_calibrated",
@@ -57962,7 +57965,7 @@
       "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "reference_approved": false,
       "is_reference": false,
-      "health_comparison_mode": "colour_ratio_verified_regions",
+      "health_comparison_mode": "chromatic_profile_partial",
       "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "growth_reference_file": "basil03_20250119T120005Z.png",
       "growth_interval_hours": 48.0,
@@ -57979,7 +57982,6 @@
         "mm_per_px": "not_calibrated",
         "growth_rate_cm2_per_day": "no_shared_scale_for_pair",
         "health_trend_24h": "no_comparable_score_22_to_26_hours_earlier",
-        "score_brown": "brown_requires_verified_lighting",
         "device_id": "device_not_assigned"
       }
     }
@@ -58015,20 +58017,21 @@
     },
     "health_assessment": {
       "health_status": "provisional_reference;colour_ratio_verified_regions",
-      "scoring_version": "4.1.0",
-      "health_score": 72.4,
-      "health_score_raw": 72.4,
-      "health_category": "good",
-      "health_warnings": "leaf_colour_changed",
-      "score_green": 51.6,
-      "score_yellow": 99.5,
-      "score_saturation": 73.9,
-      "score_hue": 85.6
+      "scoring_version": "5.0.0",
+      "health_score": 99.9,
+      "health_score_raw": 99.8,
+      "health_category": "very_good",
+      "health_warnings": "",
+      "score_green": 100.0,
+      "score_yellow": 99.2,
+      "score_brown": 100.0,
+      "score_saturation": 100.0,
+      "score_hue": 100.0
     },
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference;colour_ratio_verified_regions",
-      "pipeline_sha256": "08479f53783165059431844d67c98d23de2a7c131e30184e07bb321e64932c56",
+      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -84476,12 +84479,13 @@
       "view_number": 1,
       "mask_source": "automatic",
       "illumination": {
-        "method": "chromatic_region",
+        "method": "chromaticity_global",
         "corrected": true,
-        "background_error": 5.771,
-        "excluded_leaf_pct": 4.06,
+        "background_chroma_residual": 0.0209,
+        "relative_exposure": 0.485,
+        "excluded_leaf_pct": 14.84,
         "common_leaf_pct": 86.0,
-        "verified_color_region_pct": 100.0
+        "verified_color_region_pct": 85.16
       },
       "measurement_mode": "pixels",
       "scale_status": "not_calibrated",
@@ -84491,7 +84495,7 @@
       "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "reference_approved": false,
       "is_reference": false,
-      "health_comparison_mode": "colour_ratio_verified_regions",
+      "health_comparison_mode": "chromatic_profile_partial",
       "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "growth_reference_file": "basil03_20250121T120005Z.png",
       "growth_interval_hours": 72.0,
@@ -84508,7 +84512,6 @@
         "mm_per_px": "not_calibrated",
         "growth_rate_cm2_per_day": "no_shared_scale_for_pair",
         "health_trend_24h": "no_comparable_score_22_to_26_hours_earlier",
-        "score_brown": "brown_requires_verified_lighting",
         "device_id": "device_not_assigned"
       }
     }
@@ -84544,21 +84547,21 @@
     },
     "health_assessment": {
       "health_status": "provisional_reference",
-      "scoring_version": "4.1.0",
-      "health_score": 87.1,
-      "health_score_raw": 87.1,
+      "scoring_version": "5.0.0",
+      "health_score": 100.0,
+      "health_score_raw": 100.0,
       "health_category": "very_good",
-      "health_warnings": "leaf_colour_changed",
-      "score_green": 66.2,
-      "score_yellow": 82.9,
+      "health_warnings": "",
+      "score_green": 100.0,
+      "score_yellow": 100.0,
       "score_brown": 100.0,
-      "score_saturation": 99.9,
-      "score_hue": 88.7
+      "score_saturation": 100.0,
+      "score_hue": 100.0
     },
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference",
-      "pipeline_sha256": "08479f53783165059431844d67c98d23de2a7c131e30184e07bb321e64932c56",
+      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -110728,11 +110731,13 @@
       "view_number": 1,
       "mask_source": "automatic",
       "illumination": {
-        "method": "gradient",
-        "corrected": true,
-        "background_error": 2.752,
-        "excluded_leaf_pct": 3.28,
-        "common_leaf_pct": 93.17
+        "method": "chromaticity_global",
+        "corrected": false,
+        "background_chroma_residual": 0.0231,
+        "relative_exposure": 0.844,
+        "excluded_leaf_pct": 5.01,
+        "common_leaf_pct": 93.17,
+        "verified_color_region_pct": 94.99
       },
       "measurement_mode": "pixels",
       "scale_status": "not_calibrated",
@@ -110742,8 +110747,7 @@
       "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "reference_approved": false,
       "is_reference": false,
-      "health_comparison_mode": "colour_and_structure",
-      "structure_score": 100.0,
+      "health_comparison_mode": "chromatic_profile",
       "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "growth_reference_file": "basil03_20250124T120005Z.png",
       "growth_interval_hours": 48.0,
@@ -110790,19 +110794,26 @@
       "color_hex": "#48532a",
       "pipeline_version": "4.15.0",
       "overexposed_pct": 0.0,
-      "quality_flags": "too_little_verified_colour_region",
+      "quality_flags": "",
       "usable": true
     },
     "health_assessment": {
-      "health_status": "too_little_verified_colour_region",
-      "scoring_version": "4.1.0",
-      "health_category": "no_data",
-      "health_warnings": ""
+      "health_status": "provisional_reference;colour_ratio_verified_regions",
+      "scoring_version": "5.0.0",
+      "health_score": 99.6,
+      "health_score_raw": 99.4,
+      "health_category": "very_good",
+      "health_warnings": "",
+      "score_green": 100.0,
+      "score_yellow": 97.7,
+      "score_brown": 100.0,
+      "score_saturation": 100.0,
+      "score_hue": 100.0
     },
     "analysis": {
       "version": "4.15.0",
-      "health_status": "too_little_verified_colour_region",
-      "pipeline_sha256": "08479f53783165059431844d67c98d23de2a7c131e30184e07bb321e64932c56",
+      "health_status": "provisional_reference;colour_ratio_verified_regions",
+      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -149782,11 +149793,13 @@
       "view_number": 1,
       "mask_source": "automatic",
       "illumination": {
-        "method": "chromatic_region",
+        "method": "chromaticity_global",
         "corrected": true,
-        "background_error": 8.665,
+        "background_chroma_residual": 0.0214,
+        "relative_exposure": 0.421,
+        "excluded_leaf_pct": 17.51,
         "common_leaf_pct": 76.12,
-        "verified_color_region_pct": 39.73
+        "verified_color_region_pct": 82.49
       },
       "measurement_mode": "pixels",
       "scale_status": "not_calibrated",
@@ -149796,6 +149809,7 @@
       "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "reference_approved": false,
       "is_reference": false,
+      "health_comparison_mode": "chromatic_profile_partial",
       "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "growth_reference_file": "basil03_20250126T120004Z.png",
       "growth_interval_hours": 72.0,
@@ -149812,13 +149826,6 @@
         "mm_per_px": "not_calibrated",
         "growth_rate_cm2_per_day": "no_shared_scale_for_pair",
         "health_trend_24h": "no_comparable_score_22_to_26_hours_earlier",
-        "health_score": "too_little_verified_colour_region",
-        "health_score_raw": "too_little_verified_colour_region",
-        "score_green": "too_little_verified_colour_region",
-        "score_yellow": "too_little_verified_colour_region",
-        "score_brown": "too_little_verified_colour_region",
-        "score_saturation": "too_little_verified_colour_region",
-        "score_hue": "too_little_verified_colour_region",
         "device_id": "device_not_assigned"
       }
     }
@@ -149854,21 +149861,21 @@
     },
     "health_assessment": {
       "health_status": "provisional_reference",
-      "scoring_version": "4.1.0",
-      "health_score": 84.7,
-      "health_score_raw": 84.7,
-      "health_category": "good",
-      "health_warnings": "leaf_colour_changed",
-      "score_green": 60.2,
-      "score_yellow": 82.3,
+      "scoring_version": "5.0.0",
+      "health_score": 99.9,
+      "health_score_raw": 100.0,
+      "health_category": "very_good",
+      "health_warnings": "",
+      "score_green": 100.0,
+      "score_yellow": 100.0,
       "score_brown": 100.0,
-      "score_saturation": 99.2,
-      "score_hue": 82.7
+      "score_saturation": 100.0,
+      "score_hue": 100.0
     },
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference",
-      "pipeline_sha256": "08479f53783165059431844d67c98d23de2a7c131e30184e07bb321e64932c56",
+      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -190322,11 +190329,13 @@
       "view_number": 1,
       "mask_source": "automatic",
       "illumination": {
-        "method": "linear",
+        "method": "chromaticity_global",
         "corrected": true,
-        "background_error": 3.182,
-        "excluded_leaf_pct": 6.62,
-        "common_leaf_pct": 92.57
+        "background_chroma_residual": 0.0198,
+        "relative_exposure": 1.03,
+        "excluded_leaf_pct": 8.44,
+        "common_leaf_pct": 92.57,
+        "verified_color_region_pct": 91.56
       },
       "measurement_mode": "pixels",
       "scale_status": "not_calibrated",
@@ -190336,8 +190345,7 @@
       "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "reference_approved": false,
       "is_reference": false,
-      "health_comparison_mode": "colour_and_structure",
-      "structure_score": 100.0,
+      "health_comparison_mode": "chromatic_profile",
       "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "growth_reference_file": "basil03_20250129T120003Z.png",
       "growth_interval_hours": 48.001,
@@ -190384,26 +190392,26 @@
       "color_hex": "#809153",
       "pipeline_version": "4.15.0",
       "overexposed_pct": 0.01,
-      "quality_flags": "compared_leaf_colour_distribution",
+      "quality_flags": "",
       "usable": true
     },
     "health_assessment": {
-      "health_status": "provisional_reference;colour_comparison_only;leaf_colour_distribution",
-      "scoring_version": "4.1.0",
-      "health_score": 78.8,
-      "health_score_raw": 78.8,
-      "health_category": "good",
-      "health_warnings": "leaf_colour_changed",
-      "score_green": 52.4,
-      "score_yellow": 89.5,
+      "health_status": "provisional_reference",
+      "scoring_version": "5.0.0",
+      "health_score": 99.7,
+      "health_score_raw": 99.6,
+      "health_category": "very_good",
+      "health_warnings": "",
+      "score_green": 100.0,
+      "score_yellow": 100.0,
       "score_brown": 100.0,
-      "score_saturation": 84.3,
-      "score_hue": 83.9
+      "score_saturation": 95.4,
+      "score_hue": 100.0
     },
     "analysis": {
       "version": "4.15.0",
-      "health_status": "provisional_reference;colour_comparison_only;leaf_colour_distribution",
-      "pipeline_sha256": "08479f53783165059431844d67c98d23de2a7c131e30184e07bb321e64932c56",
+      "health_status": "provisional_reference",
+      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -226477,11 +226485,13 @@
       "view_number": 1,
       "mask_source": "automatic",
       "illumination": {
-        "method": "gradient",
-        "corrected": true,
-        "background_error": 2.988,
-        "excluded_leaf_pct": 3.44,
-        "common_leaf_pct": 90.23
+        "method": "chromaticity_global",
+        "corrected": false,
+        "background_chroma_residual": 0.0241,
+        "relative_exposure": 0.835,
+        "excluded_leaf_pct": 5.02,
+        "common_leaf_pct": 90.23,
+        "verified_color_region_pct": 94.98
       },
       "measurement_mode": "pixels",
       "scale_status": "not_calibrated",
@@ -226491,7 +226501,7 @@
       "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "reference_approved": false,
       "is_reference": false,
-      "health_comparison_mode": "leaf_distribution_normalised",
+      "health_comparison_mode": "chromatic_profile",
       "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "growth_reference_file": "basil03_20250131T120005Z.png",
       "growth_interval_hours": 72.0,
@@ -226538,26 +226548,26 @@
       "color_hex": "#84984c",
       "pipeline_version": "4.15.0",
       "overexposed_pct": 0.05,
-      "quality_flags": "compared_leaf_colour_distribution",
+      "quality_flags": "",
       "usable": true
     },
     "health_assessment": {
-      "health_status": "provisional_reference;colour_comparison_only;leaf_colour_distribution",
-      "scoring_version": "4.1.0",
-      "health_score": 98.5,
-      "health_score_raw": 98.5,
+      "health_status": "provisional_reference",
+      "scoring_version": "5.0.0",
+      "health_score": 99.9,
+      "health_score_raw": 99.9,
       "health_category": "very_good",
       "health_warnings": "",
-      "score_green": 95.4,
-      "score_yellow": 99.6,
+      "score_green": 100.0,
+      "score_yellow": 100.0,
       "score_brown": 100.0,
-      "score_saturation": 99.5,
+      "score_saturation": 99.0,
       "score_hue": 100.0
     },
     "analysis": {
       "version": "4.15.0",
-      "health_status": "provisional_reference;colour_comparison_only;leaf_colour_distribution",
-      "pipeline_sha256": "08479f53783165059431844d67c98d23de2a7c131e30184e07bb321e64932c56",
+      "health_status": "provisional_reference",
+      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -270101,11 +270111,13 @@
       "view_number": 1,
       "mask_source": "automatic",
       "illumination": {
-        "method": "linear",
+        "method": "chromaticity_global",
         "corrected": true,
-        "background_error": 3.896,
-        "excluded_leaf_pct": 3.51,
-        "common_leaf_pct": 90.71
+        "background_chroma_residual": 0.0244,
+        "relative_exposure": 0.943,
+        "excluded_leaf_pct": 13.65,
+        "common_leaf_pct": 90.71,
+        "verified_color_region_pct": 86.35
       },
       "measurement_mode": "pixels",
       "scale_status": "not_calibrated",
@@ -270115,7 +270127,7 @@
       "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "reference_approved": false,
       "is_reference": false,
-      "health_comparison_mode": "leaf_distribution_normalised",
+      "health_comparison_mode": "chromatic_profile",
       "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "growth_reference_file": "basil03_20250203T120005Z.png",
       "growth_interval_hours": 48.0,
@@ -270162,26 +270174,26 @@
       "color_hex": "#829553",
       "pipeline_version": "4.15.0",
       "overexposed_pct": 0.03,
-      "quality_flags": "compared_leaf_colour_distribution",
+      "quality_flags": "",
       "usable": true
     },
     "health_assessment": {
-      "health_status": "provisional_reference;colour_comparison_only;leaf_colour_distribution",
-      "scoring_version": "4.1.0",
-      "health_score": 84.2,
-      "health_score_raw": 84.2,
-      "health_category": "good",
-      "health_warnings": "leaf_colour_changed",
-      "score_green": 61.8,
-      "score_yellow": 92.3,
+      "health_status": "provisional_reference",
+      "scoring_version": "5.0.0",
+      "health_score": 99.8,
+      "health_score_raw": 99.8,
+      "health_category": "very_good",
+      "health_warnings": "",
+      "score_green": 100.0,
+      "score_yellow": 100.0,
       "score_brown": 100.0,
-      "score_saturation": 91.3,
-      "score_hue": 90.1
+      "score_saturation": 97.5,
+      "score_hue": 100.0
     },
     "analysis": {
       "version": "4.15.0",
-      "health_status": "provisional_reference;colour_comparison_only;leaf_colour_distribution",
-      "pipeline_sha256": "08479f53783165059431844d67c98d23de2a7c131e30184e07bb321e64932c56",
+      "health_status": "provisional_reference",
+      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -315935,11 +315947,13 @@
       "view_number": 1,
       "mask_source": "automatic",
       "illumination": {
-        "method": "gradient",
+        "method": "chromaticity_global",
         "corrected": true,
-        "background_error": 3.221,
-        "excluded_leaf_pct": 3.13,
-        "common_leaf_pct": 92.69
+        "background_chroma_residual": 0.0289,
+        "relative_exposure": 0.943,
+        "excluded_leaf_pct": 13.33,
+        "common_leaf_pct": 92.69,
+        "verified_color_region_pct": 86.67
       },
       "measurement_mode": "pixels",
       "scale_status": "not_calibrated",
@@ -315949,7 +315963,7 @@
       "reference_sha256": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "reference_approved": false,
       "is_reference": false,
-      "health_comparison_mode": "leaf_distribution_normalised",
+      "health_comparison_mode": "chromatic_profile",
       "view_id": "10ecaa505cc6732712d1ab9b4aa5a5ed0b7b30e2f723a054fdff38a844b43830",
       "growth_reference_file": "basil03_20250205T120005Z.png",
       "growth_interval_hours": 72.0,
