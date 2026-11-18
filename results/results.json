@@ -36,7 +36,7 @@
     "analysis": {
       "version": "4.15.0",
       "health_status": "reference_photo_start_of_view",
-      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
+      "pipeline_sha256": "9a6b702c2678e08b60e019f43ce4ad9d17b4fc9cc9dea2e4e13ba515d86911eb",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -14197,7 +14197,7 @@
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference",
-      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
+      "pipeline_sha256": "9a6b702c2678e08b60e019f43ce4ad9d17b4fc9cc9dea2e4e13ba515d86911eb",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -36915,7 +36915,7 @@
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference;colour_ratio_verified_regions",
-      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
+      "pipeline_sha256": "9a6b702c2678e08b60e019f43ce4ad9d17b4fc9cc9dea2e4e13ba515d86911eb",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -58031,7 +58031,7 @@
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference;colour_ratio_verified_regions",
-      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
+      "pipeline_sha256": "9a6b702c2678e08b60e019f43ce4ad9d17b4fc9cc9dea2e4e13ba515d86911eb",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -84561,7 +84561,7 @@
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference",
-      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
+      "pipeline_sha256": "9a6b702c2678e08b60e019f43ce4ad9d17b4fc9cc9dea2e4e13ba515d86911eb",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -110813,7 +110813,7 @@
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference;colour_ratio_verified_regions",
-      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
+      "pipeline_sha256": "9a6b702c2678e08b60e019f43ce4ad9d17b4fc9cc9dea2e4e13ba515d86911eb",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -149875,7 +149875,7 @@
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference",
-      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
+      "pipeline_sha256": "9a6b702c2678e08b60e019f43ce4ad9d17b4fc9cc9dea2e4e13ba515d86911eb",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -190411,7 +190411,7 @@
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference",
-      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
+      "pipeline_sha256": "9a6b702c2678e08b60e019f43ce4ad9d17b4fc9cc9dea2e4e13ba515d86911eb",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -226567,7 +226567,7 @@
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference",
-      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
+      "pipeline_sha256": "9a6b702c2678e08b60e019f43ce4ad9d17b4fc9cc9dea2e4e13ba515d86911eb",
       "series_id": "plant-01",
       "image_size": [
         2000,
@@ -270193,7 +270193,7 @@
     "analysis": {
       "version": "4.15.0",
       "health_status": "provisional_reference",
-      "pipeline_sha256": "4fee31f4d20be1045de6bb89126b550662a79638620d2884e08d3310d724f25a",
+      "pipeline_sha256": "9a6b702c2678e08b60e019f43ce4ad9d17b4fc9cc9dea2e4e13ba515d86911eb",
       "series_id": "plant-01",
       "image_size": [
         2000,

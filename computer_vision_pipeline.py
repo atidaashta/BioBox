@@ -2136,16 +2136,16 @@ def plot_charts(rows, directory_path):
     time_axis = bool(timestamps) and all(timestamps)
     x = timestamps if time_axis else list(range(1, len(rows)+1))
     plt.rcParams.update({"font.size": 10, "axes.spines.top": False, "axes.spines.right": False})
-    def line_points(ax, field, label, colour):
+    def line_points(ax, field, label, colour, style="o-", **options):
         y = [z.get(field) if z.get(field) is not None and z.get("usable") else np.nan for z in rows]
         if not any(np.isfinite(v) for v in y):
             return False
-        ax.plot(x, y, "o-", ms=4, lw=1.7, color=colour, label=label)
+        ax.plot(x, y, style, ms=4, lw=1.7, color=colour, label=label, **options)
         return True
     def note(ax, text):
         ax.text(.5, .5, text, ha="center", va="center", transform=ax.transAxes,
                 fontsize=11, color=grey, linespacing=1.7)
-    def save_file(fig, number):
+    def save_file(fig, number, caption=None):
         for ax in fig.axes:
             ax.grid(alpha=.16)
             ax.set_xlabel("Capture time (UTC)" if time_axis else "Photo (capture time unavailable)")
@@ -2156,88 +2156,20 @@ def plot_charts(rows, directory_path):
             if len(x) == 1 and time_axis:
                 t = mdates.date2num(x[0])
                 ax.set_xlim(t-.02, t+.02)
-        fig.text(.012, .012, f"BioBox | {sum(bool(z['usable']) for z in rows)}/{len(rows)} usable | Index relative to the plant's own reference", fontsize=8, color=grey)
+        if caption is None:
+            caption = f"BioBox | {sum(bool(z['usable']) for z in rows)}/{len(rows)} usable | Index relative to the plant's own reference"
+        fig.text(.012, .012, caption, fontsize=8, color=grey)
         fig.tight_layout(rect=(0, .05, 1, 1))
         fig.savefig(directory_path/CHART_FILES[number], dpi=150, facecolor="white")
         plt.close(fig)
-    def plot_series_with_status(number,title,field,ylabel,status,second_view=None,pixel=False):
-        observations = np.arange(1,len(rows)+1)
-        groups = list(dict.fromkeys(status))
-        height_status = max(.95,.31*len(groups)+.3)
-        heights = [3.1,2.1,height_status] if pixel else [3.5,height_status]
-        fig,axis_pair = plt.subplots(len(heights),1,figsize=(11,sum(heights)+1.3),sharex=True,
-                                 gridspec_kw={"height_ratios":heights})
-        ax,bottom = axis_pair[0],axis_pair[-1]
-        ax.set_title(title,loc="left",fontweight="bold",pad=12)
-        ax.set_ylabel(ylabel)
-        ax.grid(axis="y",alpha=.19)
-        y = np.array([z[field] if z.get(field) is not None else np.nan for z in rows])
-        count_items = int(np.count_nonzero(np.isfinite(y)))
-        ax.set_xlim(.5,max(1,len(rows))+.5)
-        camera_views = [z.get("_chart_group", z.get("view_number")) for z in rows]
-        colours = ["#2e806a","#547da0","#9362a1","#ad7340","#56705a","#8a6371"]
-        modes = [z.get("_score_mode") for z in rows]
-        for i,camera_view in enumerate(dict.fromkeys(a for a in camera_views if a is not None)):
-            colour = colours[i%len(colours)]
-            series_groups = list(dict.fromkeys(m for j,m in enumerate(modes) if camera_views[j]==camera_view)) if second_view else [None]
-            for mode in series_groups:
-                leaf_mask = np.array([a==camera_view and (not second_view or m==mode) for a,m in zip(camera_views,modes)])
-                if not np.isfinite(y[leaf_mask]).any():
-                    continue
-                part = mode=="colour_ratio_verified_regions"
-                label = f"Reference {camera_view}"+(" · Colour comparison in verified regions" if part else "")
-                ax.plot(observations,np.where(leaf_mask,y,np.nan),"s-" if part else "o-",
-                        ms=4.5,lw=1.6,color=colour,label=label)
-                if second_view:
-                    raw_value = np.array([z[second_view] if z.get(second_view) is not None else np.nan for z in rows])
-                    ax.plot(observations,np.where(leaf_mask,raw_value,np.nan),"--",lw=.9,color=colour,alpha=.45)
-        refs = [i for i,z in enumerate(rows) if z.get("_is_reference")] if second_view else []
-        if number==3:
-            ax.set_ylim(-3,107)
-            ax.axhline(100,color="#b4bec3",lw=1,ls=":",zorder=0)
-            ax.set_yticks([0,25,50,75,100])
-        elif count_items:
-            ax.axhline(0,color=grey,lw=.8)
-        if refs:
-            ax.scatter(observations[refs],[100]*len(refs),marker="D",facecolor="white",edgecolor="#517493",
-                       s=44,zorder=5,label="Reference photo (no measurement)")
-        if not count_items:
-            note(ax,"No verified growth rate.\nDirect pixel change is shown below." if pixel
-                    else "No valid colour comparison. See each photo's status below.")
-            if number==1:
-                ax.set_yticks([])
-        if count_items or refs:
-            handles,labels = ax.get_legend_handles_labels()
-            ax.legend(handles[:12],labels[:12],loc="lower left" if second_view else "best",fontsize=8.5)
-        if pixel:
-            raw_axis = axis_pair[1]
-            px = np.array([z["visible_pixel_change_per_day"] if z.get("visible_pixel_change_per_day") is not None
-                           else np.nan for z in rows])
-            raw_axis.set_title("Direct leaf-pixel change, including between views",loc="left",fontsize=10)
-            raw_axis.set_ylabel("Pixels per day")
-            raw_axis.grid(axis="y",alpha=.15)
-            if np.isfinite(px).any():
-                raw_axis.axhline(0,color=grey,lw=.7)
-                raw_axis.plot(observations,px,"o:",color="#76548b",ms=4,lw=1.1)
-            else:
-                note(raw_axis,"Requires two usable photos at the same resolution, at least 30 minutes apart.")
-        bottom.set_title("Status by photo",loc="left",fontsize=9,color=grey,pad=5)
-        for idx,group in enumerate(groups):
-            xs = [n for n,g in zip(observations,status) if g==group]
-            marker = "D" if group=="Reference photo" else "o" if group.startswith("Calculated") else "x"
-            colour = "#517493" if marker=="D" else green if marker=="o" else "#9c663b"
-            bottom.scatter(xs,[idx]*len(xs),s=28,marker=marker,color=colour,linewidths=1.2)
-        bottom.set_yticks(range(len(groups)),groups,fontsize=9)
-        bottom.set_ylim(len(groups)-.4,-.6)
-        bottom.grid(axis="y",alpha=.15)
-        bottom.tick_params(axis="y",length=0)
-        bottom.set_xticks(sorted(set(np.linspace(1,len(rows),min(9,len(rows)),dtype=int))))
-        bottom.set_xlabel("Photo number (order in results.csv)")
-        extra_fields = "Pixel change alone does not establish growth." if pixel else "Solid: smoothed score · Dashed: raw score."
-        fig.text(.013,.013,f"BioBox | {count_items}/{len(rows)} with a verified comparison | {extra_fields}",fontsize=8.5,color=grey)
-        fig.tight_layout(rect=(0,.045,1,1))
-        fig.savefig(directory_path/CHART_FILES[number],dpi=150,facecolor="white")
-        plt.close(fig)
+    def comparison_span(ax):
+        if time_axis and len(x) > 1:
+            extent = x[-1] - x[0]
+            padding = max(timedelta(seconds=1), extent * .04) if extent else timedelta(minutes=30)
+            ax.set_xlim(x[0] - padding, x[-1] + padding)
+        elif not time_axis:
+            ax.set_xlim(.5, len(x) + .5)
+            ax.set_xticks(np.linspace(1, len(x), min(8, len(x)), dtype=int))
 
     usable_rows = [z for z in rows if z["usable"]]
     calibrated = bool(usable_rows) and all(z["leaf_area_cm2"] is not None for z in usable_rows)
@@ -2255,41 +2187,60 @@ def plot_charts(rows, directory_path):
         note(ax, "No usable leaf mask. Check the overlays and quality flags.")
     ax.set_ylabel("Area [cm²]" if calibrated else "Visible leaf area [pixels]")
     save_file(fig, 0)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.set_title("02 | Growth rate")
     rate_cm = calibrated and any(z.get("growth_rate_cm2_per_day") is not None for z in rows)
     field = "growth_rate_cm2_per_day" if rate_cm else "growth_rate_pct_per_day"
-    rate_labels = {"calculated":"Calculated", "calculated_short_interval":"Calculated · short interval",
-                  "calculated_historical":"Calculated · saved comparison",
-                  "image_crop_not_comparable":"Image crops are not comparable",
-                  "too_little_shared_frame":"Too little overlap between frames",
-                  "calculated_shared_frame":"Calculated · shared frame",
-                  "calculated_shared_frame_short_interval":"Calculated · shared frame, short interval",
-                  "image_not_measurable":"Image is not usable",
-                  "camera_view_not_comparable":"Camera view is not comparable",
-                  "no_reliable_capture_time":"Capture time unavailable",
-                  "no_earlier_comparable_photo":"No earlier photo for comparison",
-                  "check_area_jump":"Review the sudden change in area",
-                  "independent_images_no_growth_series":"Independent image",
-                  f"interval_under_{RATE_MIN_MINUTES}_minutes":f"Less than {RATE_MIN_MINUTES} minutes apart"}
-    rate_statuses = [rate_labels.get(z.get("_rate_status"),"Not calculated") for z in rows]
-    plot_series_with_status(1,"02 | Growth rate within comparable camera views",
-                       field,"cm² per day" if rate_cm else "% per day",rate_statuses,pixel=True)
-    fig, (top, bottom) = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
-    top.set_title("03 | Raw leaf colour (lighting dependent)")
-    for field, colour, label in [("mean_r", "#ba6262", "R"), ("mean_g", green, "G"), ("mean_b", "#5685a5", "B")]:
-        line_points(top, field, label, colour)
-    top.set_ylabel("Mean RGB channel [0–255]")
-    if top.lines:
-        top.legend()
+    units = "cm² per day" if rate_cm else "% per day"
+    ax.set_ylabel(f"Visible leaf area change ({units})")
+    # Smooth the display only. Never join or smooth across a missing reading,
+    # a change of camera view, or a long gap between captures.
+    segments, recent = [], []
+    previous_time = previous_view = None
+    week = timedelta(days=7)
+    for position, stamp, row in zip(x, timestamps, rows):
+        rate = row.get(field)
+        if not row.get("usable") or rate is None or not math.isfinite(rate):
+            previous_time = previous_view = None
+            recent.clear()
+            continue
+        view = row.get("_chart_group")
+        same_segment = (view is not None and view == previous_view and stamp is not None
+                        and previous_time is not None and timedelta(0) < stamp - previous_time <= week)
+        if same_segment:
+            recent = [(t, value) for t, value in recent if stamp - t <= week][-2:]
+        else:
+            segments.append(([], []))
+            recent.clear()
+        recent.append((stamp, rate))
+        positions, rates = segments[-1]
+        positions.append(position)
+        rates.append(sum(value for _, value in recent) / len(recent))
+        previous_time, previous_view = stamp, view
+    if segments:
+        for positions, rates in segments:
+            ax.plot(positions, rates, "o-", ms=4, lw=1.7, color=green)
+        ax.axhline(0, color=grey, lw=.8, alpha=.6)
+        comparison_span(ax)
     else:
-        note(top, "No usable leaf colour data.")
-    for field, colour, label in [("yellow_fraction_pct", "#c2a333", "Yellow"), ("brown_fraction_pct", "#95684f", "Brown")]:
-        line_points(bottom, field, label, colour)
-    bottom.set_ylabel("Share of leaf mask [%]")
-    if bottom.lines:
-        bottom.legend()
+        ax.set_axis_off()
+        note(ax, "No comparable photos to calculate a growth rate.")
+    save_file(fig, 1, "Average of up to three recent comparable readings. Individual rates are in results.csv.")
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.set_title("03 | Leaf colour")
+    ax.set_ylabel("Share of visible leaf area (%)")
+    line_points(ax, "yellow_fraction_pct", "Yellow tones", "#a97b19", "o", clip_on=False)
+    line_points(ax, "brown_fraction_pct", "Brown tones", "#80513c", "s", clip_on=False,
+                markerfacecolor="none", markeredgewidth=1.1)
+    if ax.lines:
+        ax.set_ylim(0, max(5, min(100, ax.get_ylim()[1])))
+        ax.legend(loc="lower right", bbox_to_anchor=(1, 1), borderaxespad=0, frameon=False, ncol=2)
+        comparison_span(ax)
     else:
-        note(bottom, "No usable leaf mask.")
-    save_file(fig, 2)
+        ax.set_axis_off()
+        note(ax, "No usable leaf colour measurements.")
+    save_file(fig, 2, "One point per photo for each colour. Lighting can affect these estimates.")
     plot_health_by_photo(rows, directory_path)
     fig, ax = plt.subplots(figsize=(max(8.5,min(16,5+.45*len(rows))),4.7))
     ax.set_title("05 | Five health subscores by photo",loc="left",fontweight="bold")
