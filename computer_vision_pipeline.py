@@ -27,8 +27,9 @@ PROJECT_DIR = Path(__file__).resolve().parent
 TWIN_JSON_FILE = "digital_twin.json"
 HEALTH_JSON_FILE = "plant_health.json"
 CHART_MANIFEST_FILE = "charts.json"
-CHART_FILES = ("01_leaf_area.png", "02_growth_rate.png", "03_leaf_color.png",
-                 "04_plant_health.png", "05_health_subscores.png")
+CHART_FILES = ("01_leaf_area.png", "02_leaf_color.png", "03_plant_health.png", "04_health_subscores.png")
+RETIRED_CHART_FILES = ("02_growth_rate.png", "03_leaf_color.png", "04_plant_health.png",
+                       "05_health_subscores.png", "06_digital_twin.png")
 WEB_VIEWS = {"digital_twin": "digital_twin_3d", "plant_health": "plant_health",
                  "charts": "charts"}
 WEB_CONTENT_TYPES = {"html": "text/html; charset=utf-8", "css": "text/css; charset=utf-8",
@@ -196,7 +197,6 @@ RATE_MIN_MINUTES = 30    # Minimum interval; daily rates can fluctuate over shor
 RATE_STABLE_HOURS = 12  # Prefer a longer interval when available.
 ANALYSIS_VERSION = "4.15.0"
 CSV_UNAVAILABLE = "Unavailable"
-OBSOLETE_TWIN_CHART = "06_digital_twin.png"  # Remove only this obsolete generated chart when migrating older outputs.
 
 # Changes to a milestone change the fingerprint recorded in results.json.
 PIPELINE_SHA256 = hashlib.sha256(b"\0".join(
@@ -1811,21 +1811,6 @@ def merge_result_history(history, current):
             candidates.append(len(result)); result.append(z)
     result.sort(key=lambda z: (z.get("_capture_time") or datetime.max.replace(tzinfo=timezone.utc),
                                 z["file_name"], z.get("_sha256") or ""))
-    # Keep separate plot lines when the reference or analysis method changes.
-    groups = {}
-    for z in result:
-        info = z.get("_historical_record", {}).get("analysis", {})
-        reference = z.get("_reference_metadata", {})
-        uid = z.get("_camera_view_id") or info.get("reference_sha256") or z.get("health_reference_file")
-        if uid is not None:
-            key = (uid, reference.get("captured_at") or info.get("reference_captured_at"),
-                   z.get("pipeline_version"), z.get("scoring_version"))
-            z["_chart_group"] = groups.setdefault(key, len(groups)+1)
-        elif z.get("health_score") is not None or z.get("growth_rate_pct_per_day") is not None:
-            key = ("unknown", z["file_name"], z.get("captured_at"))
-            z["_chart_group"] = groups.setdefault(key, len(groups)+1)
-        else:
-            z["_chart_group"] = None
     return result
 
 
@@ -2096,7 +2081,7 @@ def plot_health_by_photo(rows, directory_path):
             labels_text.append(health_status_label(status) if status else "No score recorded")
             colours.append("#9b7141")
         labels.append(f"{i}\n{timestamp:%d.%m. %H:%M}" if timestamp else str(i))
-    ax.set_title("04 | Plant condition over time", loc="left", fontweight="bold", pad=14)
+    ax.set_title("03 | Plant condition over time", loc="left", fontweight="bold", pad=14)
     ax.set_ylabel("Relative index [0–100]")
     ax.set_ylim(-3, 114)
     ax.set_yticks([0, 25, 50, 75, 100])
@@ -2123,7 +2108,7 @@ def plot_health_by_photo(rows, directory_path):
              "100 means close to the reference; this is not a diagnosis.", fontsize=8.5, color="#62737b")
     fig.tight_layout(rect=(0, .055, 1, 1))
     directory_path.mkdir(exist_ok=True)
-    fig.savefig(directory_path/CHART_FILES[3], dpi=150, facecolor="white")
+    fig.savefig(directory_path/CHART_FILES[2], dpi=150, facecolor="white")
     plt.close(fig)
 
 
@@ -2188,47 +2173,7 @@ def plot_charts(rows, directory_path):
     ax.set_ylabel("Area [cm²]" if calibrated else "Visible leaf area [pixels]")
     save_file(fig, 0)
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.set_title("02 | Growth rate")
-    rate_cm = calibrated and any(z.get("growth_rate_cm2_per_day") is not None for z in rows)
-    field = "growth_rate_cm2_per_day" if rate_cm else "growth_rate_pct_per_day"
-    units = "cm² per day" if rate_cm else "% per day"
-    ax.set_ylabel(f"Visible leaf area change ({units})")
-    # Smooth the display only. Never join or smooth across a missing reading,
-    # a change of camera view, or a long gap between captures.
-    segments, recent = [], []
-    previous_time = previous_view = None
-    week = timedelta(days=7)
-    for position, stamp, row in zip(x, timestamps, rows):
-        rate = row.get(field)
-        if not row.get("usable") or rate is None or not math.isfinite(rate):
-            previous_time = previous_view = None
-            recent.clear()
-            continue
-        view = row.get("_chart_group")
-        same_segment = (view is not None and view == previous_view and stamp is not None
-                        and previous_time is not None and timedelta(0) < stamp - previous_time <= week)
-        if same_segment:
-            recent = [(t, value) for t, value in recent if stamp - t <= week][-2:]
-        else:
-            segments.append(([], []))
-            recent.clear()
-        recent.append((stamp, rate))
-        positions, rates = segments[-1]
-        positions.append(position)
-        rates.append(sum(value for _, value in recent) / len(recent))
-        previous_time, previous_view = stamp, view
-    if segments:
-        for positions, rates in segments:
-            ax.plot(positions, rates, "o-", ms=4, lw=1.7, color=green)
-        ax.axhline(0, color=grey, lw=.8, alpha=.6)
-        comparison_span(ax)
-    else:
-        ax.set_axis_off()
-        note(ax, "No comparable photos to calculate a growth rate.")
-    save_file(fig, 1, "Average of up to three recent comparable readings. Individual rates are in results.csv.")
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.set_title("03 | Leaf colour")
+    ax.set_title("02 | Leaf colour")
     ax.set_ylabel("Share of visible leaf area (%)")
     line_points(ax, "yellow_fraction_pct", "Yellow tones", "#a97b19", "o", clip_on=False)
     line_points(ax, "brown_fraction_pct", "Brown tones", "#80513c", "s", clip_on=False,
@@ -2240,10 +2185,10 @@ def plot_charts(rows, directory_path):
     else:
         ax.set_axis_off()
         note(ax, "No usable leaf colour measurements.")
-    save_file(fig, 2, "One point per photo for each colour. Lighting can affect these estimates.")
+    save_file(fig, 1, "One point per photo for each colour. Lighting can affect these estimates.")
     plot_health_by_photo(rows, directory_path)
     fig, ax = plt.subplots(figsize=(max(8.5,min(16,5+.45*len(rows))),4.7))
-    ax.set_title("05 | Five health subscores by photo",loc="left",fontweight="bold")
+    ax.set_title("04 | Five health subscores by photo",loc="left",fontweight="bold")
     labels = ["Colour distribution","Increase in yellow","Increase in brown or warm tones","Saturation change","Hue change"]
     values = np.array([[np.nan if z.get("score_"+k) is None else z["score_"+k] for z in rows]
                       for k in SCORE_WEIGHTS],dtype=float)
@@ -2265,10 +2210,10 @@ def plot_charts(rows, directory_path):
                 else:
                     ax.text(i,j,"—",ha="center",va="center",fontsize=8,color="#62737b")
     fig.colorbar(heat,ax=ax,label="Subscore [0–100]")
-    fig.text(.014,.013,"Grey: no comparison. Ref. = reference photo for a camera view. See chart 03 for raw colours.",
+    fig.text(.014,.013,"Grey: no comparison. Ref. = reference photo for a camera view. See chart 02 for raw colours.",
              fontsize=8.5,color=grey)
     fig.tight_layout(rect=(0,.045,1,1))
-    fig.savefig(directory_path/CHART_FILES[4],dpi=150,facecolor="white")
+    fig.savefig(directory_path/CHART_FILES[3],dpi=150,facecolor="white")
     plt.close(fig)
 
 
@@ -2371,6 +2316,10 @@ def validate_chart_directory(directory_path):
         raise ValueError(f"Could not safely use the charts folder: {directory_path}")
 
 
+def retired_chart_paths(directory_path):
+    return [path for name in RETIRED_CHART_FILES if (path := directory_path/name).is_file()]
+
+
 def stage_legacy_charts(previous, target, working_image):
     "Move old chart outputs and leave source files in place."
     files_to_publish = []
@@ -2380,7 +2329,7 @@ def stage_legacy_charts(previous, target, working_image):
     for file_path in previous.iterdir():
         if file_path.suffix.lower() in (".html", ".css", ".js"):
             continue
-        if file_path.name in (*CHART_FILES, CHART_MANIFEST_FILE, OBSOLETE_TWIN_CHART):
+        if file_path.name in (*CHART_FILES, CHART_MANIFEST_FILE, *RETIRED_CHART_FILES):
             if file_path.is_dir():
                 raise ValueError(f"A folder occupies the expected output path: {file_path}")
             files_to_publish.append((None, file_path))
@@ -2458,8 +2407,9 @@ def analyse_series(paths,output_dir,manual=None,independent_images=False,new_ref
             files_to_publish += [(staged_twin/TWIN_JSON_FILE, target_twin/TWIN_JSON_FILE),
                         (staged_health/HEALTH_JSON_FILE, target_health/HEALTH_JSON_FILE)]
             files_to_publish += [(staged_charts/name, target_chart_folder/name) for name in expected_charts]
-            retired_outputs = [(None, file_path) for file_path in (output_dir/TWIN_JSON_FILE, output_dir/HEALTH_JSON_FILE,
-                                                  target_chart_folder/OBSOLETE_TWIN_CHART) if file_path.is_file()]
+            retired_outputs = [(None, path) for path in (output_dir/TWIN_JSON_FILE, output_dir/HEALTH_JSON_FILE)
+                               if path.is_file()]
+            retired_outputs += [(None, path) for path in retired_chart_paths(target_chart_folder)]
             if not all(new.exists() for new,_ in files_to_publish):
                 raise OSError('Analysis produced incomplete outputs. Previous results were kept.')
             if any(target.is_dir() for new,target in files_to_publish if new.is_file()):
@@ -2484,7 +2434,7 @@ def analyse_series(paths,output_dir,manual=None,independent_images=False,new_ref
     n_score = sum(z.get("health_score") is not None for z in rows)
     pixel_change_available = sum(z.get("visible_pixel_change_per_day") is not None for z in rows)
     print(f"Pixel change: {pixel_change_available}/{len(rows)} | Verified growth rate: {n_rate}/{len(rows)} | "
-          f"Condition score: {n_score}/{len(rows)}. See charts 02 and 04.")
+          f"Condition score: {n_score}/{len(rows)}. See results.csv and chart 03.")
     area_available = sum(z.get("leaf_area_cm2") is not None for z in rows)
     capture_time_available = sum(bool(z.get("captured_at")) for z in rows)
     leaf_count_available = sum(z.get("visible_leaf_count") is not None for z in rows)
@@ -2728,14 +2678,14 @@ def _analyse_images(paths, output_dir, manual, independent_images, new_reference
 
 
 def save_chart_manifest(directory_path):
-    title = ("Leaf area", "Growth rate", "Leaf colour", "Plant health", "Health subscores")
+    title = ("Leaf area", "Leaf colour", "Plant health", "Health subscores")
     data = {"version": 1, "charts": [{"id": Path(name).stem[3:], "label": label, "file": name}
             for name, label in zip(CHART_FILES, title) if (directory_path/name).is_file()]}
     return write_json_output(directory_path/CHART_MANIFEST_FILE, data)
 
 
 def charts_from_files(output_dir):
-    "Reuse existing chart images and update the gallery manifest."
+    "Reuse current charts, or redraw the old layout from the saved measurements."
     output_dir = Path(output_dir).expanduser().resolve()
     target, previous = chart_directory(output_dir), output_dir/"charts"
     with lock_results(output_dir):
@@ -2743,23 +2693,30 @@ def charts_from_files(output_dir):
         validate_chart_directory(previous)
         source = {name: next((directory_path/name for directory_path in (target, previous) if (directory_path/name).is_file()), None)
                   for name in CHART_FILES}
-        if not any(source.values()):
-            raise ValueError("No charts found. Run python computer_vision_pipeline.py images first.")
+        old_layout = not all(source.values()) and any(retired_chart_paths(folder) for folder in (target, previous))
+        history = load_result_history(output_dir) if old_layout else []
+        if old_layout and not history:
+            raise ValueError("Old chart numbering and no saved measurements. Run python computer_vision_pipeline.py to update the charts.")
+        if not old_layout and not any(source.values()):
+            raise ValueError("No charts found. Run python computer_vision_pipeline.py first.")
         work = Path(tempfile.mkdtemp(prefix=".biobox-charts-", dir=output_dir.parent))
         try:
             new = work/"charts"
             new.mkdir()
             migration = stage_legacy_charts(previous, target, work/"legacy-charts")
-            files_to_publish = []
-            for name, file_path in source.items():
-                if file_path is not None:
-                    shutil.copy2(file_path, new/name)
-                    if file_path != target/name:
-                        files_to_publish.append((new/name, target/name))
+            if old_layout:
+                plot_charts(history, new)
+                files_to_publish = [(new/name, target/name) for name in CHART_FILES]
+            else:
+                files_to_publish = []
+                for name, file_path in source.items():
+                    if file_path is not None:
+                        shutil.copy2(file_path, new/name)
+                        if file_path != target/name:
+                            files_to_publish.append((new/name, target/name))
             save_chart_manifest(new)
             files_to_publish.append((new/CHART_MANIFEST_FILE, target/CHART_MANIFEST_FILE))
-            if (target/OBSOLETE_TWIN_CHART).is_file():
-                files_to_publish.append((None, target/OBSOLETE_TWIN_CHART))
+            files_to_publish += [(None, path) for path in retired_chart_paths(target)]
             if any(file_path.is_dir() for _, file_path in files_to_publish):
                 raise OSError("A folder occupies an expected output filename.")
             target.mkdir(parents=True, exist_ok=True)
@@ -2785,7 +2742,7 @@ def default_results_dir():
 def open_charts(output_dir=None, no_browser=False):
     if output_dir is None:
         output_dir = next((directory_path/"results" for directory_path in (Path.cwd(), PROJECT_DIR, IMAGES_DIR.parent)
-                        if any((directory/name).is_file() for name in CHART_FILES
+                        if any((directory/name).is_file() for name in (*CHART_FILES, *RETIRED_CHART_FILES)
                                for directory in (directory_path/"charts", directory_path/"results"/"charts"))),
                        default_results_dir())
     try:

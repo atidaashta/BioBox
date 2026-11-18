@@ -19,21 +19,21 @@ If PowerShell blocks activation, use `.\.venv\Scripts\python.exe` instead of `py
 To **retrieve the latest completed Pi photos and update all outputs**:
 
 ```powershell
-python -B image_capture.py; python -B computer_vision_pipeline.py images
+python computer_vision_pipeline.py --sync
 ```
 
-The second command still runs if the Pi is unreachable. It reads all supported images in `images/` and updates the masks, overlays, charts, measurement history, and JSON used by both browser views. The `-B` option prevents Python from writing `__pycache__` files. The commands do not trigger an extra photograph.
+The command first tries to fetch completed Pi photos and then analyses the photos on your computer. If SSH fails, local analysis still runs. The pipeline updates masks, overlays, charts, measurement history and dashboard data. This command does not trigger an extra photograph. Python may create a local `__pycache__` folder, which Git ignores.
 
 To use local photos only:
 
 ```powershell
-python -B computer_vision_pipeline.py images
+python computer_vision_pipeline.py images
 ```
 
 The pipeline reads JPG, JPEG, PNG, BMP, TIFF, and WebP files directly inside the selected folder. It also accepts a single image path. Use `--output PATH` for a separate output directory, or `--independent-images` for photographs of unrelated plants:
 
 ```powershell
-python -B computer_vision_pipeline.py sample_images --independent-images --output sample_results
+python computer_vision_pipeline.py sample_images --independent-images --output sample_results
 ```
 
 That mode produces individual measurements without treating the photos as a shared health or growth series.
@@ -50,17 +50,18 @@ That mode produces individual measurements without treating the photos as a shar
 | `results/` | Measurement history in `results.csv` and `results.json`; generated images in `masks/` and `overlays/` |
 | `digital_twin/` | 3D viewer source files and generated `digital_twin.json` |
 | `plant_health/` | Health dashboard source files and generated `plant_health.json` |
-| `charts/` | Chart gallery source files, five generated PNG charts, and `charts.json` |
+| `charts/` | Chart gallery source files, four generated PNG charts, and `charts.json` |
 | `docs/` | English technical documentation for the four milestones |
+| `.gitignore` | Keeps photos, generated data and Python caches local |
 | `.gitattributes` | Line endings and classification of generated files |
 
-If upgrading from the German layout, follow the [migration instructions](docs/migrate-to-english-layout.md) before running the new scripts. Move existing data rather than starting with empty folders, so the pipeline can carry forward the measurements and projections already saved.
+When upgrading, replace all four Python scripts together. Move existing photos to `images/` when ready. The pipeline can read the previous photo folder and result filenames during the transition and writes new outputs under the English paths. Keep a copy of your original photos, measurements and calibration. The one-time migration checklist is optional.
 
 ## Raspberry Pi capture
 
-The reference setup uses a Raspberry Pi 4 with a Camera Module 3 Wide. The existing `biobox-photo-test` helper must be available on the Pi, and the analysis computer needs an OpenSSH client and access to the Pi, normally through Tailscale. Configure `PI_ADRESSE`, `PI_AUFNAHME`, and `PI_SSH_KEY` in `image_capture.py` to match your setup. SSH runs in batch mode; if the private key has a passphrase, load it into your SSH agent first. Keep private keys outside the repository.
+The reference setup uses a Raspberry Pi 4 with a Camera Module 3 Wide. The existing `biobox-photo-test` helper must be available on the Pi, and the analysis computer needs an OpenSSH client and access to the Pi, normally through Tailscale. Configure `PI_ADDRESS`, `PI_CAPTURE_COMMAND`, and `PI_SSH_KEY` in `image_capture.py` to match your setup. SSH runs in batch mode; if the private key has a passphrase, load it into your SSH agent first. Keep private keys outside the repository.
 
-Run `python -B image_capture.py --schedule-hourly` to test the camera and set up the hourly job. The job runs on the Pi at the start of each hour, according to the Pi's clock. `--schedule-status` shows the last attempt, and `--disable-schedule` removes the BioBox job while keeping saved photos. The Pi must be running, and its `cron` service must be enabled. See [M1](docs/m1-image-capture-system.md) for the setup and verification details.
+Run `python image_capture.py --schedule-hourly` to test the camera and set up the hourly job. The job runs on the Pi at the start of each hour, according to the Pi's clock. `--schedule-status` shows the last attempt, and `--disable-schedule` removes the BioBox job while keeping saved photos. The Pi must be running, and its `cron` service must be enabled. See [M1](docs/m1-image-capture-system.md) for the setup and verification details.
 
 A successful sync keeps up to 100 of the latest imported camera JPEGs locally. This limit does not apply to manually added images or saved measurements. The Pi keeps its own copies.
 
@@ -70,9 +71,9 @@ Run the command for the view you want. Each starts a server on the current compu
 
 | View | Command | What it shows |
 |---|---|---|
-| Digital twin | `python -B digital_twin.py` | A rotatable model derived from the latest photo, individual visible leaves, and a 0–14 day scenario slider |
-| Plant health | `python -B health_assessment.py` | The latest photo, relative score, five colour subscores, and raw leaf measurements |
-| Charts | `python -B computer_vision_pipeline.py --charts` | Leaf area, growth rate, leaf colour, health score, and health subscores |
+| Digital twin | `python digital_twin.py` | A rotatable model derived from the latest photo, individual visible leaves, and a 0–14 day scenario slider |
+| Plant health | `python health_assessment.py` | The latest photo, relative score, five colour subscores, and raw leaf measurements |
+| Charts | `python computer_vision_pipeline.py --charts` | Leaf area, leaf colour, plant health, and health subscores |
 
 Use these commands instead of opening the HTML files directly. On a local `file:` URL, the browser does not allow the page to fetch its neighbouring JSON automatically. If a series was saved to a custom output folder, pass the same `--output PATH` when opening its view. The browser server listens on `127.0.0.1` and stops after 15 minutes without requests.
 
@@ -83,13 +84,13 @@ The HTML, CSS, and JavaScript files are source files. Running the analysis updat
 - **Leaf area:** OpenCV segments visible leaf tissue in the camera image. The final binary mask provides a pixel count. A verified scale in the leaf plane is needed for cm² or mm. Occlusion and leaf orientation can change the projected area even when the plant has not grown.
 - **Plant health:** The score ranges from 0 to 100 and compares the plant with its own reference photo. A value near 100 means the measured features are similar to the reference. It does not identify disease or establish that the plant is healthy.
 - **Growth:** A geometrically checked rate requires usable, comparable views and capture timestamps. Comparisons start at 30 minutes and prefer intervals of at least 12 hours. Direct changes in leaf pixel count appear separately, including when they cannot be treated as growth.
-- **Data quality:** Unknown measurements remain unknown. The JSON export records reasons in `analysis.missing_values`; the CSV uses `Nicht verfügbar` and the `fehlende_werte` column. The existing column names and machine-readable status codes are retained for compatibility.
+- **Data quality:** Unknown measurements remain unknown. The JSON export records reasons in `analysis.missing_values`; the CSV uses `Unavailable` and the `missing_values` column. New CSV headers and status codes are in English. Existing CSV and JSON measurements are read during migration. The JSON keeps its established measurement sections and numeric field names.
 
 To correct the mask for one photo or set a scale from a ruler at leaf height:
 
 ```powershell
-python -B computer_vision_pipeline.py --correct-mask images/photo.jpg
-python -B computer_vision_pipeline.py --scale-image images/photo.jpg --reference-mm 50
+python computer_vision_pipeline.py --correct-mask images/photo.jpg
+python computer_vision_pipeline.py --scale-image images/photo.jpg --reference-mm 50
 ```
 
 Replace `photo.jpg` and the example `50` with your file name and the actual distance between the marked points. Rerun the analysis after either operation. A stored mask correction is reused only for the matching source image and lens profile. Instructions for importing a mask, setting a scale, and calibrating the lens are in [M1](docs/m1-image-capture-system.md).
@@ -107,6 +108,6 @@ Local development checks covered real photos, simulated lighting changes, manual
 | M3 | [Plant Health Assessment](docs/m3-plant-health-assessment.md) |
 | M4 | [Digital Twin and 3D Viewer](docs/m4-digital-twin.md) |
 
-Use a separate series identifier (`MESSREIHE`) and output folder for another plant. Configure the region of interest and scale in `computer_vision_pipeline.py`, reference review and score weights in `health_assessment.py`, and the camera view and projection thresholds in `digital_twin.py`. Run any of the four scripts with `--help` to see its options.
+Use a separate series identifier (`SERIES_ID`) and output folder for another plant. Configure the region of interest and scale in `computer_vision_pipeline.py`, reference review and score weights in `health_assessment.py`, and the camera view and projection thresholds in `digital_twin.py`. Run any of the four scripts with `--help` to see its options.
 
 Future work includes testing the deployed capture schedule and measurement accuracy, validating the condition score over a documented plant series, and agreeing on the device identifiers, image paths, and HTTP contract for platform integration.
