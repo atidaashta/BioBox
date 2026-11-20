@@ -27,14 +27,14 @@ ENGLISH_LAYOUT_VERSION = 2
 
 # Camera view and forecast settings
 TWIN_PHOTO_VIEW = "side"  # Use "top" for a camera mounted directly above the pot.
-TWIN_3D_VERSION = "0.7.0"
-TWIN_VERSION = "0.1.0"
+TWIN_3D_VERSION = "0.8.0"
+TWIN_VERSION = "0.2.0"
 TWIN_MAX_LEAVES = 200
 TWIN_HORIZON_HOURS = 24
-TWIN_WINDOW_HOURS = 72
-TWIN_MIN_OBSERVATIONS = 6
-TWIN_MIN_SPAN_HOURS = 24
-TWIN_MAX_GAP_HOURS = 6
+TWIN_WINDOW_HOURS = 28*24
+TWIN_MIN_OBSERVATIONS = 4
+TWIN_MIN_SPAN_HOURS = 48
+TWIN_MAX_GAP_HOURS = 7*24
 TWIN_MAX_AGE_HOURS = 3
 TWIN_TARGET_TOLERANCE_MINUTES = 40
 OLLAMA_CARE_MODEL = "qwen2.5:3b"
@@ -60,7 +60,7 @@ def merge_twin_views(history, current):
                 pose = info.get("camera_transform")
             previous_id = info.get("twin_view_id") or info.get("view_id")
             if (not previous_id or pose is None or info.get("series_id") != SERIES_ID
-                    or info.get("pipeline_sha256") != PIPELINE_SHA256
+                    or info.get("version") != ANALYSIS_VERSION
                     or info.get("image_size") != list(z.get("_image_shape", ()))
                     or info.get("lens_profile_sha256") != z.get("_lens_hash")):
                 continue
@@ -156,8 +156,9 @@ def twin_observation(z):
     scale = float(np.hypot(*matrix[:, 0]))
     angle = abs(math.degrees(math.atan2(matrix[1, 0], matrix[0, 0])))
     translation_px = float(np.linalg.norm(matrix[:, 2]))
-    # The prototype requires a nearly fixed camera.
-    if abs(scale-1) > .005 or angle > .5 or translation_px > max(2., .003*min(PROCESSING_WIDTH, image_shape[1])):
+    # The scene alignment corrects small camera movements before the area is
+    # compared. Keep the same limits as the verified growth measurements.
+    if abs(scale-1) > .025 or angle > 3. or translation_px > .055*PROCESSING_WIDTH:
         return None, "camera_movement_too_large_for_projection"
     if info.get("mask_clipped") and translation_px > 1.:
         return None, "clipped_frame_shifted"
@@ -166,57 +167,199 @@ def twin_observation(z):
     if not math.isfinite(area) or not 0 < area <= maximal:
         return None, "invalid_leaf_pixel_count"
     group = {"series_id": SERIES_ID, "view_id": uid, "image_size": list(image_shape),
-              "pipeline_sha256": info["pipeline_sha256"], "lens": info.get("lens_profile_sha256")}
+              "measurement_version": info.get("version"), "lens": info.get("lens_profile_sha256")}
     key = hashlib.sha256(json.dumps(group, sort_keys=True).encode("utf-8")).hexdigest()
-    return {"time": timestamp, "pixels": area, "max_pixels": maximal, "group": key,
+    geometry = info.get("leaf_geometry") or z.get("_leaf_geometry") or {}
+    return {"time": timestamp, "pixels": area/scale**2, "raw_pixels": area,
+            "max_pixels": maximal/scale**2, "group": key,
+            "width": geometry.get("width_px", 0)/scale,
+            "height": geometry.get("height_px", 0)/scale,
+            "leaf_count": geometry.get("count"), "count_method": geometry.get("method"),
             "file_name": z["file_name"], "checksum_sha256": z.get("_sha256"),
             "pipeline_sha256": info["pipeline_sha256"]}, None
 
 
+def robust_trend(x, y):
+    "Fit a median pairwise slope using real times; one odd photo has limited influence."
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    if len(x) > 64:
+        indices = np.unique(np.linspace(0, len(x)-1, 64).astype(int))
+        x, y = x[indices], y[indices]
+    slopes = [(y[j]-y[i])/(x[j]-x[i]) for i in range(len(x)) for j in range(i+1, len(x))
+              if x[j]-x[i] >= .5]
+    slope = float(np.median(slopes)) if slopes else 0.
+    intercept = float(np.median(y-slope*x))
+    residual = float(np.median(np.abs(y-(slope*x+intercept))))
+    return slope, intercept, residual
+
+
 def twin_fit(points):
-    "Fit a line at the actual capture times, subject to the minimum sample requirements."
+    "Fit bounded candidates to hourly or daily observations without inventing a growth rate."
     if len(points) < TWIN_MIN_OBSERVATIONS:
         return None, "too_few_comparable_photos"
     span = (points[-1]["time"]-points[0]["time"]).total_seconds()/3600
     if span < TWIN_MIN_SPAN_HOURS:
-        return None, "series_shorter_than_24_hours"
+        return None, "series_shorter_than_48_hours"
     gap = max((b["time"]-a["time"]).total_seconds()/3600 for a, b in zip(points, points[1:]))
     if gap > TWIN_MAX_GAP_HOURS:
         return None, "sampling_gap_too_large"
     x = np.array([(p["time"]-points[-1]["time"]).total_seconds()/3600 for p in points])
     y = np.array([p["pixels"] for p in points])
-    slope, start = np.linalg.lstsq(np.column_stack((x, np.ones(len(x)))), y, rcond=None)[0]
-    return {"slope_px_per_hour": float(slope), "intercept_px": float(start),
+    # Compress repeated hourly samples to daily medians so a densely sampled
+    # day does not outweigh all the earlier days in the database.
+    days = np.floor(x/24).astype(int)
+    groups = [days == day for day in np.unique(days)]
+    xx, yy = np.array([np.median(x[g]) for g in groups]), np.array([np.median(y[g]) for g in groups])
+    if len(xx) < 3:
+        xx, yy = x, y
+    cutoff = -max(72., min(10*24., span*.48))
+    near = xx >= cutoff
+    if np.count_nonzero(near) < 3:
+        near = np.arange(len(xx)) >= max(0, len(xx)-4)
+    slope, _, residual = robust_trend(xx[near], yy[near])
+    rate, _, log_residual = robust_trend(xx[near], np.log(yy[near]))
+    # Damping is a horizon limit, not an assumed biological carrying capacity.
+    # Faster recent deceleration shortens it; steady data retains its trend longer.
+    long_rate, _, _ = robust_trend(xx, np.log(yy))
+    tau = max(48., min(14*24., span))
+    if long_rate > 0 and 0 < rate < long_rate:
+        tau *= max(.40, rate/long_rate)
+    rate = float(np.clip(rate, -.30/24, .30/24))
+    linear_limit = .30*y[-1]/24
+    slope = float(np.clip(slope, -linear_limit, linear_limit))
+    return {"slope_px_per_hour": slope, "intercept_px": float(y[-1]),
+            "log_rate_per_hour": rate, "damping_hours": tau,
             "points": len(points), "span_hours": round(span, 3),
-            "fit_mae_px": float(np.mean(np.abs(y-(slope*x+start))))}, None
+            "fit_mae_px": residual, "relative_residual": min(.5, log_residual),
+            "median_gap_hours": float(np.median(np.diff(x))),
+            "max_pixels": float(points[-1]["max_pixels"])}, None
+
+
+def twin_predict(model, hours, name="damped_growth"):
+    "Anchor every curve at the last capture, including a genuine zero-change series."
+    source = model["intercept_px"]
+    if name == "last_value":
+        return source
+    if name == "robust_linear":
+        value = source+model["slope_px_per_hour"]*hours
+    else:
+        tau = model["damping_hours"]
+        exposure = tau*(-math.expm1(-max(0., hours)/tau))
+        value = source*math.exp(float(np.clip(model["log_rate_per_hour"]*exposure, -3, 3)))
+    return float(np.clip(value, .08*source, min(model["max_pixels"], source*3)))
 
 
 def twin_backtest(points):
-    "Fit earlier measurements and test on a later one without shuffling the observations."
-    linear_error, baseline_error = [], []
-    tolerance = timedelta(minutes=TWIN_TARGET_TOLERANCE_MINUTES)
-    for i, origin in enumerate(points):
+    "Predict each later photo using only earlier records, at its actual capture time."
+    errors = {name: [] for name in ("damped_growth", "robust_linear", "last_value")}
+    horizons = []
+    for i in range(TWIN_MIN_OBSERVATIONS-1, len(points)-1):
+        origin, observed = points[i], points[i+1]
         earlier = [p for p in points[:i+1] if p["time"] >= origin["time"]-timedelta(hours=TWIN_WINDOW_HOURS)]
         model, _ = twin_fit(earlier)
-        if model is None:
+        hours = (observed["time"]-origin["time"]).total_seconds()/3600
+        if model is None or not 0 < hours <= TWIN_MAX_GAP_HOURS:
             continue
-        target = origin["time"]+timedelta(hours=TWIN_HORIZON_HOURS)
-        later = [p for p in points[i+1:] if abs(p["time"]-target) <= tolerance]
-        if not later:
+        horizons.append(hours)
+        for name in errors:
+            errors[name].append(abs(twin_predict(model, hours, name)-observed["pixels"]))
+    mae = {name: float(np.mean(values)) if values else None for name, values in errors.items()}
+    selected = "damped_growth"
+    if len(horizons) >= 3:
+        selected = min(mae, key=lambda name: mae[name])
+        # Prefer the bounded curve when its measured error is nearly tied.
+        if mae["damped_growth"] <= mae[selected]*1.05:
+            selected = "damped_growth"
+    return {"method": "next_capture_rolling_origin", "comparisons": len(horizons),
+            "horizons_hours": horizons, "candidate_mae_px": mae,
+            "linear_mae_px": mae["robust_linear"], "last_value_mae_px": mae["last_value"],
+            "selected_model": selected,
+            "status": "historical_method_comparison" if len(horizons) >= 3 else "too_few_forecast_checks"}
+
+
+def comparable_twin_series(rows, current):
+    "Keep distinct photos of this plant and reject long gaps and future training rows."
+    by_time, hashes = {}, set()
+    for row in sorted(rows, key=lambda r: r.get("_capture_time") or parse_saved_time(r.get("captured_at"))
+                      or datetime.min.replace(tzinfo=timezone.utc), reverse=True):
+        point, _ = twin_observation(row)
+        if point is None or point["group"] != current["group"]:
             continue
-        observed = min(later, key=lambda p: abs(p["time"]-target))
-        # Evaluate both models at the actual observation time.
-        h = (observed["time"]-origin["time"]).total_seconds()/3600
-        forecast = model["intercept_px"]+model["slope_px_per_hour"]*h
-        if not 0 < forecast <= origin["max_pixels"]:
+        if not current["time"]-timedelta(hours=TWIN_WINDOW_HOURS) <= point["time"] <= current["time"]:
             continue
-        linear_error.append(abs(forecast-observed["pixels"]))
-        baseline_error.append(abs(origin["pixels"]-observed["pixels"]))
-    return {"method": "rolling_origin", "horizon_hours": TWIN_HORIZON_HOURS,
-            "target_tolerance_minutes": TWIN_TARGET_TOLERANCE_MINUTES, "comparisons": len(linear_error),
-            "linear_mae_px": float(np.mean(linear_error)) if linear_error else None,
-            "last_value_mae_px": float(np.mean(baseline_error)) if baseline_error else None,
-            "status": "historical_method_comparison" if len(linear_error) >= 3 else "too_few_forecast_checks"}
+        sha = point["checksum_sha256"]
+        if point["time"] not in by_time and (not sha or sha not in hashes):
+            by_time[point["time"]] = point
+            if sha:
+                hashes.add(sha)
+    points = sorted(by_time.values(), key=lambda p: p["time"])
+    for i in range(len(points)-1, 0, -1):
+        if (points[i]["time"]-points[i-1]["time"]).total_seconds()/3600 > TWIN_MAX_GAP_HOURS:
+            points = points[i:]
+            break
+    return points
+
+
+def growth_projection(rows, independent_images=False):
+    "Provide a measured trajectory for the day slider, even for an older dataset."
+    projection = {"status": "not_enough_history", "max_days": 0, "trajectory": [],
+                  "source": "saved_image_measurements", "measured_3d": False}
+    if not rows or independent_images or any(r.get("health_status") == "independent_images_no_reference" for r in rows):
+        return projection
+    latest = max(rows, key=lambda r: r.get("_capture_time") or parse_saved_time(r.get("captured_at"))
+                 or datetime.min.replace(tzinfo=timezone.utc))
+    current, reason = twin_observation(latest)
+    if current is None:
+        projection["status"] = reason
+        return projection
+    series = comparable_twin_series(rows, current)
+    model, reason = twin_fit(series)
+    if model is None:
+        projection["status"] = reason
+        return projection
+    test = twin_backtest(series)
+    name = test["selected_model"]
+    max_days = min(14, max(1, int(model["span_hours"]/48)))
+    x = np.array([(p["time"]-current["time"]).total_seconds()/3600 for p in series])
+    # Width and silhouette height are observations in the image plane. Their
+    # changes guide the illustration, not claims about measured 3D height.
+    dimensions = {}
+    for field in ("width", "height", "leaf_count"):
+        positive = [(xx, p.get(field)) for xx, p in zip(x, series) if isinstance(p.get(field), (int, float)) and p[field] > 0]
+        if len(positive) >= 4:
+            slope, _, noise = robust_trend(*zip(*[(xx, math.log(value)) for xx, value in positive]))
+            dimensions[field] = {"rate": slope, "noise": noise, "last": positive[-1][1]}
+    count = dimensions.get("leaf_count")
+    count_rate = max(0., count["rate"]*24*count["last"]) if count and count["noise"] < .25 else 0.
+    relative_error = max(.025, model["relative_residual"],
+                         (test["candidate_mae_px"].get(name) or 0)/current["pixels"])
+    trajectory = []
+    for day in range(max_days+1):
+        ratio = twin_predict(model, day*24, name)/current["pixels"]
+        elapsed = model["damping_hours"]*(-math.expm1(-day*24/model["damping_hours"]))
+        def size_ratio(field):
+            measured = dimensions.get(field)
+            if ratio <= 1 or not measured:
+                return 1.
+            # Bounds tie the illustration to predicted area instead of letting
+            # a noisy height measurement elongate the model independently.
+            return min(ratio**.55, math.exp(max(0., min(.004, measured["rate"]))*elapsed))
+        future_leaves = min(max(0, TWIN_MAX_LEAVES-int(current.get("leaf_count") or 0)),
+                            int(count_rate*elapsed/24)) if ratio > 1.001 else 0
+        error = min(.65, relative_error*math.sqrt(1+day*24/max(24., model["median_gap_hours"]))) if day else 0.
+        trajectory.append({"day": day, "area_ratio": round(ratio, 6),
+                           "area_low_ratio": round(ratio*(1-error), 6),
+                           "area_high_ratio": round(ratio*(1+error), 6),
+                           "width_ratio": round(size_ratio("width"), 6),
+                           "height_ratio": round(size_ratio("height"), 6),
+                           "new_leaves": future_leaves})
+    projection.update(status="history_based_projection", as_of=iso(current["time"]), max_days=max_days,
+                      points=len(series), span_days=round(model["span_hours"]/24, 2),
+                      model=name, validation=test, uncertainty_kind="heuristic_error_envelope",
+                      leaf_maturation_days=max(3., min(10., model["span_hours"]/96)),
+                      estimated_new_leaves=bool(count and any(p["count_method"] != "manual" for p in series)),
+                      trajectory=trajectory)
+    return projection
 
 
 def evaluate_issued_forecasts(history, points, current_time):
@@ -304,11 +447,7 @@ def digital_twin(rows, history=None, independent_images=False, current_time=None
     data["online_validation"] = {"comparisons": len(verified),
              "mae_px": float(np.mean([p["absolute_error_px"] for p in verified])) if verified else None,
              "last_value_mae_px": float(np.mean([p["last_value_error_px"] for p in verified])) if verified else None}
-    # Count only one observation for each capture timestamp.
-    by_time = {p["time"]: p for p in points if p["group"] == current["group"]
-               and timestamp-timedelta(hours=TWIN_WINDOW_HOURS) <= p["time"] <= timestamp}
-    by_time[timestamp] = current
-    series = [by_time[t] for t in sorted(by_time)]
+    series = comparable_twin_series(rows, current)
     span = (series[-1]["time"]-series[0]["time"]).total_seconds()/3600 if series else 0
     data["training"].update(points=len(series), span_hours=round(span, 3), comparison_group=current["group"],
                              first_at=iso(series[0]["time"]) if series else None, last_at=iso(timestamp))
@@ -319,14 +458,9 @@ def digital_twin(rows, history=None, independent_images=False, current_time=None
     test = twin_backtest(series)
     data["validation"] = test
     target = timestamp+timedelta(hours=TWIN_HORIZON_HOURS)
-    value = model["intercept_px"]+model["slope_px_per_hour"]*TWIN_HORIZON_HOURS
-    name, selection = "linear_trend", "provisional_linear_baseline"
-    if test["comparisons"] >= 3 and test["last_value_mae_px"] <= test["linear_mae_px"]:
-        name, selection = "last_value", "baseline_at_least_as_accurate_in_backtest"
-    if not 0 < value <= current["max_pixels"]:
-        name, selection = "last_value", "linear_projection_exceeds_image_bounds"
-    if name == "last_value":
-        value = current["pixels"]
+    name = test["selected_model"]
+    selection = "rolling_origin_error_comparison" if test["comparisons"] >= 3 else "provisional_damped_trend"
+    value = twin_predict(model, TWIN_HORIZON_HOURS, name)
     live = bool(0 <= observation_age <= TWIN_MAX_AGE_HOURS and current_time < target)
     data["status"] = "provisional_forecast" if live else "historical_projection_stale_data"
     data["forecast"] = {"as_of": iso(timestamp), "target_at": iso(target), "horizon_hours": TWIN_HORIZON_HOURS,
@@ -906,7 +1040,7 @@ def twin_leaf_mesh(leaf, extent):
 
 
 def twin_view_data(rows, output_dir=None, care_selection=None):
-    "Send the latest photo's contours and any verified rate to the viewer."
+    "Send the latest contours and the comparable history that drives their development."
     if care_selection is not None:
         # Care suggestions are available through the explicit CLI action only.
         care_suggestions = [{"file_name": z["file_name"], "captured_at": z.get("captured_at"),
@@ -942,14 +1076,15 @@ def twin_view_data(rows, output_dir=None, care_selection=None):
     elapsed_hours = z.get("growth_interval_hours")
     rate = rate if (leavedata and elapsed_hours is not None and elapsed_hours>=12
                     and rate is not None and -50<=rate<=100) else None
+    projection = growth_projection(rows)
     return make_json_safe({"latest":{"file_name":z["file_name"],"captured_at":z.get("captured_at"),
                                   "leaves":leavedata,"count_estimated":not manual,
                                   "view":"top" if TWIN_PHOTO_VIEW=="top" else "side"},
-                        "rate":rate,"viewer_version":TWIN_3D_VERSION})
+                        "rate":rate,"growth":projection,"viewer_version":TWIN_3D_VERSION})
 
 
 def twin_view_from_json(source, output_dir, care_selection=None):
-    "Refresh viewer data while preserving the saved model state and forecasts."
+    "Refit from the saved measurements and preserve every previously issued forecast."
     source = Path(source).expanduser().resolve()
     output_dir = Path(output_dir).expanduser().resolve()
     directory_path = viewer_directories(output_dir)[0]
@@ -974,6 +1109,7 @@ def twin_view_from_json(source, output_dir, care_selection=None):
     else:
         raise ValueError("Choose results.json or digital_twin.json.")
 
+    rows = None
     if records is not None:
         rows = [prepare_historical_row(historical_row(s)) for s in records]
         viewer = twin_view_data(rows, directory_path, care_selection)
@@ -988,6 +1124,8 @@ def twin_view_from_json(source, output_dir, care_selection=None):
                        "state": None, "forecast": None, "forecast_history": []}
         if not isinstance(prior, dict) or not isinstance(prior.get("forecast_history"), list):
             raise ValueError("Could not safely read the existing digital twin JSON. It was kept.")
+        if rows is not None:
+            prior = digital_twin(rows, prior["forecast_history"])
         prior["viewer"] = viewer
         save_twin(prior, directory_path)
     return target

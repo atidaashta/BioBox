@@ -1,10 +1,10 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "series_id": "plant-01",
-  "generated_at": "2026-11-18T16:46:31.414524Z",
+  "generated_at": "2026-11-20T07:46:06.549611Z",
   "pipeline_version": "4.15.0",
   "scope": "visible_leaf_area_pixels",
-  "status": "camera_movement_too_large_for_projection",
+  "status": "historical_projection_stale_data",
   "state": {
     "observed_at": "2025-02-08T12:00:05Z",
     "file_name": "basil03_20250208T120005Z.png",
@@ -19,21 +19,65 @@
     "health_status": "provisional_reference",
     "usable": true,
     "quality_flags": "",
-    "age_hours": 15556.774,
+    "age_hours": 15595.767,
     "fresh": false
   },
-  "forecast": null,
-  "training": {
-    "points": 0,
-    "span_hours": 0,
-    "min_points": 6,
-    "min_span_hours": 24,
-    "window_hours": 72,
-    "excluded_images": {
-      "camera_movement_too_large_for_projection": 4
-    }
+  "forecast": {
+    "as_of": "2025-02-08T12:00:05Z",
+    "target_at": "2025-02-09T12:00:05Z",
+    "horizon_hours": 24,
+    "predicted_px": 349036.29,
+    "source_px": 340319.2620879999,
+    "model": "robust_linear",
+    "model_selection": "rolling_origin_error_comparison",
+    "is_current": false,
+    "biologically_validated": false,
+    "fit": {
+      "slope_px_per_hour": 363.2093312574815,
+      "intercept_px": 340319.2620879999,
+      "log_rate_per_hour": 0.001194302166157037,
+      "damping_hours": 194.20747463468894,
+      "points": 10,
+      "span_hours": 552.0,
+      "fit_mae_px": 5776.829518371902,
+      "relative_residual": 0.021074683440926556,
+      "median_gap_hours": 71.99972222222223,
+      "max_pixels": 2021730.2969689548
+    },
+    "comparison_group": "827c903f290bb85bbe88e15b193b63390e489d1b5fb215e44c31dd9ccc810394"
   },
-  "validation": null,
+  "training": {
+    "points": 10,
+    "span_hours": 552.0,
+    "min_points": 4,
+    "min_span_hours": 48,
+    "window_hours": 672,
+    "excluded_images": {},
+    "comparison_group": "827c903f290bb85bbe88e15b193b63390e489d1b5fb215e44c31dd9ccc810394",
+    "first_at": "2025-01-16T12:00:05Z",
+    "last_at": "2025-02-08T12:00:05Z"
+  },
+  "validation": {
+    "method": "next_capture_rolling_origin",
+    "comparisons": 6,
+    "horizons_hours": [
+      47.999722222222225,
+      71.99972222222222,
+      48.00055555555556,
+      72.0,
+      48.0,
+      72.0
+    ],
+    "candidate_mae_px": {
+      "damped_growth": 21774.10526489638,
+      "robust_linear": 18027.822514648735,
+      "last_value": 23230.928123832946
+    },
+    "linear_mae_px": 18027.822514648735,
+    "last_value_mae_px": 23230.928123832946,
+    "selected_model": "robust_linear",
+    "status": "historical_method_comparison"
+  },
   "online_validation": {
     "comparisons": 0,
     "mae_px": null,
@@ -12536,6 +12580,150 @@
       "view": "side"
     },
     "rate": 1.494,
-    "viewer_version": "0.7.0"
+    "growth": {
+      "status": "history_based_projection",
+      "max_days": 11,
+      "trajectory": [
+        {
+          "day": 0,
+          "area_ratio": 1.0,
+          "area_low_ratio": 1.0,
+          "area_high_ratio": 1.0,
+          "width_ratio": 1.0,
+          "height_ratio": 1.0,
+          "new_leaves": 0
+        },
+        {
+          "day": 1,
+          "area_ratio": 1.025614,
+          "area_low_ratio": 0.962879,
+          "area_high_ratio": 1.088349,
+          "width_ratio": 1.012616,
+          "height_ratio": 1.014008,
+          "new_leaves": 4
+        },
+        {
+          "day": 2,
+          "area_ratio": 1.051229,
+          "area_low_ratio": 0.979337,
+          "area_high_ratio": 1.12312,
+          "width_ratio": 1.023897,
+          "height_ratio": 1.027859,
+          "new_leaves": 9
+        },
+        {
+          "day": 3,
+          "area_ratio": 1.076843,
+          "area_low_ratio": 0.99617,
+          "area_high_ratio": 1.157515,
+          "width_ratio": 1.033972,
+          "height_ratio": 1.041559,
+          "new_leaves": 13
+        },
+        {
+          "day": 4,
+          "area_ratio": 1.102457,
+          "area_low_ratio": 1.013248,
+          "area_high_ratio": 1.191666,
+          "width_ratio": 1.042957,
+          "height_ratio": 1.055113,
+          "new_leaves": 16
+        },
+        {
+          "day": 5,
+          "area_ratio": 1.128071,
+          "area_low_ratio": 1.030487,
+          "area_high_ratio": 1.225655,
+          "width_ratio": 1.050964,
+          "height_ratio": 1.068526,
+          "new_leaves": 19
+        },
+        {
+          "day": 6,
+          "area_ratio": 1.153686,
+          "area_low_ratio": 1.047832,
+          "area_high_ratio": 1.259539,
+          "width_ratio": 1.05809,
+          "height_ratio": 1.081803,
+          "new_leaves": 22
+        },
+        {
+          "day": 7,
+          "area_ratio": 1.1793,
+          "area_low_ratio": 1.065243,
+          "area_high_ratio": 1.293357,
+          "width_ratio": 1.064429,
+          "height_ratio": 1.094948,
+          "new_leaves": 24
+        },
+        {
+          "day": 8,
+          "area_ratio": 1.204914,
+          "area_low_ratio": 1.082692,
+          "area_high_ratio": 1.327136,
+          "width_ratio": 1.070062,
+          "height_ratio": 1.107964,
+          "new_leaves": 26
+        },
+        {
+          "day": 9,
+          "area_ratio": 1.230528,
+          "area_low_ratio": 1.100158,
+          "area_high_ratio": 1.360899,
+          "width_ratio": 1.075065,
+          "height_ratio": 1.120857,
+          "new_leaves": 28
+        },
+        {
+          "day": 10,
+          "area_ratio": 1.256143,
+          "area_low_ratio": 1.117624,
+          "area_high_ratio": 1.394661,
+          "width_ratio": 1.079506,
+          "height_ratio": 1.13363,
+          "new_leaves": 30
+        },
+        {
+          "day": 11,
+          "area_ratio": 1.281757,
+          "area_low_ratio": 1.135078,
+          "area_high_ratio": 1.428435,
+          "width_ratio": 1.083446,
+          "height_ratio": 1.146286,
+          "new_leaves": 31
+        }
+      ],
+      "source": "saved_image_measurements",
+      "measured_3d": false,
+      "as_of": "2025-02-08T12:00:05Z",
+      "points": 10,
+      "span_days": 23.0,
+      "model": "robust_linear",
+      "validation": {
+        "method": "next_capture_rolling_origin",
+        "comparisons": 6,
+        "horizons_hours": [
+          47.999722222222225,
+          71.99972222222222,
+          48.00055555555556,
+          72.0,
+          48.0,
+          72.0
+        ],
+        "candidate_mae_px": {
+          "damped_growth": 21774.10526489638,
+          "robust_linear": 18027.822514648735,
+          "last_value": 23230.928123832946
+        },
+        "linear_mae_px": 18027.822514648735,
+        "last_value_mae_px": 23230.928123832946,
+        "selected_model": "robust_linear",
+        "status": "historical_method_comparison"
+      },
+      "uncertainty_kind": "heuristic_error_envelope",
+      "leaf_maturation_days": 5.75,
+      "estimated_new_leaves": true
+    },
+    "viewer_version": "0.8.0"
   }
 }

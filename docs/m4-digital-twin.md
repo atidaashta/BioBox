@@ -15,8 +15,8 @@
 Run these commands from the project root:
 
 ```powershell
-python -B computer_vision_pipeline.py images
-python -B digital_twin.py
+python computer_vision_pipeline.py images
+python digital_twin.py
 ```
 
 Skip the first command if the saved measurements are already current. The second opens a browser view on the current computer and automatically loads `digital_twin/digital_twin.json`. Opening the HTML file directly is suitable only if you select the JSON yourself, because the browser restricts automatic reads from neighbouring local files.
@@ -24,7 +24,7 @@ Skip the first command if the saved measurements are already current. The second
 To refresh the viewer data from saved measurements without taking a photograph or rerunning the image analysis:
 
 ```powershell
-python -B digital_twin.py --from-json results/results.json
+python digital_twin.py --from-json results/results.json
 ```
 
 If the results came from an older version and do not contain usable contours, rerun the pipeline on the original images. The saved data alone cannot reconstruct contours that were never exported.
@@ -35,21 +35,21 @@ The viewer uses the most recent photograph by capture time. If its contours are 
 
 **Count leaves** displays the individual visible regions as numbered tiles. The `≈` symbol identifies an automatic estimate. **Back to plant** restores the model. If the photograph does not supply usable contours, the viewer reports that condition instead of drawing a substitute plant.
 
-For each visible region, the model approximates position, length, width, orientation, contour, and colour. Depth, stems, and curvature are modelled. Set `TWIN_FOTOANSICHT = "oben"` in `digital_twin.py` for an overhead camera; the default is a side view. One photograph cannot reveal hidden leaves or provide a full geometric measurement of the plant.
+For each visible region, the model approximates position, length, width, orientation, contour, and colour. Depth, stems, and curvature are modelled. Set `TWIN_PHOTO_VIEW = "top"` in `digital_twin.py` for an overhead camera; the default is a side view. One photograph cannot reveal hidden leaves or provide a full geometric measurement of the plant.
 
 ### Review the leaf count
 
 If the automatic segmentation merges or splits leaves, click one point inside each visible leaf in the original image:
 
 ```powershell
-python -B digital_twin.py --mark-leaves images/photo.jpg
-python -B computer_vision_pipeline.py images
+python digital_twin.py --mark-leaves images/photo.jpg
+python computer_vision_pipeline.py images
 ```
 
 Right-click or press `U` to remove the last point, press `R` to clear all points, or use `F` to switch between the cropped view and the full image. Enter saves the markings. A point clearly outside the measurement mask is rejected; review the point or the mask. A valid imported greyscale label image takes precedence:
 
 ```powershell
-python -B digital_twin.py --leaf-labels images/photo.jpg leaf_labels.png
+python digital_twin.py --leaf-labels images/photo.jpg leaf_labels.png
 ```
 
 The label image must match the dimensions of the image used for analysis and may contain up to 200 distinct leaf IDs. Markings affect the displayed regions and count. They do not replace the overall mask used for area or health measurements.

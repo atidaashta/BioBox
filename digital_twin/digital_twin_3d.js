@@ -3,7 +3,8 @@
 function showTwin(data) {
  const record = data.latest;
  const leaves = record?.leaves || [], count = leaves.length, topView = record?.view === 'top';
- const rate = Number.isFinite(data.rate) ? data.rate / 100 : .02;
+ const growth = data.growth;
+ const trajectory = Array.isArray(growth?.trajectory) ? growth.trajectory : [];
  const canvas = document.getElementById('plant');
  const slider = document.getElementById('days');
  const dayText = document.getElementById('day-text');
@@ -31,7 +32,13 @@ function showTwin(data) {
  if (record.count_estimated) toggle.title = 'Leaf count estimated automatically';
  toggle.hidden = false;
  canvas.hidden = false;
- slider.disabled = false;
+ slider.max = String(growth?.max_days || 0);
+ slider.value = '0';
+ slider.step = '1';
+ slider.disabled = trajectory.length < 2;
+ slider.title = slider.disabled ? 'More comparable photos are needed for a growth projection.' :
+  `Estimated from ${growth.points} photos across ${growth.span_days} days.`;
+ if (slider.disabled) dayText.textContent = 'At capture · more history needed';
 
  const el=(tag,attrs={},...children)=>{
   const e=document.createElement(tag);
@@ -104,27 +111,28 @@ function showTwin(data) {
    return plane(cx+ax*t-ay*side,cy+ay*t+ax*side,u,v,hi-lo);
   };
  }
+ const photoLight = leaves.map(s=>.2126*s.rgb[0]+.7152*s.rgb[1]+.0722*s.rgb[2]).sort((a,b)=>a-b);
+ const exposure = clamp(139/(photoLight[Math.floor(count/2)] || 139),.68,1.55);
  function leafMaterial(s){
-  // Take the hue from the visible blade. Simulated light adds shape, without repainting discoloured leaves green.
-  const [r,g,b]=s.rgb;
-  return [clamp(.90*r+7,21,224),clamp(1.04*g+11,38,235),clamp(.86*b+7,17,212)];
+  // Keep relative blade colours while illuminating the model consistently.
+  return s.rgb.map((v,i)=>clamp(v*exposure+(i===1?3:0),18,218));
  }
  function leafFaces(faces,s,at,veins=true){
-  const color=leafMaterial(s),rows=s.profile.length-1,cols=count>85?4:6;
+  const color=leafMaterial(s),rows=count>85?20:28,cols=count>85?4:6;
   const grid=Array.from({length:rows+1},(_,j)=>Array.from({length:cols+1},(_,k)=>at(j/rows,2*k/cols-1)));
   for(let j=0;j<rows;j++)for(let k=0;k<cols;k++){
    const t=(j+.5)/rows,edge=Math.abs((k+.5)/cols*2-1),jitter=seed(j+13*s.center[0],k+17*s.center[1])-.5;
-   const rgb=lift(color,.94+.11*Math.sin(Math.PI*t)-.07*edge+.045*jitter+(k<cols/2?.05:0));
-   surface(faces,[grid[j][k],grid[j+1][k],grid[j+1][k+1],grid[j][k+1]],rgb,{twoSided:true,gloss:14});
+   const rgb=lift(color,.94+.07*Math.sin(Math.PI*t)-.045*edge+.018*jitter+(k<cols/2?.025:0));
+   surface(faces,[grid[j][k],grid[j+1][k],grid[j+1][k+1],grid[j][k+1]],rgb,{twoSided:true,gloss:7});
   }
   if(!veins)return;
-  const vein=css(color.map((v,i)=>mix(v,i===0?190:i===1?206:124,.46)));
+  const vein=css(color.map((v,i)=>mix(v,i===0?167:i===1?190:111,.27)));
   const rib=(path,width,opacity)=>faces.push({points:path,color:vein,line:true,width,opacity});
-  for(let j=0;j<rows;j++)rib([at(j/rows,0),at((j+1)/rows,0)],.60,.77-.40*j/rows);
+  for(let j=0;j<rows;j++)rib([at(j/rows,0),at((j+1)/rows,0)],.55,.58-.25*j/rows);
   for(let j=0;j<6;j++)for(const sign of [-1,1]){
    const u=.15+j*.12, tip=Math.min(.974,u+.18-j*.01), edge=.82+seed(j,sign)*.13;
    const path=[at(u,0),at(mix(u,tip,.4),sign*.38),at(mix(u,tip,.72),sign*.70),at(tip,sign*edge)];
-   for(let i=1;i<path.length;i++)rib([path[i-1],path[i]],.42,.46);
+   for(let i=1;i<path.length;i++)rib([path[i-1],path[i]],.34,.34);
   }
  }
  function cameraPaint(ctx,faces,project){
@@ -157,23 +165,84 @@ function showTwin(data) {
  const canopyHeight=topView?1.78:Math.max(.48,(yhi-ylo)*scale+.08);
  const potR=clamp(spread*.379,.38,1.03),potH=clamp(.35*canopyHeight,.48,1.08);
  const ordered=[...leaves].sort((a,b)=>a.center[0]-b.center[0]);
+ const leafArea=s=>s.length*s.profile.reduce((sum,p,i)=>i?
+  sum+((p[1]-p[0])+(s.profile[i-1][1]-s.profile[i-1][0]))/2:sum,0)/(s.profile.length-1);
+ const areas=leaves.map(leafArea),areaTotal=areas.reduce((a,b)=>a+b,0);
+ const areaOrder=[...areas].sort((a,b)=>a-b),medianArea=areaOrder[Math.floor(count/2)];
+ const medianLength=[...leaves.map(s=>s.length)].sort((a,b)=>a-b)[Math.floor(count/2)];
+ const maturity=s=>{
+  const small=clamp(1-leafArea(s)/Math.max(.00001,medianArea*1.6),0,1);
+  const high=clamp((yhi-s.center[1])/Math.max(.01,yhi-ylo),0,1);
+  return small*(.38+.62*high);
+ };
+ const shootCount=Math.min(12,Math.max(1,Math.round(Math.sqrt(count)*1.14)));
+ function growthAt(day){
+  if(!trajectory.length)return {day:0,area_ratio:1,width_ratio:1,height_ratio:1,new_leaves:0};
+  const t=clamp(day,0,trajectory.at(-1).day),i=Math.min(Math.floor(t),trajectory.length-1);
+  const a=trajectory[i],b=trajectory[Math.min(i+1,trajectory.length-1)],f=t-a.day;
+  return Object.fromEntries(['day','area_ratio','width_ratio','height_ratio','new_leaves'].map(k=>[k,mix(a[k],b[k],f)]));
+ }
+ // New leaves are illustrative cohorts at shoot tips, not extra measured leaves.
+ // Each pair starts folded and opens gradually; adjacent nodes rotate 90 degrees.
+ const lastGrowth=trajectory.at(-1),futureLeaves=[];
+ const maxNew=Math.min(200-count,Math.max(0,Math.floor(lastGrowth?.new_leaves||0)));
+ for(let pair=0;pair<Math.ceil(maxNew/2);pair++){
+  const threshold=pair*2+1;
+  const at=trajectory.findIndex(p=>p.new_leaves>=threshold);
+  if(at<1)continue;
+  const a=trajectory[at-1],b=trajectory[at];
+  const born=a.day+(threshold-a.new_leaves)/Math.max(1,b.new_leaves-a.new_leaves);
+  for(let side=0;side<2&&futureLeaves.length<maxNew;side++){
+   const stem=pair%shootCount,node=Math.floor(pair/shootCount),angle=node*Math.PI/2+side*Math.PI+stem*.63;
+   const length=medianLength*(.86+.23*seed(pair,side+4));
+   const width=clamp(Math.sqrt(medianArea)/Math.max(medianLength,.00001)*1.5,.30,.62)*length;
+   const profile=Array.from({length:15},(_,i)=>{
+    const u=i/14,w=width*.5*Math.sin(Math.PI*u)**.73*(.91+.11*Math.cos(4*Math.PI*u));
+    return [-w,w];
+   });
+   const source=leaves[(pair*17+side*7)%count];
+   futureLeaves.push({center:[0,0],axis:[1,0],length,profile,rgb:source.rgb,
+    born,stem,node,angle,projected:true,id:count+futureLeaves.length+1});
+  }
+ }
  function stemAt(stem,y){
   const t=clamp(y/stem.top,0,1),ease=t*(1.18-.18*t);
   return [mix(stem.x0,stem.x1,ease)+Math.sin(t*Math.PI)*stem.lean,y,mix(stem.z0,stem.z1,ease)];
  }
- function grow(factor){
-  const faces=[], height=canopyHeight*Math.pow(factor,.63);
+ function grow(day){
+  const state=growthAt(day),faces=[],height=canopyHeight*state.height_ratio;
   pot(faces,potR,potH);
-  const stems=[],n=Math.min(12,Math.max(1,Math.round(Math.sqrt(count)*1.14)));
+  const stems=[],n=shootCount,visible=[...leaves];
   for(let i=0;i<n;i++){
    const b=ordered[Math.min(count-1,Math.floor((i+.5)*count/n))];
    const ax=(b.center[0]-xmid)*scale,depth=seed(i,2)-.5;
-   const stem={x0:ax*.48,x1:ax*.95*factor,z0:depth*potR*.91,z1:depth*potR*2.05*factor,
+   const stem={x0:ax*.48,x1:ax*.95*state.width_ratio,z0:depth*potR*.91,z1:depth*potR*2.05*state.width_ratio,
     lean:(seed(i,8)-.5)*.19,top:height,max:0};
    stems.push(stem);
   }
-  for(const s of leaves){
-   const mapXY=(x,y)=>[(x-xmid)*scale*factor,topView?(y-ymid)*scale*factor:(yhi-y)*scale*Math.pow(factor,.63)+.055];
+  const development=1-Math.exp(-day/Math.max(1,growth?.leaf_maturation_days||5));
+  const extra=Math.max(0,state.area_ratio-1)*areaTotal;
+  const emerging=futureLeaves.map(s=>{
+   const age=Math.max(0,day-s.born),t=clamp(age/Math.max(1,growth?.leaf_maturation_days||5),0,1);
+   return {s,opening:t*t*(3-2*t)};
+  }).filter(p=>p.opening>.001);
+  const proposed=emerging.reduce((sum,p)=>sum+leafArea(p.s)*p.opening,0);
+  const newBudget=Math.min(extra*.48,proposed),newScale=proposed?Math.sqrt(newBudget/proposed):0;
+  const available=Math.max(0,extra-newBudget);
+  const weights=leaves.map(s=>.05+.95*maturity(s));
+  const weightTotal=weights.reduce((sum,w,i)=>sum+w*areas[i],0);
+  const leafFactors=leaves.map((s,i)=>Math.sqrt(Math.max(.08,state.area_ratio<1?state.area_ratio:
+   1+available*weights[i]/Math.max(.00001,weightTotal))));
+  for(const [index,s] of leaves.entries()){
+   const factor=leafFactors[index],young=maturity(s);
+   // The blade expands around its attachment instead of scaling the whole pot.
+   const anchor=blade(s,(x,y)=>[x,y])(0,0);
+   const mapXY=(x,y)=>{
+    const X=anchor[0]+(x-anchor[0])*factor,Y=anchor[1]+(y-anchor[1])*factor;
+    return [(anchor[0]-xmid)*scale*state.width_ratio+(X-anchor[0])*scale,
+     topView?(anchor[1]-ymid)*scale*state.width_ratio+(Y-anchor[1])*scale:
+      (yhi-anchor[1])*scale*state.height_ratio-(Y-anchor[1])*scale+.055];
+   };
    const base=blade(s,mapXY)(0,0),c=s.center;
    const r=seed(c[0],c[1]),rnd=seed(c[1],c[0]);
    const nodeY=topView?height*(.36+.61*r):Math.max(.035,base[1]-.028-s.length*scale*.12);
@@ -184,10 +253,11 @@ function showTwin(data) {
    }
    chosen.max=Math.max(chosen.max,nodeY);
    const node=stemAt(chosen,nodeY);
-   const fold=(.18+.23*r)*(rnd<.45?-1:1);
+   const fold=(.10+.18*r)*(1-.45*young*development)*(rnd<.45?-1:1);
    const at=blade(s,(x,y,u,v,w)=>{
     const [X,Y]=mapXY(x,y),arc=Math.sin(Math.PI*u);
-    const bend=scale*factor*(s.length*(.14*arc-.12*u*u)+w*(.16*(1-v*v)*arc+fold*v));
+    const rib=Math.exp(-v*v*45)*arc*w*.025;
+    const bend=scale*factor*(s.length*(.12*arc-.085*u*u)+w*(.17*(1-v*v)*arc+fold*v)+rib);
     return topView?[X,nodeY+.038+bend,Y]:[X,Y,node[2]+(rnd-.5)*potR*.81+bend+(u-.5)*s.length*scale*fold];
    });
    const root=at(0,0);
@@ -197,6 +267,26 @@ function showTwin(data) {
    tube(faces,elbow,root,stalk*.80,stalk*.56,[104,137,70]);
    leafFaces(faces,s,at,s.length*scale>.035);
   }
+  const cohortNodes=new Map();
+  for(const {s,opening} of emerging){
+   const stem=stems[s.stem],factor=Math.sqrt(opening)*newScale;
+   if(factor<.012)continue;
+   const nodeId=s.stem+':'+s.node;
+   if(!cohortNodes.has(nodeId))cohortNodes.set(nodeId,stemAt(stem,stem.max+.025+s.node*.025*development));
+   const tip=cohortNodes.get(nodeId);
+   const length=s.length*scale*factor,ca=Math.cos(s.angle),sa=Math.sin(s.angle);
+   const stalk=length*.18,base=[tip[0]+ca*stalk,tip[1]+stalk*.40,tip[2]+sa*stalk];
+   const at=blade(s,(x,y,u,v,w)=>{
+    const along=u*length,across=y*scale*factor*(.18+.82*opening);
+    const arch=Math.sin(Math.PI*u)*length*.13,uplift=(1-opening)*length*u*.85;
+    return [base[0]+ca*along-sa*across,base[1]+uplift+arch-w*scale*factor*.06*v*v,
+     base[2]+sa*along+ca*across];
+   });
+   tube(faces,tip,base,clamp(length*.022,.001,.005),.0015,[99,134,66]);
+   leafFaces(faces,s,at,length>.025);
+   if(opening>.08)visible.push(s);
+   stem.max=Math.max(stem.max,tip[1]+.014);
+  }
   for(const stem of stems){
    let last=stemAt(stem,-.052);
    const end=stem.max+.024;
@@ -205,22 +295,24 @@ function showTwin(data) {
     tube(faces,last,p,r+.0014,r,[92,119,61],7);last=p;
    }
   }
-  return {faces,height};
+  return {faces,height,visible};
  }
  const homeYaw=topView?-.26:-.12,homePitch=topView?.86:.17;
- let yaw=homeYaw,pitch=homePitch,drag=null,scene=null,queued=false,requestedSize=1,drawnSize=0;
+ let yaw=homeYaw,pitch=homePitch,drag=null,scene=null,queued=false,requestedDay=0,drawnDay=-1;
  function render(){
   if(canvas.hidden)return;
   const {width:w,height:h}=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2);
   if(!w||!h)return;
-  if(drawnSize!==requestedSize){scene=grow(requestedSize);drawnSize=requestedSize;}
+  if(drawnDay!==requestedDay){scene=grow(requestedDay);drawnDay=requestedDay;}
   const cw=Math.round(w*dpr),ch=Math.round(h*dpr);
   if(canvas.width!==cw||canvas.height!==ch){canvas.width=cw;canvas.height=ch;}
   const ctx=canvas.getContext('2d');
   if(!ctx)return;
   ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
-  const focal=Math.min((w-24)/Math.max(2.8,spread*1.19),(h-20)/Math.max(2.78,(canopyHeight+potH)*1.20));
-  const targetY=(scene.height-potH)*.47;
+  const largest=lastGrowth||{width_ratio:1,height_ratio:1,area_ratio:1};
+  const focal=Math.min((w-24)/Math.max(2.8,spread*largest.width_ratio*1.23),
+   (h-20)/Math.max(2.78,(canopyHeight*largest.height_ratio+potH)*1.25));
+  const targetY=(canopyHeight*largest.height_ratio-potH)*.47;
   const c=Math.cos(yaw),s=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
   const project=p=>{
    const x=p[0]*c+p[2]*s,z=-p[0]*s+p[2]*c,y=p[1]-targetY;
@@ -239,13 +331,20 @@ function showTwin(data) {
  }
  function update(){
   const days=Number(slider.value);
-  dayText.textContent = days ? `Scenario · +${days} ${days === 1 ? 'day' : 'days'}` : 'At capture';
+  dayText.textContent = days ? `Estimated · +${days} ${days === 1 ? 'day' : 'days'}` :
+   slider.disabled?'At capture · more history needed':'At capture';
   if(!count)return;
-  requestedSize=clamp(Math.pow(1+rate,days*.5),.44,1.53);
+  requestedDay=days;
+  scene=grow(days);drawnDay=days;
+  countBadge.textContent=(days||record.count_estimated?'≈':'')+scene.visible.length;
+  toggle.title=days?'Illustrated leaves at the selected day; future leaves are estimates.':
+   record.count_estimated?'Leaf count estimated automatically':'Visible leaves in the source photo';
+  list.replaceChildren();
+  if(!tray.hidden)drawTiles();
   requestRender();
  }
  function drawTiles(){
-  for(const [i,s] of leaves.entries()){
+  for(const [i,s] of (scene?.visible||leaves).entries()){
    const tile=el('canvas',{width:'132',height:'84','aria-hidden':'true'});
    const item=el('li',{'aria-label':'Leaf '+(i+1)},tile,el('span',{'aria-hidden':'true'},String(i+1)));
    list.append(item);
@@ -312,7 +411,7 @@ function showTwin(data) {
   const leaves = viewer?.latest?.leaves;
   if (!viewer || (viewer.latest !== null &&
       (!Array.isArray(leaves) || leaves.length > 200 || !leaves.every(validLeaf)))) {
-   throw new Error('Run python -B computer_vision_pipeline.py images and use the updated digital_twin.json.');
+   throw new Error('Run python computer_vision_pipeline.py images and use the updated digital_twin.json.');
   }
   showTwin(viewer);
   loader.hidden = true;
@@ -332,7 +431,7 @@ function showTwin(data) {
   }
  });
  if (location.protocol === 'file:') {
-  askForFile('Run python -B digital_twin.py to load the data automatically, or choose digital_twin.json.');
+  askForFile('Run python digital_twin.py to load the data automatically, or choose digital_twin.json.');
   return;
  }
  (async () => {
