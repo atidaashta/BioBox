@@ -1,53 +1,78 @@
-# BioBox · Plant Vision
+# SecureLAN Arena
 
-BioBox follows the same plant from one photograph to the next. A Raspberry Pi takes the photos; a Python pipeline uses OpenCV to separate the foliage from its background. The results can be explored in three local browser views: a rotatable digital twin, a plant health dashboard, and a chart gallery.
+SecureLAN Arena is a Java desktop app for two people on the same local network. One player hosts a session from the app and the other joins using the host's IP address. Once connected, both players can exchange encrypted messages, play two-player games, and talk using a push-to-talk button. The session runs directly between the two app instances.
 
-This repository contains the image analysis part of the BioBox diploma project at **HTL Shkodёr Peter Mahringer**. The structured results can be passed to the wider BioBox platform; the pipeline itself works without a database connection.
+## Features
 
-![The photo mask fills 57.0% of the canopy box. Smooth blade profiles fill 40.3%; keeping the full measured contours gives 56.5%.](docs/canopy-comparison.png)
+| Feature | How it works |
+| --- | --- |
+| Text chat | Send messages from the **Chat** tab with **Send** or Enter. |
+| Tic Tac Toe | The host plays **X** and goes first. The client plays **O**. Moves update both boards. |
+| Rock Paper Scissors | Both players choose a move. The app shows the result once both choices arrive. Use **Reset** to start a new round. |
+| Walkie-talkie | In the **Chat** tab, press and hold **Hold To Talk** while speaking. Release it to stop transmitting. |
 
-## Everyday use
+## Run the app
 
-From the project folder, run:
+The IntelliJ project is configured for **JDK 23**. The app uses Java Swing, Java Sound, and standard Java networking and cryptography libraries. It has no third-party dependencies.
 
-```powershell
-python computer_vision_pipeline.py --sync
+### IntelliJ IDEA
+
+1. Open the repository folder in IntelliJ IDEA.
+2. Select **JDK 23** under **File → Project Structure → Project SDK**.
+3. Open [Main.java](src/com/securelanarena/Main.java) and run `Main.main()`.
+
+### Terminal
+
+From the repository root, compile the app and launch it:
+
+```sh
+javac -encoding UTF-8 -d out src/com/securelanarena/*.java
+java -cp out com.securelanarena.Main
 ```
 
-This retrieves completed Raspberry Pi photos, then updates the masks, overlays, measurement history, charts, health assessment, and digital twin. If the Pi is offline, analysis continues with the photos already in `images/`. To work entirely offline, use the same command without `--sync`.
+To open a second instance on the same computer, run the `java` command again in another terminal.
 
-| Open a view | Command | What to look for |
-|---|---|---|
-| Digital twin | `python digital_twin.py` | The latest plant from the camera angle. Drag to rotate, double-click to return, or move the day slider to explore projected growth. |
-| Plant health | `python health_assessment.py` | The latest photo and how its visible condition compares with the plant’s own reference. |
-| Charts | `python computer_vision_pipeline.py --charts` | Leaf area, leaf colour, plant health, and the individual health scores across captures. |
+## Host and join a session
 
-The pipeline prepares all three views in one run. Open just the one you want to see. The browser loads its local JSON automatically.
+1. Open the app on both devices and go to the **Connection** tab. Enter a display name in each window.
+2. On the host, keep the default **Chat port** (`5000`) or choose an available port. Enter a shared password and click **Host Chat**.
+3. On the client, enter the host's local IP in **Friend IP address**, use the same chat port and password, and click **Connect**.
+4. Once connected, open **Chat** and send a message to verify the session. Use **Disconnect** in the **Connection** tab when finished.
 
-## First run on Windows
+**Testing on one computer?** Use `127.0.0.1` as the host address in the client window. For two devices, connect both to the same local network. On Windows, run `ipconfig` on the host and look for the **IPv4 Address** of the active network adapter. On macOS, `ipconfig getifaddr en0` shows the address if Wi-Fi uses `en0`.
 
-Open PowerShell in the repository root. For a project kept in `Documents\Diploma`:
+### Network ports
 
-```powershell
-cd "$HOME\Documents\Diploma"
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install opencv-contrib-python numpy matplotlib Pillow
-```
+| Traffic | Protocol | Listening port |
+| --- | --- | --- |
+| Chat messages and game events | TCP | Host's chat port, `5000` by default |
+| Voice received by the host | UDP | `6000` on the host |
+| Voice received by the client | UDP | `6001` on the client |
 
-Place photos of one plant directly in `images/` and run `python computer_vision_pipeline.py`. Use a fixed camera position and preserve capture times. For photos of **unrelated plants**, run `python computer_vision_pipeline.py images --independent-images --output sample_results` to keep them out of the main plant’s history.
+If the client cannot connect, check the host IP, chat port, and firewall settings. If the connection opens but messages fail, check that the passwords match exactly. If chat works but voice fails, check microphone access, audio output, and the UDP ports above.
 
-For hourly capture, follow the [Raspberry Pi setup](docs/m1-image-capture-system.md). The Pi takes the photos on its own schedule. Running `--sync` retrieves them; it does not take an extra photograph.
+## Encryption
 
-## Read the results
+Text messages, game events, and voice packets use AES-128 in Galois/Counter Mode (GCM). Each encrypted payload uses a fresh random initialization vector. The app derives the key by hashing the shared password with SHA-256 and taking the first 16 bytes.
 
-- **Check the mask first.** `results/masks/` contains the pixels counted as foliage. Open the matching photo in `results/overlays/` to see the purple boundary. If the mask includes the pot or misses a leaf, the area and twin inherit that error.
-- **Read area in context.** Leaf area is the visible footprint in pixels. A leaf turning towards the camera can increase that footprint without growing. Physical units need a known length in the same plane as the leaves.
-- **Follow the health trend.** BioBox compensates for lighting where possible and checks whether changes persist. A score near 100 means the visible features are close to the reference. Measurements that cannot be compared are marked unavailable.
-- **Use day zero as the reference.** The twin preserves visible leaf pieces and the gaps between them. Rotated surfaces, hidden depth, and future growth are estimates. The day slider stays off until there is enough comparable history.
+The current design is suited to demonstrations on a trusted local network. Passwords are hashed once without a salt, so captured traffic can be used to test guesses against a weak password. Replace the prefilled example password with a strong shared password for LAN use.
 
-`results/results.csv` is the table for review; `results/results.json` contains the same captures with measurement details, quality flags, and geometry. Older measurements stay in the history when camera photos rotate out of the local 100-photo collection. Each viewer keeps its own display data beside its HTML, CSS, and JavaScript.
+## Source layout
 
-## Milestone guides
+All application code is under [src/com/securelanarena](src/com/securelanarena).
 
-[M1 · Image capture](docs/m1-image-capture-system.md) · [M2 · Computer vision](docs/m2-computer-vision-pipeline.md) · [M3 · Plant health](docs/m3-plant-health-assessment.md) · [M4 · Digital twin](docs/m4-digital-twin.md)
+| File | Responsibility |
+| --- | --- |
+| `Main.java` | Starts the Swing application. |
+| `ChatWindow.java` | Builds the interface and handles chat, connection controls, and game state. |
+| `ChatServer.java` | Accepts one client and exchanges encrypted messages over TCP. |
+| `ChatClient.java` | Connects to the host and exchanges encrypted messages over TCP. |
+| `VoiceChat.java` | Captures and plays audio and sends encrypted voice packets over UDP. |
+| `CryptoUtil.java` | Derives the encryption key and encrypts or decrypts text and audio. |
+
+## Project team
+
+| Team member | Contributions |
+| --- | --- |
+| Grid | Application entry point, Swing interface, chat and connection screens, game screens, and documentation. |
+| Atida | Client and server networking, message transport, AES-GCM encryption, and encrypted push-to-talk audio. |

@@ -543,6 +543,40 @@ def add_flags(z, *flags):
     z["quality_flags"] = ";".join(dict.fromkeys(existing + list(flags)))
 
 
+def decode_registered_photo(raw, profile=None):
+    """Correct in the native sensor coordinates, then apply the file's display rotation."""
+    if not len(raw):return None,None
+    buf=np.frombuffer(raw,dtype=np.uint8)
+    if profile is None:return cv2.imdecode(buf,cv2.IMREAD_COLOR),None
+    native=cv2.imdecode(buf,cv2.IMREAD_COLOR|cv2.IMREAD_IGNORE_ORIENTATION)
+    if native is None:return None,None
+    from io import BytesIO
+    from PIL import Image
+    try:
+        with Image.open(BytesIO(raw)) as photo: orientation=int(photo.getexif().get(274,1))
+    except (OSError,TypeError,ValueError):orientation=1
+    w,h=native.shape[1::-1]
+    size=lens_image_size(profile)
+    if not isinstance(size,(list,tuple)) or len(size)!=2 or min(size)<=0:
+        raise ValueError("Invalid lens profile dimensions.")
+    ow,oh=size
+    if abs((w/h)/(ow/oh)-1)>.002 or orientation not in (1,3,6,8):
+        # An incompatible or mirrored image is still a valid photograph. Its
+        # pixel measurements remain usable; no unverified calibration is applied.
+        return cv2.imdecode(buf,cv2.IMREAD_COLOR),None
+    out=undistort_image(native,profile)
+    K=np.array(profile.get("camera_matrix",profile.get("kamera_matrix")),dtype=float)
+    K[0,:]*=w/ow;K[1,:]*=h/oh
+    fx,fy,cx,cy=K[0,0],K[1,1],K[0,2],K[1,2]
+    if orientation==3:
+        out=cv2.rotate(out,cv2.ROTATE_180);K[0,2],K[1,2]=w-1-cx,h-1-cy
+    elif orientation in (6,8):
+        clockwise=orientation==6
+        out=cv2.rotate(out,cv2.ROTATE_90_CLOCKWISE if clockwise else cv2.ROTATE_90_COUNTERCLOCKWISE)
+        K=np.array([[fy,0,h-1-cy if clockwise else cy],[0,fx,cx if clockwise else w-1-cx],[0,0,1.]])
+    return out,K
+
+
 def downscale(image):
     factor = min(1.0, PROCESSING_WIDTH / image.shape[1])
     return cv2.resize(image, (round(image.shape[1]*factor), round(image.shape[0]*factor)),
@@ -924,15 +958,11 @@ def scale_from_points(points, length_mm, image_width, image_height):
 def set_ruler_scale(image_path, length_mm, output_dir, points=None):
     """Mark the ends of a known distance on the same plane as the leaves. Coordinates refer to the original image after lens correction, if applied. Use --points to supply original pixel coordinates without a window."""
     image_path = Path(image_path).resolve()
-    image = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+    profile = calibration_file().read_bytes() if calibration_file().is_file() else None
+    image,k = decode_registered_photo(image_path.read_bytes(), json.loads(profile) if profile else None)
     if image is None:
         raise ValueError("The scale photo could not be read.")
-    lens_hash = None
-    if calibration_file().exists():
-        text = calibration_file().read_bytes()
-        d = json.loads(text)
-        image = undistort_image(image,d)
-        lens_hash = hashlib.sha256(text).hexdigest()
+    lens_hash = hashlib.sha256(profile).hexdigest() if k is not None else None
     h, w = image.shape[:2]
     if points is None:
         factor = min(1., 1300/w, 800/h)
@@ -1003,11 +1033,10 @@ def read_ruler_scale(file_path):
         return {"meta": meta, "file_name": data[image_key].copy(), "mask": data[mask_key].copy()}
 
 
-def measure_scale(image, manual, ruler=None):
+def measure_scale(image, manual, ruler=None, lens_hash=None):
     if manual is not None:
         return float(manual), "manual_scale_in_leaf_plane"
     if ruler is not None:
-        lens_hash = hashlib.sha256(calibration_file().read_bytes()).hexdigest() if calibration_file().exists() else None
         if lens_hash != ruler["meta"].get("lens_hash"):
             return None, "lens_settings_changed_since_ruler_photo"
         working_image = downscale(image)
@@ -1203,10 +1232,10 @@ def load_mask_override(output_dir, sha256, image_shape, rectified=None):
     return leaf_mask
 
 
-def save_mask_override(output_dir, sha256, leaf_mask, image_shape):
+def save_mask_override(output_dir, sha256, leaf_mask, image_shape, rectified=None):
     if leaf_mask.shape != tuple(image_shape) or not np.isin(leaf_mask,[0,255]).all():
         raise ValueError("A corrected mask must match the photo dimensions and contain only black (0) and white (255).")
-    target = mask_override_path(output_dir,sha256)
+    target = mask_override_path(output_dir,sha256,rectified)
     target.parent.mkdir(parents=True,exist_ok=True)
     ok,png = cv2.imencode(".png",leaf_mask)
     if not ok:
@@ -1219,19 +1248,19 @@ def save_mask_override(output_dir, sha256, leaf_mask, image_shape):
 def correct_mask(image_path, output_dir, carry_forward=None):
     """Mark foreground and background, optionally rerun GrabCut, and save. A correction applies to the exact photo and lens profile. You can also import a full-size binary mask."""
     image_path = Path(image_path).expanduser().resolve()
-    sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
-    image = cv2.imdecode(np.fromfile(image_path,dtype=np.uint8),cv2.IMREAD_COLOR)
+    raw = image_path.read_bytes()
+    sha = hashlib.sha256(raw).hexdigest()
+    profile=json.loads(calibration_file().read_bytes()) if calibration_file().is_file() else None
+    image,k=decode_registered_photo(raw,profile)
     if image is None:
         raise ValueError("The original photo could not be read.")
-    if calibration_file().exists():
-        d = json.loads(calibration_file().read_text(encoding="utf-8"))
-        image = undistort_image(image,d)
+    rectified=k is not None
     if carry_forward is not None:
         leaf_mask = cv2.imdecode(np.fromfile(carry_forward,dtype=np.uint8),cv2.IMREAD_GRAYSCALE)
         if leaf_mask is None:
             raise ValueError("The imported mask could not be read.")
-        return save_mask_override(output_dir,sha,leaf_mask,image.shape[:2])
-    leaf_mask = load_mask_override(output_dir,sha,image.shape[:2])
+        return save_mask_override(output_dir,sha,leaf_mask,image.shape[:2],rectified)
+    leaf_mask = load_mask_override(output_dir,sha,image.shape[:2],rectified)
     if leaf_mask is None:
         leaf_mask = _automatic_leaf_mask(image)
     original = leaf_mask.copy()
@@ -1270,7 +1299,7 @@ def correct_mask(image_path, output_dir, carry_forward=None):
             if key_press==27 or cv2.getWindowProperty(title,cv2.WND_PROP_VISIBLE)<1:
                 print("Cancelled. No correction was saved.");return None
             if key_press in (10,13):
-                return save_mask_override(output_dir,sha,leaf_mask,image.shape[:2])
+                return save_mask_override(output_dir,sha,leaf_mask,image.shape[:2],rectified)
             if key_press in (ord('+'),ord('=')):condition["radius"]=min(100,condition["radius"]+2)
             if key_press==ord('-'):condition["radius"]=max(1,condition["radius"]-2)
             if key_press in (ord('u'),ord('U')) and history:
@@ -2020,13 +2049,47 @@ def save_results(rows, ref, output_dir):
     return True
 
 
+# Desktop browsers may not fetch a neighbouring JSON from a file:// page.
+# These classic-script snapshots contain data only. All interface code stays in source control.
+OFFLINE_VIEWS = {TWIN_JSON_FILE: ("digital_twin.data.js", "BioBoxTwinData"),
+                 HEALTH_JSON_FILE: ("plant_health.data.js", "BioBoxHealthData")}
+
+
+def snapshot_text(name, data):
+    payload = {"viewer": data.get("viewer")} if name == TWIN_JSON_FILE else data
+    compact = json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
+    # Parse as JSON, never executable input. Escaping HTML delimiters is also
+    # safe if the snapshot is later embedded in an HTML export.
+    quoted = json.dumps(compact, ensure_ascii=True).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    return f"globalThis.{OFFLINE_VIEWS[name][1]} = JSON.parse({quoted});\n"
+
+
 def write_json_output(target, data):
-    "Replace only JSON data; leave the browser source files in place."
+    """Publish the API JSON and its optional offline display data together."""
+    target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".biobox-data-", dir=target.parent) as tmp:
-        file_handle = Path(tmp)/target.name
-        file_handle.write_text(json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-        file_handle.replace(target)
+        folder = Path(tmp)
+        saved = folder/target.name
+        saved.write_text(json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        files = [(saved,target)]
+        if target.name in OFFLINE_VIEWS:
+            name, _ = OFFLINE_VIEWS[target.name]
+            local = folder/name
+            local.write_text(snapshot_text(target.name,data),encoding="ascii")
+            files.append((local,target.with_name(name)))
+        if any(dst.is_dir() for _, dst in files):
+            raise OSError("A folder occupies a viewer data filename.")
+        publish_files(files, folder)
+    return target
+
+
+def ensure_view_snapshot(target, data):
+    """Upgrade an older cached export when a viewer is opened on its own."""
+    target = Path(target)
+    snapshot = target.with_name(OFFLINE_VIEWS[target.name][0])
+    if not snapshot.is_file() or snapshot.stat().st_mtime_ns < target.stat().st_mtime_ns:
+        write_json_output(target, data)
     return target
 
 
@@ -2401,11 +2464,13 @@ def analyse_series(paths,output_dir,manual=None,independent_images=False,new_ref
             validate_chart_directory(old_chart_folder)
             migration = stage_legacy_charts(old_chart_folder, target_chart_folder, work/"legacy-charts")
             rows=_analyse_images(paths,staged_results,manual,independent_images,new_reference,history,forecast_history,
-                              capture_times,staged_twin,staged_health,staged_charts)
+                              capture_times,staged_twin,staged_health,staged_charts,previous_twin=target_twin/TWIN_JSON_FILE)
             files_to_publish = [(staged_results/name,output_dir/name) for name in
                        ('results.csv','results.json','masks','overlays')]
             files_to_publish += [(staged_twin/TWIN_JSON_FILE, target_twin/TWIN_JSON_FILE),
                         (staged_health/HEALTH_JSON_FILE, target_health/HEALTH_JSON_FILE)]
+            files_to_publish += [(staged_twin/OFFLINE_VIEWS[TWIN_JSON_FILE][0], target_twin/OFFLINE_VIEWS[TWIN_JSON_FILE][0]),
+                                 (staged_health/OFFLINE_VIEWS[HEALTH_JSON_FILE][0], target_health/OFFLINE_VIEWS[HEALTH_JSON_FILE][0])]
             files_to_publish += [(staged_charts/name, target_chart_folder/name) for name in expected_charts]
             retired_outputs = [(None, path) for path in (output_dir/TWIN_JSON_FILE, output_dir/HEALTH_JSON_FILE)
                                if path.is_file()]
@@ -2429,7 +2494,7 @@ def analyse_series(paths,output_dir,manual=None,independent_images=False,new_ref
     print(f"\nAnalysed {len(paths)} {photo_label} and retained {retained_count} historical {history_label}.")
     print(f'{len(rows)} records in total -> {output_dir/"results.csv"}')
     print('Updated masks, overlays, charts, measurement history, and browser data.')
-    print("Open a view: python digital_twin.py, python health_assessment.py, or python computer_vision_pipeline.py --charts.")
+    print("Open digital_twin/digital_twin_3d.html, plant_health/plant_health.html, or charts/charts.html in your browser.")
     n_rate = sum(z.get("growth_rate_pct_per_day") is not None for z in rows)
     n_score = sum(z.get("health_score") is not None for z in rows)
     pixel_change_available = sum(z.get("visible_pixel_change_per_day") is not None for z in rows)
@@ -2446,7 +2511,7 @@ def analyse_series(paths,output_dir,manual=None,independent_images=False,new_ref
 
 
 def _analyse_images(paths, output_dir, manual, independent_images, new_reference, history,
-                 forecast_history, capture_times, twin_folder, health_folder, charts_folder):
+                 forecast_history, capture_times, twin_folder, health_folder, charts_folder, previous_twin=None):
     from digital_twin import leaf_points_path, update_twin_model, merge_twin_views, twin_leaf_geometry
     from health_assessment import (
         SCORE_WEIGHTS, REFERENCE_APPROVED, SCORING_VERSION, assess_health, save_health,
@@ -2489,16 +2554,18 @@ def _analyse_images(paths, output_dir, manual, independent_images, new_reference
         try:
             original = file_path.read_bytes()
             z["_sha256"] = hashlib.sha256(original).hexdigest()
-            image = cv2.imdecode(np.frombuffer(original,dtype=np.uint8),cv2.IMREAD_COLOR) if original else None
+            image, camera_matrix = decode_registered_photo(original,calibration)
+            rectified = camera_matrix is not None
+            active_lens_hash = lens_hash if rectified else None
             if image is None or min(image.shape[:2]) < 16:
                 z["health_status"] = "image_unreadable"
                 add_flags(z,"unreadable")
                 continue
-            if calibration is not None:
-                image = undistort_image(image,calibration)
+            if calibration is not None and not rectified:
+                add_flags(z,"lens_profile_not_applicable")
             working_image = downscale(image)
             ref,prior,reference_image,scene_data = select_matching_view(
-                working_image,image.shape[:2],z["_sha256"],camera_views)
+                working_image,image.shape[:2],z["_sha256"],[v for v in camera_views if v["meta"].get("lens_hash")==active_lens_hash])
             lighting_info = {"model":"not_comparable","corrected":False}
             lighting_flags = []
             normal = working_image
@@ -2507,7 +2574,7 @@ def _analyse_images(paths, output_dir, manual, independent_images, new_reference
                 sample = ((g>=8)&(b>=1)).astype(np.uint8)*255
                 normal,lighting_flags,lighting_info = match_lighting(working_image,sample,reference_image,prior)
             z["_lighting_info"] = lighting_info
-            leaf_mask = load_mask_override(output_dir,z["_sha256"],image.shape[:2],calibration is not None)
+            leaf_mask = load_mask_override(output_dir,z["_sha256"],image.shape[:2],rectified)
             manually_corrected = leaf_mask is not None
             if (leaf_mask is None and ref is not None and z["_sha256"]==ref["meta"].get("sha256") and
                     ref.get("original_mask") is not None and ref["original_mask"].shape==image.shape[:2]):
@@ -2519,7 +2586,7 @@ def _analyse_images(paths, output_dir, manual, independent_images, new_reference
                 leaf_mask = _automatic_leaf_mask(image, working_image)
             small_mask = cv2.resize(leaf_mask,(working_image.shape[1],working_image.shape[0]),interpolation=cv2.INTER_NEAREST)
             z["_mask_source"] = "manual" if manually_corrected else "automatic"
-            scale_mm_per_px, source = (measure_scale(image,manual,ruler) if not independent_images else
+            scale_mm_per_px, source = (measure_scale(image,manual,ruler,active_lens_hash) if not independent_images else
                              (float(manual),"manual_scale_in_leaf_plane") if manual else (None,"independent_images_no_shared_scale"))
             z.update(measurements(image,leaf_mask,scale_mm_per_px))
             z["_image_shape"] = image.shape[:2]
@@ -2528,8 +2595,8 @@ def _analyse_images(paths, output_dir, manual, independent_images, new_reference
             # rather than treating a missing scale as zero.
             z["scale_source"] = source
             z["_scale_status"] = source
-            z["_lens_corrected"] = calibration is not None
-            z["_lens_hash"] = lens_hash
+            z["_lens_corrected"] = rectified
+            z["_lens_hash"] = active_lens_hash
             z["noise"] = estimate_noise(image)
             if not timestamp:
                 add_flags(z, "capture_time_unknown")
@@ -2559,7 +2626,7 @@ def _analyse_images(paths, output_dir, manual, independent_images, new_reference
                 add_flags(z,"high_image_noise")
             if z["usable"] and not independent_images:
                 if ref is None:
-                    ref = new_view(z,image,working_image,leaf_mask,small_mask,lens_hash)
+                    ref = new_view(z,image,working_image,leaf_mask,small_mask,active_lens_hash)
                     camera_views.append(ref)
                     if primary_reference is None:
                         primary_reference = ref
@@ -2606,7 +2673,7 @@ def _analyse_images(paths, output_dir, manual, independent_images, new_reference
                 sha = z["_sha256"]
                 z["_leaf_geometry"] = twin_leaf_geometry(
                     image,leaf_mask,output_dir/"leaf_labels"/(sha+".png"),
-                    leaf_points_path(output_dir,sha,calibration is not None))
+                    leaf_points_path(output_dir,sha,rectified))
             except (OSError,ValueError,cv2.error) as error:
                 # An optional viewer geometry error must not discard the image measurement.
                 z["_leaf_geometry"] = None
@@ -2655,9 +2722,7 @@ def _analyse_images(paths, output_dir, manual, independent_images, new_reference
             original = Path(file_path).read_bytes()
             if hashlib.sha256(original).hexdigest() != z["_sha256"]:
                 raise OSError(f"An input photo changed during analysis: {file_path}")
-            image = cv2.imdecode(np.frombuffer(original,dtype=np.uint8),cv2.IMREAD_COLOR)
-            if calibration is not None:
-                image = undistort_image(image,calibration)
+            image,_ = decode_registered_photo(original,calibration if z.get("_lens_corrected") else None)
             leaf_mask = cv2.imdecode(np.fromfile(masks/(z["_output_stem"]+"_mask.png"),dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
         review_overlay(image, leaf_mask, z, overlay/(z["_output_stem"]+"_overlay.png"))
     # Remove only previous previews generated by this program.
@@ -2671,7 +2736,8 @@ def _analyse_images(paths, output_dir, manual, independent_images, new_reference
     if not csv_updated:
         raise PermissionError("Could not write the CSV. Previous results were kept.")
     plot_charts(rows,charts_folder)
-    update_twin_model(rows, forecast_history, independent_images, twin_folder)
+    update_twin_model(rows, forecast_history, independent_images, twin_folder,
+                      photo_paths=paths, masks_dir=masks, previous=previous_twin)
     save_chart_manifest(charts_folder)
     save_health(rows, health_folder, paths)
     return rows

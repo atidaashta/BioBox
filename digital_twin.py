@@ -1,6 +1,7 @@
 """A-M4 · Digital twin: visible leaf geometry, projections, and the 3D viewer."""
 
 import argparse
+import base64
 import copy
 import hashlib
 import http.client
@@ -15,19 +16,20 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from image_capture import calibration_file, parse_saved_time, iso, undistort_image
+from image_capture import calibration_file, parse_saved_time, iso, find_images, capture_time
 from computer_vision_pipeline import (
     ANALYSIS_VERSION, PROCESSING_WIDTH, SERIES_ID, PIPELINE_SHA256, TWIN_JSON_FILE,
     _ellipse_kernel, build_api_record, lock_results, open_browser_view, default_results_dir,
     prepare_historical_row, historical_row, make_json_safe, downscale, load_mask_override, mask_override_path,
-    refine_mask, segment_leaves, viewer_directories, normalise_saved_code,
+    refine_mask, segment_leaves, viewer_directories, normalise_saved_code, write_json_output, ensure_view_snapshot, decode_registered_photo,
 )
 ENGLISH_LAYOUT_VERSION = 2
 
 
 # Camera view and forecast settings
-TWIN_PHOTO_VIEW = "side"  # Use "top" for a camera mounted directly above the pot.
-TWIN_3D_VERSION = "0.8.0"
+TWIN_3D_VERSION = "1.0.0"
+CONTOUR_UNITS = 16384
+TEXTURE_LIMIT = 1536
 TWIN_VERSION = "0.2.0"
 TWIN_MAX_LEAVES = 200
 TWIN_HORIZON_HOURS = 24
@@ -491,10 +493,7 @@ def digital_twin(rows, history=None, independent_images=False, current_time=None
 
 def save_twin(data, twin_folder):
     "Save the current model state and forecast history."
-    twin_folder.mkdir(parents=True,exist_ok=True)
-    tmp = twin_folder/".digital_twin.json.tmp"
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
-    tmp.replace(twin_folder/TWIN_JSON_FILE)
+    return write_json_output(twin_folder/TWIN_JSON_FILE, data)
 
 
 def leaf_points_path(output_dir, sha, rectified):
@@ -527,12 +526,11 @@ def save_leaf_points(file_path, image_shape, points):
 def mark_leaves(photo, output_dir, independent_images=False):
     "Mark one point per visible leaf without changing the measurement mask."
     raw = photo.read_bytes()
-    image = cv2.imdecode(np.frombuffer(raw,np.uint8),cv2.IMREAD_COLOR)
+    profile=json.loads(calibration_file().read_bytes()) if calibration_file().is_file() and not independent_images else None
+    image,k=decode_registered_photo(raw,profile)
     if image is None:
         raise ValueError("The original photo could not be read.")
-    rectified = calibration_file().is_file() and not independent_images
-    if rectified:
-        image = undistort_image(image,json.loads(calibration_file().read_text(encoding="utf-8")))
+    rectified=k is not None
     if ((sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")))
             or (hasattr(cv2,"currentUIFramework") and not cv2.currentUIFramework())):
         raise ValueError("Could not open an OpenCV window. Use a desktop install of opencv-contrib-python.")
@@ -971,7 +969,7 @@ def attach_care_suggestions(observations, output_dir, selection=None):
             r["care"] = tip
 
 
-def twin_leaf_mesh(leaf, extent):
+def twin_leaf_mesh(leaf, extent, root_hint=(0.,0.)):
     "Build a two-dimensional section for each leaf in shared canopy coordinates."
     contours = []
     for ring in leaf.get("rings") or ():
@@ -992,7 +990,7 @@ def twin_leaf_mesh(leaf, extent):
     eigenvalues, axis_pair = np.linalg.eigh(cov)
     primary_axis = axis_pair[:,-1]
     # The direction generally points from the centre of the canopy to the leaf tip.
-    direction = centre-np.array([0.,0. if TWIN_PHOTO_VIEW=="top" else .16])
+    direction = centre-np.asarray(root_hint,dtype=float)
     if eigenvalues[1]<1.2*eigenvalues[0] and np.linalg.norm(direction)>.08:
         primary_axis = direction/np.linalg.norm(direction)
     if np.dot(primary_axis,direction)<0:
@@ -1036,10 +1034,460 @@ def twin_leaf_mesh(leaf, extent):
         for before,current_time,after in zip(profile,profile[1:],profile[2:])]+[profile[-1]]
     return {"center":centre.round(6).tolist(),"axis":primary_axis.round(6).tolist(),
             "length":round(maximum-minimum,6),"profile":smoothed,
-            "rgb":[round(min(255,max(0,v))) for v in rgb]}
+            "rgb":[round(min(255,max(0,v))) for v in rgb],
+            # Each region can include holes or several visible pieces of one leaf.
+            # Keep the smooth blade profile for the growth rig and older viewers.
+            "rings_q":[np.rint(ring.astype(np.float64)*(CONTOUR_UNITS/extent)).astype(np.int32).ravel().tolist()
+                       for ring in contours],
+            "visible_pixels":max(0, int(leaf.get("pixels") or 0))}
 
 
-def twin_view_data(rows, output_dir=None, care_selection=None):
+def split_rim(small, plant, dist, visible):
+    """Join two visible rim arcs when foliage hides the centre of a dark pot."""
+    H,W=plant.shape
+    yi,xi=np.nonzero(plant)
+    if len(xi)<35:return None
+    span=max(np.ptp(xi),np.ptp(yi))
+    centre=np.array([np.mean(xi),np.mean(yi)])
+    vmax=small.max(axis=2)
+    chroma=vmax-small.min(axis=2)
+    dark=((vmax<np.clip(np.percentile(vmax,28),38,105))&(chroma<np.maximum(18,vmax*.38))&~plant).astype(np.uint8)
+    dark=cv2.morphologyEx(dark,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
+    n,labels,stats,cents=cv2.connectedComponentsWithStats(dark,8)
+    candidates=[]
+    theta=np.linspace(0,2*np.pi,72,endpoint=False)
+    co,si=np.cos(theta),np.sin(theta)
+    for i in range(1,n):
+        if stats[i,4]<.025*span*span or stats[i,4]>.55*H*W:continue
+        diff=cents[i]-centre; d=np.linalg.norm(diff)
+        if not .16*span<d<1.5*span:continue
+        down=diff/d; right=np.array([down[1],-down[0]])
+        Y,X=np.nonzero(labels==i)
+        UV=(np.column_stack((X,Y))-centre)@np.column_stack([right,down])
+        u,v=UV.T
+        v0,v1=np.percentile(v,[.7,95])
+        if v1-v0<.20*span:continue
+        # Look for the lip near the top of the container, across several scanlines.
+        widths=[]
+        for level in np.linspace(v0+.035*(v1-v0),v0+.38*(v1-v0),16):
+            line=u[np.abs(v-level)<max(1.5,span*.012)]
+            if len(line)>6:
+                lo,hi=np.percentile(line,[1,99]);widths.append((hi-lo,(hi+lo)/2,level))
+        if not widths:continue
+        diameter,mu,_=max(widths)
+        if not .26*span<diameter<1.55*span:continue
+        for du in [-.035,0,.035]:
+            mid=mu+du*diameter
+            for diam_factor in [.95,1.01,1.07]:
+                rad=.5*diameter*diam_factor
+                for level in np.linspace(v0-.13*diameter,v0+.28*diameter,29):
+                    C=centre+mid*right+level*down
+                    for ratio in (.09,.14,.19,.25,.32,.40,.50,.60):
+                        pts=C+rad*(co[:,None]*right+ratio*si[:,None]*down)
+                        ex,ey=np.rint(pts).astype(int).T
+                        if ex.min()<1 or ey.min()<1 or ex.max()>=W-1 or ey.max()>=H-1:continue
+                        observable=visible[ey,ex]
+                        hit=observable&(dist[ey,ex]<max(1.40,rad*.011))
+                        # Require support on both flanks and along the lower arc.
+                        if min(hit[co<-.80].sum(),hit[co>.80].sum())<4 or hit[si>.6].sum()<5:continue
+                        if hit.sum()<21 or observable.sum()<26:continue
+                        q=hit.sum()/max(1,observable.sum())
+                        if q<.77:continue
+                        near=plant[np.clip(np.rint(C[1]+right[1]*rad*co*.79-down[1]*rad*.12).astype(int),0,H-1),
+                                   np.clip(np.rint(C[0]+right[0]*rad*co*.79-down[0]*rad*.12).astype(int),0,W-1)]
+                        if np.mean(near)<.17:continue
+                        support=hit.mean()+.36*q
+                        candidates.append((float(support),*C,rad*2,ratio,math.atan2(right[1],right[0])))
+    return max(candidates,key=lambda c:c[0]) if candidates else None
+
+
+def pot_rim_pose(image, mask, box):
+    """Accept a rim only when an ellipse has edge support around the foliage."""
+    h, w = mask.shape
+    f = min(1., 680/max(h,w))
+    size = max(2,round(w*f)), max(2,round(h*f))
+    small = cv2.resize(image,size,interpolation=cv2.INTER_AREA)
+    plant = cv2.resize(mask,size,interpolation=cv2.INTER_NEAREST) != 0
+    x,y,bw,bh = np.array(box)*f
+    span = max(bw,bh)
+    if span < 22:
+        return None
+    gray = cv2.GaussianBlur(cv2.cvtColor(small,cv2.COLOR_BGR2GRAY),(3,3),.7)
+    edges = cv2.Canny(gray,25,82)
+    visible = cv2.dilate(plant.astype(np.uint8),np.ones((3,3),np.uint8)) == 0
+    edges[~visible] = 0
+    dist = cv2.distanceTransform((edges==0).astype(np.uint8),cv2.DIST_L2,3)
+    cands = []
+    wy,wx = np.nonzero(plant)
+    for source in (edges,cv2.morphologyEx(edges,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))):
+        for c in cv2.findContours(source,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)[0]:
+            if len(c)<24 or cv2.arcLength(c,False)<span*.48:
+                continue
+            try:
+                (cx,cy),(a,b),theta=cv2.fitEllipse(c)
+            except cv2.error:
+                continue
+            if not np.isfinite([cx,cy,a,b,theta]).all(): continue
+            if a<b: a,b,theta=b,a,theta+90
+            if not .25*span<a<1.85*span or not max(5,.085*a)<b<=a: continue
+            if abs(cx-x-bw/2)>max(.48*bw,.25*a) or abs(cy-y-bh/2)>.73*bh: continue
+            t=math.radians((theta+90)%180-90)
+            cs,sn=math.cos(t),math.sin(t)
+            ang=np.arange(96)*2*math.pi/96
+            xx=cx+a/2*np.cos(ang)*cs-b/2*np.sin(ang)*sn
+            yy=cy+a/2*np.cos(ang)*sn+b/2*np.sin(ang)*cs
+            ix,iy=np.rint(xx).astype(int),np.rint(yy).astype(int)
+            if np.any((ix<1)|(iy<1)|(ix>=size[0]-1)|(iy>=size[1]-1)): continue
+            unblocked=visible[iy,ix]
+            hit=(dist[iy,ix]<max(1.35,a*.007))&unblocked
+            if hit.sum()<32 or sum(bool(z.any()) for z in np.array_split(hit,12))<7: continue
+            # Require both extremities of the major axis, not one curved cable or one leaf.
+            if not (hit[np.cos(ang)>.72].any() and hit[np.cos(ang)<-.72].any()): continue
+            across=((wx-cx)*cs+(wy-cy)*sn)/(a/2)
+            down=(-(wx-cx)*sn+(wy-cy)*cs)/(b/2)
+            radial=across*across+down*down
+            if np.mean(radial<1.23)<.035: continue
+            ratio=b/a
+            if ratio<.75:
+                # Orient gravity from the crown towards the rim, including rolled cameras.
+                above=float(np.mean(down<.2))
+                if max(above,1-above)<.72: continue
+                if above<.5:t+=math.pi
+            else:
+                t=0. if ratio>.94 else t
+            coverage=hit.sum()/max(1,unblocked.sum())
+            if coverage<.70: continue
+            score=.62*coverage+.30*hit.mean()+.08*min(1,a/span)
+            cands.append((float(score),cx/f,cy/f,a/f,ratio,t))
+    if not cands:
+        fine=cv2.Canny(gray,8,26)
+        fine[~visible]=0
+        fine_dist=cv2.distanceTransform((fine==0).astype(np.uint8),cv2.DIST_L2,3)
+        arc=split_rim(small,plant,fine_dist,visible)
+        if arc is None:return None
+        q,cx,cy,d,r,t=arc
+        cands.append((q,cx/f,cy/f,d/f,r,t))
+    score,cx,cy,diameter,ratio,t=max(cands, key=lambda q:q[0])
+    return dict(elevation_deg=round(math.degrees(math.asin(np.clip(ratio,0,1))),2),
+                roll_deg=round(math.degrees(t),2),method="pot_rim_estimate",
+                rim_center_px=[round(cx,2),round(cy,2)],rim_diameter_px=round(diameter,2))
+
+
+def container_axis(image, mask, box):
+    """Estimate image-plane up from a distinct dark planter, without guessing a tilt angle."""
+    h,w=mask.shape
+    f=min(1.,520/max(h,w))
+    size=max(2,round(w*f)),max(2,round(h*f))
+    rgb=cv2.resize(image,size,interpolation=cv2.INTER_AREA)
+    fg=cv2.resize(mask,size,interpolation=cv2.INTER_NEAREST)>0
+    yy,xx=np.nonzero(fg)
+    if len(xx)<40:return None
+    span=max(np.ptp(xx),np.ptp(yy)); center=np.array([xx.mean(),yy.mean()])
+    v=rgb.max(2); spread=v-rgb.min(2)
+    dark=((v<np.clip(np.percentile(v,23),38,98)) & (spread<np.maximum(16,v*.36)) & ~fg).astype(np.uint8)
+    dark=cv2.morphologyEx(dark,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8))
+    n,lab,stats,cent=cv2.connectedComponentsWithStats(dark)
+    opts=[]
+    for i in range(1,n):
+        x,y,bw,bh,area=map(int,stats[i])
+        if not .12*span*span<area<1.28*span*span or area<.40*bw*bh:continue
+        if x<=0 or y<=0 or x+bw>=size[0] or y+bh>=size[1]:continue
+        shift=cent[i]-center;length=np.linalg.norm(shift)
+        if not .24*span<length<1.55*span:continue
+        down=shift/length; right=np.array([down[1],-down[0]])
+        py,px=np.nonzero(lab==i)
+        loc=(np.column_stack([px,py])-center)@np.column_stack([right,down])
+        u,vv=loc.T;near,far=np.percentile(vv,[2.5,98])
+        width=np.percentile(u,98)-np.percentile(u,2)
+        if not .32*span<width<1.40*span or not .30*width<far-near<1.85*width:continue
+        canopy=(np.column_stack([xx,yy])-center)@np.column_stack([right,down])
+        if abs(near-np.percentile(canopy[:,1],96))>.22*span:continue
+        brim=(vv>near)&(vv<near+.12*(far-near))
+        if np.sum(brim)<10:continue
+        lo,hi=np.percentile(u[brim],[2,98])
+        if hi-lo<.55*width:continue
+        pos=(center+.5*(lo+hi)*right+near*down)/f
+        xr,yr,wr,hr=box;unit=max(wr,hr)
+        opts.append((area,dict(method="container_axis",elevation_deg=0.,
+            roll_deg=round(math.degrees(math.atan2(right[1],right[0])),2),
+            rim={"center":[round((pos[0]-xr-(wr-1)/2)/unit,6), round((pos[1]-yr-(hr-1)/2)/unit,6)],
+                 "diameter":round((hi-lo)/(f*unit),6),"drop":round((far-near)/(f*unit),6),
+                 "rgb":np.median(rgb[py,px],axis=0)[::-1].astype(int).tolist()})))
+    return max(opts,key=lambda o:o[0])[1] if opts else None
+
+
+def reference_frame(image, box, pose):
+    """Lossless crop in the same pixel coordinates as the measured plant."""
+    x,y,w,h=box;extent=max(w,h);cx=x+(w-1)/2;cy=y+(h-1)/2
+    lx,ty,rx,by=x,y,x+w,y+h
+    rim=pose.get("rim")
+    if rim:
+        c=np.array([cx,cy])+np.array(rim["center"])*extent
+        t=math.radians(pose.get("roll_deg",0.))
+        right=np.array([math.cos(t),math.sin(t)]); down=np.array([-right[1],right[0]])
+        r=rim["diameter"]*extent*.55
+        tilt=math.radians(pose.get("elevation_deg",0.))
+        drop=rim.get("drop",rim["diameter"]*.88*math.cos(tilt))*extent
+        bounds=np.array([c+right*u*r+down*v for u in (-1,1) for v in (-r*math.sin(tilt),drop+r*math.sin(tilt))])
+        lx,ty=np.minimum([lx,ty],bounds.min(0)); rx,by=np.maximum([rx,by],bounds.max(0))
+    pad=.055*extent
+    lx,ty=max(0,math.floor(lx-pad)),max(0,math.floor(ty-pad))
+    rx,by=min(image.shape[1],math.ceil(rx+pad)),min(image.shape[0],math.ceil(by+pad))
+    tile=image[ty:by,lx:rx]
+    if max(tile.shape[:2])>TEXTURE_LIMIT:
+        f=TEXTURE_LIMIT/max(tile.shape[:2])
+        tile=cv2.resize(tile,(max(1,round(tile.shape[1]*f)),max(1,round(tile.shape[0]*f))),interpolation=cv2.INTER_AREA)
+    try:
+        ok,encoded=cv2.imencode(".webp",tile,[cv2.IMWRITE_WEBP_QUALITY,101])
+    except cv2.error:
+        ok=False
+    fmt="webp"
+    if not ok:
+        fmt="png";ok,encoded=cv2.imencode(".png",tile,[cv2.IMWRITE_PNG_COMPRESSION,4])
+    if not ok:return None
+    return {"mime":"image/"+fmt,"data":base64.b64encode(encoded).decode("ascii"),
+            "rect":[round((lx-.5-cx)/extent,8),round((ty-.5-cy)/extent,8),
+                    round((rx-lx)/extent,8),round((by-ty)/extent,8)],
+            "image_size":[image.shape[1],image.shape[0]],"crop_px":[lx,ty,rx-lx,by-ty]}
+
+
+def marker_poses(image, K):
+    """Calibrated poses of fixed, horizontal DICT_4X4_50 reference tags (IDs 0–3)."""
+    if K is None or not hasattr(cv2,"aruco"): return {}
+    side=np.float64([[-.5,.5,0],[.5,.5,0],[.5,-.5,0],[-.5,-.5,0]])
+    detector=cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50))
+    gray=cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
+    corners,ids,_=detector.detectMarkers(gray)
+    if ids is None:return {}
+    found={}
+    for c, ident in zip(corners,ids.ravel()):
+        key=int(ident)
+        if key not in (0,1,2,3) or np.count_nonzero(ids==key)!=1:continue
+        p=c.reshape(4,2).copy()
+        if cv2.contourArea(p)<160 or min(np.linalg.norm(p-np.roll(p,1,axis=0),axis=1))<8:continue
+        cv2.cornerSubPix(gray,p,(3,3),(-1,-1),(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT,22,.015))
+        ok,rv,tv,*_=cv2.solvePnPGeneric(side,p.astype(np.float64),K,None,flags=cv2.SOLVEPNP_IPPE_SQUARE)
+        opts=[]
+        if not ok:continue
+        for rvec,tvec in zip(rv,tv):
+            rot=cv2.Rodrigues(rvec)[0]; tr=tvec.reshape(3)
+            if not np.isfinite(rot).all() or not np.isfinite(tr).all():continue
+            if np.min((side@rot.T+tr)[:,2])<=0 or (-rot.T@tr)[2]<=0:continue
+            proj=cv2.projectPoints(side,rvec,tvec,K,None)[0].reshape(-1,2)
+            err=float(np.sqrt(np.mean(np.sum((proj-p)**2,axis=1))))
+            opts.append((err,rot,tr))
+        if not opts:continue
+        opts.sort(key=lambda opt:opt[0])
+        err,rot,tr=opts[0]
+        if err>min(1.15,max(.65,math.sqrt(cv2.contourArea(p))*.009)):continue
+        if len(opts)>1 and opts[1][0]-err<.35 and np.dot(rot[:,2],opts[1][1][:,2])<math.cos(math.radians(12)):continue
+        found[key]=(rot,tr,K)
+    return found
+
+
+def pose_for_capture(image, mask, box, calibrated):
+    rim=pot_rim_pose(image,mask,box)
+    poses=marker_poses(image,calibrated)
+    base=container_axis(image,mask,box)
+    pose=dict(rim or base or {"method":"camera_relative","elevation_deg":0.,"roll_deg":0.})
+    if poses:
+        key=min(poses)
+        n=poses[key][0][:,2]
+        pose.update(method="calibrated_marker", marker_id=key,
+                    elevation_deg=round(math.degrees(math.asin(float(np.clip(-n[2],-1,1)))),3),
+                    roll_deg=round(math.degrees(math.atan2(n[0],-n[1])),3) if math.hypot(n[0],n[1])>.025 else 0.)
+    if rim:
+        x,y,w,h=box
+        center=pose.pop("rim_center_px"); diameter=pose.pop("rim_diameter_px")
+        pose["rim"]={"center":[round((center[0]-(x+(w-1)/2))/max(w,h),6),
+                               round((center[1]-(y+(h-1)/2))/max(w,h),6)],
+                     "diameter":round(diameter/max(w,h),6)}
+    if rim and base and np.linalg.norm(np.subtract(pose["rim"]["center"],base["rim"]["center"]))<.18:
+        pose["rim"].update(drop=base["rim"]["drop"],rgb=base["rim"]["rgb"])
+    return pose,poses
+
+
+def silhouette_depth(mask,box,reference,others):
+    """Bound visible depth along primary camera rays using the other calibrated masks."""
+    if not others:return None
+    R,t,K=reference
+    x,y,w,h=box
+    n=72
+    sw,sh=max(2,round(w*n/max(w,h))),max(2,round(h*n/max(w,h)))
+    sm=cv2.resize(mask[y:y+h,x:x+w],(sw,sh),interpolation=cv2.INTER_AREA)>96
+    yy,xx=np.nonzero(sm)
+    if len(xx)<10:return None
+    uv=np.column_stack([x+(xx+.5)*w/sw-.5,y+(yy+.5)*h/sh-.5,np.ones(len(xx))])
+    rays=uv@np.linalg.inv(K).T
+    depth0=float(t[2])
+    if not np.isfinite(depth0) or depth0<=0:return None
+    # Marker side is the common unit; near/far must both be witnessed.
+    samples=depth0*np.linspace(.22,2.05,128)
+    inside=np.ones((len(samples),len(xx)),bool)
+    for alt,othermask in others:
+        r2,t2,k2=alt
+        rel=r2@R.T
+        A=(rays@rel.T)@k2.T
+        B=k2@(t2-rel@t)
+        oh,ow=othermask.shape
+        for i,z in enumerate(samples):
+            uvz=A*z+B
+            xy=np.rint(uvz[:,:2]/np.maximum(1e-6,uvz[:,2,None])).astype(np.int32)
+            ok=(uvz[:,2]>0)&(xy[:,0]>=0)&(xy[:,1]>=0)&(xy[:,0]<ow)&(xy[:,1]<oh)
+            idx=np.flatnonzero(ok)
+            ok[idx]=othermask[xy[idx,1],xy[idx,0]]>0
+            inside[i] &= ok
+    # Use a bounded, connected interval; never average across a known gap.
+    occupied=inside[:-2]&inside[1:-1]&inside[2:]
+    first=np.argmax(occupied,axis=0)
+    columns=np.arange(len(xx))
+    after=(np.arange(len(samples))[:,None]>first)&~inside
+    has_end=after.any(axis=0)
+    end=np.argmax(after,axis=0)-1
+    good=occupied.any(axis=0)&has_end&(first>0)&(end>=first+2)
+    if np.mean(good)<.24:return None
+    front=samples[first[good]]
+    back=samples[end[good]]
+    depths=front+.35*(back-front)
+    center=float(np.median(depths))
+    world_span=center*max(w,h)/math.sqrt(K[0,0]*K[1,1])
+    if world_span<=0:return None
+    values=(depths-center)/world_span
+    ok2=np.abs(values)<2.2
+    if ok2.sum()<max(8,.22*len(xx)):return None
+    grid=np.full((sh,sw),-32768,dtype=np.int16)
+    grid[yy[good][ok2],xx[good][ok2]]=np.rint(values[ok2]*4096).astype(np.int16)
+    return {"width":sw,"height":sh,"units":4096,"missing":-32768,
+            "coverage":round(ok2.sum()/len(xx),3),"samples":grid.ravel().tolist()}
+
+
+def companion_depth(photo, captured_at, mask, box, primary, profile):
+    folder=photo.with_name(photo.stem+".views")
+    if not primary or not folder.is_dir() or not profile:return None
+    key=min(primary)
+    R,t,K=primary[key]
+    images=[]
+    for candidate in find_images(folder)[:12]:
+        timestamp,_=capture_time(candidate)
+        if timestamp and captured_at and abs((timestamp-captured_at).total_seconds())>900:continue
+        try:
+            other,k2=decode_registered_photo(candidate.read_bytes(),profile)
+            if other is None or k2 is None:continue
+            alt=marker_poses(other,k2).get(key)
+            if alt is None:continue
+            r2,t2,_=alt
+            a=math.degrees(math.acos(float(np.clip(np.dot(R[2],r2[2]),-1,1))))
+            separation=np.linalg.norm((-R.T@t)-(-r2.T@t2))/max(t[2],1e-5)
+            if not (12<=a<=155 and .08<separation<3.5):continue
+            # Duplicate shots do not count as independent evidence.
+            if any(np.dot(r2[2],p[0][0][2])>.991 for p in images):continue
+            fg=refine_mask(other,segment_leaves(downscale(other)))
+            if not .0008<np.mean(fg>0)<.88:continue
+            fg=cv2.dilate(fg,np.ones((3,3),np.uint8))
+            images.append((alt,fg,candidate.name))
+            if len(images)>=5:break
+        except (cv2.error,OSError,ValueError,TypeError):continue
+    result=silhouette_depth(mask,box,primary[key],[(p,m) for p,m,_ in images])
+    if result:result.update(method="calibrated_silhouettes",reference_marker=key,supporting_views=[n for _,_,n in images])
+    return result
+
+
+def capture_material(row, geometry, photo_paths, masks_dir):
+    """Read only the matching, masked capture. Return no texture if its registration is uncertain."""
+    name = row.get("file_name")
+    digest = row.get("_sha256")
+    if not isinstance(name, str) or Path(name).name != name or not digest or masks_dir is None:
+        return None
+    photos = [Path(p) for p in photo_paths if Path(p).name == name]
+    if not photos:
+        return None
+    info = (row.get("_historical_record") or {}).get("analysis") or {}
+    corrected = row.get("_lens_corrected", info.get("lens_corrected"))
+    if corrected is None:
+        return None
+    try:
+        raw = None
+        matched_photo = None
+        for photo in photos:
+            if photo.is_file():
+                candidate = photo.read_bytes()
+                if hashlib.sha256(candidate).hexdigest() == digest:
+                    raw,matched_photo = candidate,photo
+                    break
+        if raw is None:
+            return None
+        calibration = None
+        if corrected:
+            profile = calibration_file().read_bytes()
+            if hashlib.sha256(profile).hexdigest() != (row.get("_lens_hash") or info.get("lens_profile_sha256")):
+                return None
+            calibration = json.loads(profile.decode("utf-8-sig"))
+        image,k = decode_registered_photo(raw,calibration)
+        if image is None or (corrected and k is None):return None
+        masks_dir = Path(masks_dir)
+        if not masks_dir.is_dir():
+            return None
+        output_stem = row.get("_output_stem")
+        if output_stem:
+            candidates = [masks_dir / (output_stem + "_mask.png")]
+        else:
+            suffix = "_" + Path(name).stem + "_mask.png"
+            candidates = [p for p in masks_dir.iterdir() if len(p.name) == 5+len(suffix)
+                          and p.name[:5].isdigit() and p.name[5:] == suffix]
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            mask = cv2.imdecode(np.fromfile(candidate, np.uint8), cv2.IMREAD_GRAYSCALE)
+            if mask is None or mask.shape != image.shape[:2] or cv2.countNonZero(mask) != row.get("plant_pixels"):
+                continue
+            x,y,w,h = cv2.boundingRect(mask)
+            if min(w,h)<1 or (geometry and (w,h)!=(geometry.get("width_px"),geometry.get("height_px"))):
+                continue
+            # Resize premultiplied channels so a wall or pot cannot tint an edge.
+            factor = min(1., TEXTURE_LIMIT/max(w,h))
+            size = (max(1,round(w*factor)), max(1,round(h*factor)))
+            alpha = (mask[y:y+h,x:x+w] > 0).astype(np.float32)
+            rgb = image[y:y+h,x:x+w].astype(np.float32) * alpha[:,:,None]
+            a = cv2.resize(alpha,size,interpolation=cv2.INTER_AREA)
+            colour = cv2.resize(rgb,size,interpolation=cv2.INTER_AREA)/np.maximum(a[:,:,None],1e-7)
+            pixels = np.dstack((colour, 255*a)).round().clip(0,255).astype(np.uint8)
+            ok, encoded = cv2.imencode(".png",pixels,[cv2.IMWRITE_PNG_COMPRESSION,5])
+            if ok:
+                material = {"width_px":w,"height_px":h,"masked_png":base64.b64encode(encoded).decode("ascii"),
+                            "camera":{"method":"camera_relative","elevation_deg":0.,"roll_deg":0.}}
+                # A failed pose fit must never discard verified photographic pixels.
+                try:
+                    pose, primary = pose_for_capture(image,mask,(x,y,w,h),k)
+                    material["camera"] = pose
+                    depth = companion_depth(matched_photo,parse_saved_time(row.get("captured_at")),
+                                            mask,(x,y,w,h),primary,calibration)
+                    if depth:material["depth"] = depth
+                except (cv2.error,OSError,ValueError,TypeError,FloatingPointError):
+                    pass
+                frame=reference_frame(image,(x,y,w,h),material["camera"])
+                if frame:material["frame"]=frame
+                return material
+    except (OSError, ValueError, TypeError, cv2.error):
+        pass
+    return None
+
+
+def cached_capture(previous, identity):
+    """Reuse only the exact matching photograph, calibration and measured leaf outlines."""
+    if not previous or not identity:return None
+    try:
+        stored=json.loads(Path(previous).read_text(encoding="utf-8-sig"))
+        latest=(stored.get("viewer") or {}).get("latest") or {}
+        canopy=latest.get("canopy") or {}
+        if latest.get("capture_identity")!=identity or not isinstance(canopy.get("masked_png"),str):
+            return None
+        # Supporting camera files may have been replaced. Never re-use a depth field blindly.
+        return {k:canopy[k] for k in ("width_px","height_px","masked_png","frame") if k in canopy} | {"camera":latest.get("camera") or {}}
+    except (OSError,ValueError,TypeError,AttributeError):
+        return None
+
+
+def twin_view_data(rows, output_dir=None, care_selection=None, *, photo_paths=(), masks_dir=None, previous=None):
     "Send the latest contours and the comparable history that drives their development."
     if care_selection is not None:
         # Care suggestions are available through the explicit CLI action only.
@@ -1062,11 +1510,22 @@ def twin_view_data(rows, output_dir=None, care_selection=None):
     geo = z.get("_leaf_geometry") or info.get("leaf_geometry")
     extent = geo.get("extent") if isinstance(geo,dict) else None
     records = geo.get("leaves") if isinstance(geo,dict) else None
+    good_geometry = isinstance(geo,dict) and all(isinstance(geo.get(k),(int,float)) and geo[k]>0
+                                                   for k in ("width_px","height_px"))
+    identity = None
+    if good_geometry and z.get("_sha256") and z.get("usable"):
+        parts = [z["_sha256"],z.get("_lens_hash") or info.get("lens_profile_sha256"),
+                 z.get("_lens_corrected",info.get("lens_corrected")),z.get("plant_pixels"),geo]
+        identity = hashlib.sha256(json.dumps(parts,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+    material = capture_material(z,geo if good_geometry else None,photo_paths,masks_dir) if z.get("usable") else None
+    if material is None and identity:material=cached_capture(previous,identity)
+    camera = (material or {}).get("camera") or {"method":"camera_relative","elevation_deg":0.,"roll_deg":0.}
+    root_hint = (camera.get("rim") or {}).get("center",(0.,0.))
     leavedata = []
     if (isinstance(extent,(int,float)) and math.isfinite(extent) and 0<extent<=1
             and isinstance(records,list) and len(records)<=TWIN_MAX_LEAVES and z.get("usable")):
         for leaf in records:
-            image_shape = twin_leaf_mesh(leaf,extent) if isinstance(leaf,dict) else None
+            image_shape = twin_leaf_mesh(leaf,extent,root_hint) if isinstance(leaf,dict) else None
             if image_shape is not None:
                 leavedata.append(image_shape)
     manual = bool(leavedata and geo.get("method")=="manual" and len(leavedata)==geo.get("count"))
@@ -1077,9 +1536,18 @@ def twin_view_data(rows, output_dir=None, care_selection=None):
     rate = rate if (leavedata and elapsed_hours is not None and elapsed_hours>=12
                     and rate is not None and -50<=rate<=100) else None
     projection = growth_projection(rows)
-    return make_json_safe({"latest":{"file_name":z["file_name"],"captured_at":z.get("captured_at"),
-                                  "leaves":leavedata,"count_estimated":not manual,
-                                  "view":"top" if TWIN_PHOTO_VIEW=="top" else "side"},
+    latest = {"file_name":z["file_name"],"captured_at":z.get("captured_at"),"leaves":leavedata,
+              "count_estimated":not manual,"camera":camera}
+    if identity:latest["capture_identity"]=identity
+    if good_geometry or material:
+        sizes=geo if good_geometry else material
+        surface = {"width_px":sizes["width_px"],"height_px":sizes["height_px"],"units":CONTOUR_UNITS}
+        if material:
+            surface["masked_png"] = material["masked_png"]
+            if material.get("depth"):surface["depth"] = material["depth"]
+            if material.get("frame"):surface["frame"] = material["frame"]
+        latest["canopy"] = surface
+    return make_json_safe({"latest":latest,
                         "rate":rate,"growth":projection,"viewer_version":TWIN_3D_VERSION})
 
 
@@ -1098,9 +1566,10 @@ def twin_view_from_json(source, output_dir, care_selection=None):
     elif model:
         base = source.parent.parent if source.parent.name == "digital_twin" else source.parent
         file_path = next((p for p in (base/"results"/"results.json", base/"results.json") if p.is_file()), None)
-        if isinstance(viewer, dict) and viewer.get("viewer_version") == TWIN_3D_VERSION and not care_selection:
+        if isinstance(viewer, dict) and (viewer.get("viewer_version") == TWIN_3D_VERSION or file_path is None) and not care_selection:
             if source == target:
-                return target
+                with lock_results(output_dir):
+                    return ensure_view_snapshot(target, data)
             records = None
         else:
             records = json.loads(file_path.read_text(encoding="utf-8-sig")) if file_path is not None else []
@@ -1112,7 +1581,12 @@ def twin_view_from_json(source, output_dir, care_selection=None):
     rows = None
     if records is not None:
         rows = [prepare_historical_row(historical_row(s)) for s in records]
-        viewer = twin_view_data(rows, directory_path, care_selection)
+        dates_root = file_path.parent if model and file_path is not None else source.parent
+        photo_root = dates_root.parent if dates_root.name in ("results", "auswertung") else dates_root
+        names = {Path(z["file_name"]).name for z in rows}
+        photo_paths = (folder / name for folder in (photo_root/"images", photo_root/"bilder") for name in names)
+        viewer = twin_view_data(rows, directory_path, care_selection, photo_paths=photo_paths,
+                                masks_dir=dates_root/"masks",previous=target if target.is_file() else (source if model else None))
     with lock_results(output_dir):
         existing_file = target if target.exists() else output_dir/TWIN_JSON_FILE
         if existing_file.exists():
@@ -1135,9 +1609,9 @@ def open_twin_view(output_dir):
     open_browser_view(output_dir, "digital_twin", "Digital twin")
 
 
-def update_twin_model(rows, history, independent_images, directory_path):
+def update_twin_model(rows, history, independent_images, directory_path, *, photo_paths=(), masks_dir=None, previous=None):
     twin = digital_twin(rows, history, independent_images)
-    twin["viewer"] = twin_view_data(rows)
+    twin["viewer"] = twin_view_data(rows,photo_paths=photo_paths,masks_dir=masks_dir,previous=previous)
     save_twin(twin, directory_path)
     status_label = {
         "too_few_comparable_photos": "Too few comparable photos for a forecast",
