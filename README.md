@@ -1,78 +1,53 @@
-# SecureLAN Arena
+# BioBox · Plant Vision
 
-SecureLAN Arena is a Java desktop app for two people on the same local network. One player hosts a session from the app and the other joins using the host's IP address. Once connected, both players can exchange encrypted messages, play two-player games, and talk using a push-to-talk button. The session runs directly between the two app instances.
+BioBox follows one plant over time. A Raspberry Pi photographs it; a Python pipeline uses OpenCV to identify foliage, measure its visible area and track changes in colour. Each run updates the plant health dashboard, four charts and a rotatable digital twin of the latest capture.
 
-## Features
+This is the image analysis part of the BioBox diploma project at **HTL Shkodёr Peter Mahringer**. It runs locally and exports data for the wider BioBox platform.
 
-| Feature | How it works |
-| --- | --- |
-| Text chat | Send messages from the **Chat** tab with **Send** or Enter. |
-| Tic Tac Toe | The host plays **X** and goes first. The client plays **O**. Moves update both boards. |
-| Rock Paper Scissors | Both players choose a move. The app shows the result once both choices arrive. Use **Reset** to start a new round. |
-| Walkie-talkie | In the **Chat** tab, press and hold **Hold To Talk** while speaking. Release it to stop transmitting. |
+## Everyday use
 
-## Run the app
+From any PowerShell window on the project laptop, run:
 
-The IntelliJ project is configured for **JDK 23**. The app uses Java Swing, Java Sound, and standard Java networking and cryptography libraries. It has no third-party dependencies.
-
-### IntelliJ IDEA
-
-1. Open the repository folder in IntelliJ IDEA.
-2. Select **JDK 23** under **File → Project Structure → Project SDK**.
-3. Open [Main.java](src/com/securelanarena/Main.java) and run `Main.main()`.
-
-### Terminal
-
-From the repository root, compile the app and launch it:
-
-```sh
-javac -encoding UTF-8 -d out src/com/securelanarena/*.java
-java -cp out com.securelanarena.Main
+```powershell
+python "$HOME\Documents\Diploma\computer_vision_pipeline.py" --sync
 ```
 
-To open a second instance on the same computer, run the `java` command again in another terminal.
+This retrieves completed photos from the Pi and processes the photos in `images/`. If the connection fails, the local analysis still runs. Omit `--sync` to process local photos only. The hourly timer on the Pi takes the photos; syncing does not trigger an extra capture.
 
-## Host and join a session
+After a run, open any of these HTML files in a browser. No server, internet connection or JSON selection is needed. Refresh an open tab after processing new photos.
 
-1. Open the app on both devices and go to the **Connection** tab. Enter a display name in each window.
-2. On the host, keep the default **Chat port** (`5000`) or choose an available port. Enter a shared password and click **Host Chat**.
-3. On the client, enter the host's local IP in **Friend IP address**, use the same chat port and password, and click **Connect**.
-4. Once connected, open **Chat** and send a message to verify the session. Use **Disconnect** in the **Connection** tab when finished.
-
-**Testing on one computer?** Use `127.0.0.1` as the host address in the client window. For two devices, connect both to the same local network. On Windows, run `ipconfig` on the host and look for the **IPv4 Address** of the active network adapter. On macOS, `ipconfig getifaddr en0` shows the address if Wi-Fi uses `en0`.
-
-### Network ports
-
-| Traffic | Protocol | Listening port |
-| --- | --- | --- |
-| Chat messages and game events | TCP | Host's chat port, `5000` by default |
-| Voice received by the host | UDP | `6000` on the host |
-| Voice received by the client | UDP | `6001` on the client |
-
-If the client cannot connect, check the host IP, chat port, and firewall settings. If the connection opens but messages fail, check that the passwords match exactly. If chat works but voice fails, check microphone access, audio output, and the UDP ports above.
-
-## Encryption
-
-Text messages, game events, and voice packets use AES-128 in Galois/Counter Mode (GCM). Each encrypted payload uses a fresh random initialization vector. The app derives the key by hashing the shared password with SHA-256 and taking the first 16 bytes.
-
-The current design is suited to demonstrations on a trusted local network. Passwords are hashed once without a salt, so captured traffic can be used to test guesses against a weak password. Replace the prefilled example password with a strong shared password for LAN use.
-
-## Source layout
-
-All application code is under [src/com/securelanarena](src/com/securelanarena).
-
-| File | Responsibility |
+| View | File in the project |
 | --- | --- |
-| `Main.java` | Starts the Swing application. |
-| `ChatWindow.java` | Builds the interface and handles chat, connection controls, and game state. |
-| `ChatServer.java` | Accepts one client and exchanges encrypted messages over TCP. |
-| `ChatClient.java` | Connects to the host and exchanges encrypted messages over TCP. |
-| `VoiceChat.java` | Captures and plays audio and sends encrypted voice packets over UDP. |
-| `CryptoUtil.java` | Derives the encryption key and encrypts or decrypts text and audio. |
+| Digital twin | [digital_twin/digital_twin_3d.html](digital_twin/digital_twin_3d.html) |
+| Plant health | [plant_health/plant_health.html](plant_health/plant_health.html) |
+| Charts | [charts/charts.html](charts/charts.html) |
 
-## Project team
+Keep each page in its folder. Python writes a local display copy for the twin and health; the chart gallery uses the four PNGs. The JSON files remain available for the platform. The existing Python viewer commands still work.
 
-| Team member | Contributions |
+## First run
+
+In PowerShell:
+
+```powershell
+cd "$HOME\Documents\Diploma"
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install opencv-contrib-python numpy matplotlib Pillow
+```
+
+Put photos of the **same plant** directly in `images/`, keep their capture timestamps and run `python computer_vision_pipeline.py`. A fixed camera angle makes area measurements easier to compare. For a set of unrelated photos, use `python computer_vision_pipeline.py images --independent-images --output sample_results` to keep those measurements separate. For the camera and hourly timer, see the [Raspberry Pi setup](docs/m1-image-capture-system.md).
+
+## What the results mean
+
+| Output | How to read it |
 | --- | --- |
-| Grid | Application entry point, Swing interface, chat and connection screens, game screens, and documentation. |
-| Atida | Client and server networking, message transport, AES-GCM encryption, and encrypted push-to-talk audio. |
+| `results/masks/` and `results/overlays/` | The mask shows the pixels counted as foliage. The purple outline lets you check that decision against the photo. Area measures the visible footprint; centimetres require a known length in the image. |
+| `results/results.csv` and `results/results.json` | One measurement record per capture. The CSV is convenient for review; the JSON also carries geometry and quality flags. Older records remain when camera photos rotate out of the 100-photo collection. |
+| Plant health | The score compares the plant with its own reference. A value near 100 means the visible features are similar. Lighting and camera changes can still limit comparisons. |
+| Digital twin | Day zero opens on the latest source photo, cropped around the plant. Drag to rotate the measured leaf contours in 3D. **Reset view** restores the photographed angle and day zero. With enough comparable history, the slider projects growth forward from that capture. |
+
+A new camera angle needs no code change. A single photo only records the surfaces facing that camera. To constrain depth with several views of the same plant, follow the [multi-angle capture instructions](docs/m4-digital-twin.md#add-photos-from-other-angles).
+
+## Milestone guides
+
+[M1 · Image capture](docs/m1-image-capture-system.md) · [M2 · Computer vision](docs/m2-computer-vision-pipeline.md) · [M3 · Plant health](docs/m3-plant-health-assessment.md) · [M4 · Digital twin](docs/m4-digital-twin.md)

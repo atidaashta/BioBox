@@ -4,8 +4,8 @@
 |---|---|
 | Document ID | BB-SPEC-HEALTH-001 |
 | Milestone | A-M3 · Plant Health Assessment |
-| Revision | 1.14 |
-| Updated | 14 November 2026 |
+| Revision | 1.15 |
+| Updated | 21 November 2026 |
 | Institution | HTL Shkodёr Peter Mahringer |
 | Implementation | `health_assessment.py`; scoring version 4.1.0 |
 | Status | Relative image-based condition index; biological validity has not yet been established |
@@ -20,9 +20,9 @@ The method does not assume that healthy basil must be dark green. Light or varie
 
 The first usable photograph for each camera view in the current run becomes the reference. The pipeline keeps its image, mask, capture time, checksum, and geometry in memory. It does not persist an automatic reference image or mask between runs.
 
-The chart places a reference marker at 100. This marker establishes the scale of comparison. The reference itself has no measured score or subscores, and its status is `referenzfoto_start_der_ansicht`. A subsequent usable photo can receive a score once a valid comparison is available.
+The chart places a reference marker at 100. This marker establishes the scale of comparison. The reference itself has no measured score or subscores, and its status is `reference_photo_start_of_view`. A subsequent usable photo can receive a score once a valid comparison is available.
 
-An automatically selected reference is provisional (`vorlaeufige_referenz`). After review, `REFERENZ_FREIGEGEBEN = True` marks the main reference for that run as reviewed. It confirms the choice of reference. If the original reference is removed from the local capture window, a later run selects another suitable photo. Historical records retain their original reference; compare scores across a reference change with care. The reference file, timestamp, and checksum are recorded in `analysis.reference_file`, `analysis.reference_captured_at`, and `analysis.reference_sha256`.
+An automatically selected reference is provisional (`provisional_reference`). After review, `REFERENCE_APPROVED = True` marks the main reference for that run as reviewed. It confirms the choice of reference. If the original reference is removed from the local capture window, a later run selects another suitable photo. Historical records retain their original reference; compare scores across a reference change with care. The reference file, timestamp, and checksum are recorded in `analysis.reference_file`, `analysis.reference_captured_at`, and `analysis.reference_sha256`.
 
 Use a different input folder, output folder, and series identifier for another plant. The pipeline option `--new-reference` requires a usable reference in the current selection; if none can be established, existing results are preserved.
 
@@ -36,13 +36,13 @@ The correction does not force leaf colours towards a target. Raw colour measurem
 
 ### Partial comparison when brightness is unreliable
 
-If the full lighting correction cannot be verified, the pipeline checks the blue-to-green and red-to-green ratios in suitable background regions. A colour comparison can proceed without brightness information when at least 30% of the shared leaf area falls inside verified regions. Brown and structure subscores are withheld; the available colour weights are rescaled. These comparisons use `farbverhaeltnis_teilflaeche` and are kept separate from full comparisons when calculating trends.
+If the full lighting correction cannot be verified, the pipeline checks the blue-to-green and red-to-green ratios in suitable background regions. A colour comparison can proceed without brightness information when at least 30% of the shared leaf area falls inside verified regions. Brown and structure subscores are withheld; the available colour weights are rescaled. These comparisons use `colour_ratio_verified_regions` and are kept separate from full comparisons when calculating trends.
 
 ### Compare leaf colour distributions when leaves have shifted
 
 With scoring version 4.1.0, a verified camera view and lighting check can support comparison of the two masks' colour distributions even when overlap is insufficient. This allows a comparison when leaves have moved or new leaves have appeared. The method uses colour distributions and quantile-based CIELAB differences; it does not treat pixels at unrelated positions as a direct pair.
 
-Each image must retain at least 100 working pixels and 65% of its leaf mask core after unsuitable pixels are removed. For a colour-ratio comparison, verified lighting regions must cover at least 65% of each core. Structure is withheld for both distribution modes. The export uses `blattverteilung_normiert` for full lighting correction and `blattverteilung_chromatik` for a ratio-only comparison. The ratio-only mode also withholds the brown subscore.
+Each image must retain at least 100 working pixels and 65% of its leaf mask core after unsuitable pixels are removed. For a colour-ratio comparison, verified lighting regions must cover at least 65% of each core. Structure is withheld for both distribution modes. The export uses `leaf_distribution_normalised` for full lighting correction and `leaf_distribution_chromatic` for a ratio-only comparison. The ratio-only mode also withholds the brown subscore.
 
 ## 4. Colour subscores
 
@@ -78,34 +78,30 @@ The 24-hour trend is the difference from the closest valid comparison to 24 hour
 
 | Score | Dashboard label | Stored category |
 |---|---|---|
-| 85–100 | Very good | `sehr gut` |
-| 70 to below 85 | Good | `gut` |
-| 50 to below 70 | Monitor | `beobachten` |
-| 30 to below 50 | Significant change | `auffaellig` |
-| Below 30 | Critical | `kritisch` |
-| No valid comparison | No score | `keine_daten` |
+| 85–100 | Very good | `very_good` |
+| 70 to below 85 | Good | `good` |
+| 50 to below 70 | Monitor | `monitor` |
+| 30 to below 50 | Significant change | `significant_change` |
+| Below 30 | Critical | `critical` |
+| No valid comparison | No score | `no_data` |
 
 | Stored alert | Trigger |
 |---|---|
-| `farbveraenderung` | Local or quantile-based colour deviation reaches 7, histogram distance exceeds 0.25, or HSV hue changes by more than 10 units |
-| `gelbanteil_gestiegen` | Yellow or warm fraction increases by at least 5 percentage points |
-| `braunanteil_gestiegen` | Brown fraction increases by at least 2.5 percentage points under verified lighting |
-| `saettigung_veraendert` | Logarithmic saturation deviation exceeds 0.22 |
-| `sichtbare_blattflaeche_gesunken` | Visible area falls by more than 15% when structure comparison is permitted |
+| `leaf_colour_changed` | Local or quantile-based colour deviation reaches 7, histogram distance exceeds 0.25, or HSV hue changes by more than 10 units |
+| `yellow_fraction_increased` | Yellow or warm fraction increases by at least 5 percentage points |
+| `brown_fraction_increased` | Brown fraction increases by at least 2.5 percentage points under verified lighting |
+| `saturation_changed` | Logarithmic saturation deviation exceeds 0.22 |
+| `visible_leaf_area_decreased` | Visible area falls by more than 15% when structure comparison is permitted |
 
 Alerts can be separated by semicolons. Lighting failures are recorded as quality or comparison statuses, not as plant damage. A failed transfer also does not lower the score: the pipeline can still analyse the local photographs.
 
 ## 7. Outputs and dashboard
 
-The full output in `results/results.json` keeps `health_assessment` separate from `image_measurements`. See [M2](m2-computer-vision-pipeline.md) for field definitions. Unavailable scores are omitted and explained in `analysis.missing_values`. The CSV marks unavailable values as `Nicht verfügbar`; a measured zero remains zero. Historical scores and their provenance are retained even when the original photograph is no longer local.
+The full output in `results/results.json` keeps `health_assessment` separate from `image_measurements`. See [M2](m2-computer-vision-pipeline.md) for field definitions. Unavailable scores are omitted and explained in `analysis.missing_values`. The CSV marks unavailable values as `Unavailable`; a measured zero remains zero. Historical scores and their provenance are retained even when the original photograph is no longer local.
 
-Open the dashboard:
+After running the pipeline, double-click `plant_health/plant_health.html`. It loads the latest data from `plant_health.data.js` in the same folder; there is no JSON picker. Refresh the tab after the next analysis. The optional `python health_assessment.py` launcher reads the equivalent `plant_health.json` through the local server.
 
-```powershell
-python -B health_assessment.py
-```
-
-The browser automatically reads `plant_health/plant_health.json` from the local server. It displays the latest photo, smoothed score, five colour subscores, and raw leaf measurements. The raw score, 24-hour trend, quality flags, and lighting and reference details remain available in the full result files. Where an exact matching original or saved preview is available, it is displayed alongside the score. Health and subscore charts are also available in the chart gallery.
+The dashboard displays the latest photo, smoothed score, five colour subscores and raw leaf measurements. The raw score, 24-hour trend, quality flags, and lighting and reference details remain available in the full result files. Where an exact matching original or saved preview is available, it is displayed alongside the score. To see health changes across photos, open `charts/charts.html`.
 
 ## 8. Validation and limits
 

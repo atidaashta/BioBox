@@ -26,12 +26,12 @@ Segmentation is not restricted to basil or a particular shade of green. The auto
 | Previously recorded profile | 1920 × 1080 JPEG at quality 90; confirm the active profile on the device |
 | Capture time | UTC timestamp in the session name; incomplete `.pending-*` sessions are ignored |
 
-The local script uses OpenSSH over the existing Tailscale connection. Set `PI_ADRESSE`, `PI_AUFNAHME`, `PI_FOTO_ORDNER`, and `PI_SSH_KEY` in `image_capture.py` if your setup differs. SSH runs with `BatchMode=yes`. If the key is protected by a passphrase, load it into the SSH agent before running the script.
+The local script uses OpenSSH over the existing Tailscale connection. Set `PI_ADDRESS`, `PI_CAPTURE_COMMAND`, `PI_PHOTO_DIR`, and `PI_SSH_KEY` in `image_capture.py` if your setup differs. SSH runs with `BatchMode=yes`. If the key is protected by a passphrase, load it into the SSH agent before running the script.
 
 ### Schedule one photograph per hour
 
 ```powershell
-python -B image_capture.py --schedule-hourly
+python image_capture.py --schedule-hourly
 ```
 
 The script first tests the camera. Only after the test succeeds does it install the marked BioBox entry in the Pi user's crontab. The schedule `0 * * * *` runs at the start of every hour according to the Pi clock. The Windows computer can be off. The Pi and its `cron` service must be running.
@@ -39,8 +39,8 @@ The script first tests the camera. Only after the test succeeds does it install 
 The installer backs up the previous crontab, replaces the BioBox entry on subsequent runs, and keeps unrelated entries. Older jobs that were added by hand are not removed automatically. The scheduled job and a direct calibration capture share a camera lock. A failed test leaves the existing schedule unchanged.
 
 ```powershell
-python -B image_capture.py --schedule-status
-python -B image_capture.py --disable-schedule
+python image_capture.py --schedule-status
+python image_capture.py --disable-schedule
 ```
 
 The hourly helper is stored at `~/.local/bin/biobox-hourly-capture.py`. Its log, last attempt record, and crontab backups are under `~/.local/state/BioBox/`. The helper does not need OpenCV on the Pi. To verify the installation, check the status after the next full hour and confirm that a new completed session contains a readable `normal.jpg`. Disabling the schedule preserves saved photos. An outage cannot be backfilled with photographs that were never taken.
@@ -48,12 +48,12 @@ The hourly helper is stored at `~/.local/bin/biobox-hourly-capture.py`. Its log,
 ### Retrieve and analyse photos
 
 ```powershell
-python -B image_capture.py; python -B computer_vision_pipeline.py images
+python computer_vision_pipeline.py --sync
 ```
 
 The capture script retrieves completed JPEGs without requesting another photograph. It reuses valid local copies and retains up to 100 imported camera photos, ordered by capture time. It prunes older camera imports only after a successful transfer. Manually added images, remote files, and saved measurement history are outside that limit. Camera logs and sidecar JSON files stay on the Pi.
 
-The analysis step scans supported files directly in `images/`, including manually added photos. It still runs after an SSH or transfer failure. If no local photos are available, the previous results are preserved. To fetch files without analysing them, run `python -B image_capture.py` on its own.
+The analysis scans supported files in `images/`, including manually added photos. It still runs after an SSH or transfer failure and can also read the previous photo folder during the migration. If no local photos are available, the previous results are preserved. To fetch files without analysing them, run `python image_capture.py` on its own.
 
 ## 3. Camera placement and lighting
 
@@ -74,7 +74,7 @@ The overlay in `results/overlays/` marks the mask with a thin outline and light 
 ### Correct a mask
 
 ```powershell
-python -B computer_vision_pipeline.py --correct-mask images/photo.jpg
+python computer_vision_pipeline.py --correct-mask images/photo.jpg
 ```
 
 Left-click or drag to add leaf pixels; use the right mouse button to remove background pixels. Press `G` to rerun GrabCut with the marks, `+` or `-` to change brush size, `U` to undo, or `R` to reset. Enter saves the correction; Esc closes the window without saving.
@@ -82,7 +82,7 @@ Left-click or drag to add leaf pixels; use the right mouse button to remove back
 To import an already reviewed binary PNG with the exact dimensions of the source image after any lens correction:
 
 ```powershell
-python -B computer_vision_pipeline.py --correct-mask images/photo.jpg --mask-png reviewed_mask.png
+python computer_vision_pipeline.py --correct-mask images/photo.jpg --mask-png reviewed_mask.png
 ```
 
 The correction is stored in `results/mask_corrections/` and associated with the source photo's SHA-256 checksum and lens profile. The next analysis uses it for that photo only. Automatic masks, overlays, and charts are regenerated on every run. The pipeline retains existing measurements where the original is no longer local and preserves the last complete output if a write fails.
@@ -100,17 +100,17 @@ Diameter [mm]    = largest extent of the masked area [pixels] × s
 Place a ruler in the leaf plane. Mark the two endpoints of a known distance in a saved photograph:
 
 ```powershell
-python -B computer_vision_pipeline.py --scale-image images/photo.jpg --reference-mm 50
+python computer_vision_pipeline.py --scale-image images/photo.jpg --reference-mm 50
 ```
 
 Use the actual distance; 50 mm is an example. `--capture-scale --reference-mm 50` triggers a new Pi photograph for the same operation. The scale is saved as `results/scale_reference.npz` and reused only for a matching camera view and lens profile. Recheck it if camera height or leaf height changes. Leaves at different heights or angles are measured only approximately with a single planar reference. Without a verified scale, physical dimensions are omitted; pixel measurements remain available.
 
 The alternative marker workflow needs four ArUco markers with IDs 0–3, a known marker side length, and known camera, marker, and leaf heights.
 
-The wide lens can be calibrated using checkerboard photos taken at different positions in the frame. The configured pattern has 9 × 6 inner corners; the real square size must match `FELD_MM`.
+The wide lens can be calibrated using checkerboard photos taken at different positions in the frame. The configured pattern has 9 × 6 inner corners; the real square size must match `CHECKER_SQUARE_MM`.
 
 ```powershell
-python -B image_capture.py --calibrate calibration_images
+python image_capture.py --calibrate calibration_images
 ```
 
 The resulting `camera_calibration.json` stores the camera matrix, distortion coefficients, and calibration image size. Rescaling is supported for the same aspect ratio. A different crop, field of view, or lens requires a new check.

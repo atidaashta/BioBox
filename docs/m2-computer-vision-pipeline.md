@@ -4,8 +4,8 @@
 |---|---|
 | Document ID | BB-REF-MERKMALE-001 |
 | Milestone | A-M2 · Computer Vision Pipeline |
-| Revision | 3.16 |
-| Updated | 14 November 2026 |
+| Revision | 3.17 |
+| Updated | 21 November 2026 |
 | Institution | HTL Shkodёr Peter Mahringer |
 | Implementation | `computer_vision_pipeline.py`; image analysis 4.13.0; health scoring 4.1.0 |
 
@@ -81,6 +81,8 @@ The table lists the 52 standard English columns in export order. Extra columns f
 ### Area and shape
 
 The pipeline reads the photograph and corrects lens distortion if a matching profile is available. It builds a binary leaf mask from colour cues, a verified image alignment where available, and refinement along the boundaries. A manually reviewed mask applies only to the matching original and lens profile. The overlay in `results/overlays/` shows which regions were measured. See [M1: Image Capture System](m1-image-capture-system.md) for the workflow.
+
+For a rotated photo with a matching profile, lens correction is applied in sensor coordinates before EXIF rotation. The image and camera matrix are rotated together so the mask, overlay and twin use the same pixels. An incompatible aspect ratio or mirrored orientation keeps the displayed image usable but does not supply calibrated camera geometry. Use the same lens, zoom and crop as the calibration when taking supporting views.
 
 `plant_pixels` counts white pixels in the final mask. The measurement excludes gaps between leaves and does not approximate the plant as a convex hull. The physical area uses the square of the verified millimetres-per-pixel scale. The diameter is the greatest distance across the masked region, including the outer pixel boundaries. Without a scale, pixel measurements can still be available. A missing mask does not establish that the plant is absent.
 
@@ -159,7 +161,9 @@ For Pi imports, `image.storage_path` is derived from the session name as `recent
 
 Growth rates and raw RGB measurements remain in `results.csv` and `results.json`.
 
-Run `python computer_vision_pipeline.py --charts` to open the charts. The gallery reads `charts.json`; its HTML, CSS, and JavaScript are source files. In charts that show photo numbers, the sequence matches the result records. Photos with unknown capture times follow those with known times. Unavailable values are left blank or marked as missing.
+After analysis, double-click `charts/charts.html`. The local gallery finds the generated PNGs beside it. The optional `python computer_vision_pipeline.py --charts` launcher serves the same gallery using its JSON manifest. In charts that show photo numbers, the sequence matches the result records. Photos with unknown capture times follow those with known times. Unavailable values are left blank or marked as missing.
+
+The same analysis publishes local display files for the other two views: `digital_twin/digital_twin.data.js` and `plant_health/plant_health.data.js`. They contain a snapshot of the exported data, not generated interface code. Keep them beside the matching HTML files; the API continues to use JSON. Refresh the page after a new analysis.
 
 ## 7. Retention and reproducibility
 
