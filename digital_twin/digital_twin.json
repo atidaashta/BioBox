@@ -1,7 +1,7 @@
 {
   "version": "0.2.0",
   "series_id": "plant-01",
-  "generated_at": "2026-11-22T19:11:38.777044Z",
+  "generated_at": "2026-11-22T19:55:39.615553Z",
   "pipeline_version": "4.15.0",
   "scope": "visible_leaf_area_pixels",
   "status": "historical_projection_stale_data",
@@ -19,7 +19,7 @@
     "health_status": "provisional_reference",
     "usable": true,
     "quality_flags": "",
-    "age_hours": 15655.193,
+    "age_hours": 15655.926,
     "fresh": false
   },
   "forecast": {

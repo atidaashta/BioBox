@@ -2,10 +2,12 @@
 
 (() => {
   const byId = id => document.getElementById(id);
+  const loader = byId('data-load');
+  const input = byId('data-file');
   const status = byId('data-status');
-  const oneDigit = new Intl.NumberFormat('en-GB', {maximumFractionDigits: 1});
-  const fourDigits = new Intl.NumberFormat('en-GB', {maximumFractionDigits: 4});
-  const datefmt = new Intl.DateTimeFormat('en-GB', {
+  const oneDigit = new Intl.NumberFormat('de-DE', {maximumFractionDigits: 1});
+  const fourDigits = new Intl.NumberFormat('de-DE', {maximumFractionDigits: 4});
+  const datefmt = new Intl.DateTimeFormat('de-DE', {
     dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Berlin'
   });
   const number = Number.isFinite;
@@ -16,7 +18,6 @@
       node.setAttribute('aria-hidden', 'true');
       return;
     }
-
     const percent = Math.max(0, Math.min(100, value));
     node.setAttribute('role', 'meter');
     node.setAttribute('aria-valuemin', '0');
@@ -31,18 +32,16 @@
   function show(data) {
     if (!data || typeof data.version !== 'string' ||
         (data.latest != null && (!data.latest.health || !data.latest.measurements))) {
-      throw new Error('Invalid plant health data.');
+      throw new Error('Bitte die plant_health.json aus der Bildanalyse auswählen.');
     }
-
     const row = data.latest;
     if (!row) {
-      status.textContent = 'Run the image analysis first.';
+      status.textContent = 'Zuerst die Bildanalyse ausführen.';
       return;
     }
-
     const {health, measurements} = row;
     const score = health.health_score;
-    const reason = key => row.missing?.[key] || 'Unavailable for this photo';
+    const reason = key => row.missing?.[key] || 'Für diese Aufnahme nicht verfügbar';
 
     if (row.captured_at && Number.isFinite(Date.parse(row.captured_at))) {
       const time = byId('capture-time');
@@ -64,9 +63,8 @@
     }
 
     const category = byId('health-category');
-    category.textContent = row.category_label || 'No score';
+    category.textContent = row.category_label || 'Kein Score';
     category.classList.toggle('check', !number(score) || score < 70);
-
     if (number(score)) {
       byId('score').classList.remove('absent');
       byId('score-value').textContent = oneDigit.format(score);
@@ -75,10 +73,10 @@
       meter(scoreMeter, score);
       scoreMeter.hidden = false;
     } else {
-      byId('score').setAttribute('aria-label', 'No score');
+      byId('score').setAttribute('aria-label', 'Kein Score');
       const note = byId('score-status');
       note.title = reason('health_score');
-      note.textContent = row.status_label || 'No score';
+      note.textContent = row.status_label || 'Kein Score';
       note.hidden = false;
     }
 
@@ -86,12 +84,11 @@
       const key = part.dataset.part;
       const value = health[key];
       const label = part.querySelector('strong');
-
       if (number(value)) {
         label.textContent = oneDigit.format(value) + ' / 100';
       } else {
         label.title = reason(key);
-        label.setAttribute('aria-label', 'Unavailable');
+        label.setAttribute('aria-label', 'Nicht verfügbar');
       }
       meter(part.querySelector('[data-meter]'), value);
     }
@@ -111,34 +108,38 @@
       swatch.hidden = false;
       byId('color-hex').textContent = color.toUpperCase();
     }
-
     byId('empty').hidden = true;
     byId('dashboard').hidden = false;
   }
 
-  async function loadView() {
-    if (location.protocol === 'file:') {
-      const node = document.createElement('script');
-      const snapshot = await new Promise((resolve, reject) => {
-        node.onload = () => resolve(globalThis.BioBoxHealthData);
-        node.onerror = () => reject(new Error('No local display data yet.'));
-        node.src = 'plant_health.data.js';
-        document.head.append(node);
-      }).finally(() => node.remove());
-
-      delete globalThis.BioBoxHealthData;
-      if (!snapshot) throw new Error('No local display data yet.');
-      return snapshot;
-    }
-
-    const response = await fetch('plant_health.json', {cache: 'no-store'});
-    if (!response.ok) throw new Error('No saved display data.');
-    return response.json();
+  function askForFile(message) {
+    status.textContent = message;
+    loader.hidden = false;
   }
 
-  loadView().then(show).catch(error => {
-    status.hidden = false;
-    status.textContent = (error.message || 'Could not read the view.') +
-      ' Run python computer_vision_pipeline.py in the project folder, then refresh.';
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      show(JSON.parse(await file.text()));
+    } catch (error) {
+      askForFile(error instanceof SyntaxError ? 'Die JSON-Datei konnte nicht gelesen werden.' : error.message);
+      input.value = '';
+    }
   });
+
+  if (location.protocol === 'file:') {
+    askForFile('Bitte plant_health.json auswählen.');
+    return;
+  }
+
+  (async () => {
+    try {
+      const response = await fetch('plant_health.json', {cache: 'no-store'});
+      if (!response.ok) throw new Error('Keine Daten zur Gesundheit. Zuerst die Bildanalyse ausführen.');
+      show(await response.json());
+    } catch (error) {
+      askForFile(error instanceof SyntaxError ? 'Die JSON-Datei konnte nicht gelesen werden.' : error.message);
+    }
+  })();
 })();

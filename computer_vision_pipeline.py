@@ -2049,48 +2049,21 @@ def save_results(rows, ref, output_dir):
     return True
 
 
-# Desktop browsers may not fetch a neighbouring JSON from a file:// page.
-# These classic-script snapshots contain data only. All interface code stays in source control.
-OFFLINE_VIEWS = {TWIN_JSON_FILE: ("digital_twin.data.js", "BioBoxTwinData"),
-                 HEALTH_JSON_FILE: ("plant_health.data.js", "BioBoxHealthData")}
-
-
-def snapshot_text(name, data):
-    payload = {"viewer": data.get("viewer")} if name == TWIN_JSON_FILE else data
-    compact = json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
-    # Parse as JSON, never executable input. Escaping HTML delimiters is also
-    # safe if the snapshot is later embedded in an HTML export.
-    quoted = json.dumps(compact, ensure_ascii=True).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-    return f"globalThis.{OFFLINE_VIEWS[name][1]} = JSON.parse({quoted});\n"
-
-
 def write_json_output(target, data):
-    """Publish the API JSON and its optional offline display data together."""
+    """Atomically publish the JSON read by the viewer or selected in the browser."""
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".biobox-data-", dir=target.parent) as tmp:
-        folder = Path(tmp)
-        saved = folder/target.name
+        saved = Path(tmp)/target.name
         saved.write_text(json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-        files = [(saved,target)]
-        if target.name in OFFLINE_VIEWS:
-            name, _ = OFFLINE_VIEWS[target.name]
-            local = folder/name
-            local.write_text(snapshot_text(target.name,data),encoding="ascii")
-            files.append((local,target.with_name(name)))
-        if any(dst.is_dir() for _, dst in files):
-            raise OSError("A folder occupies a viewer data filename.")
-        publish_files(files, folder)
+        saved.replace(target)
     return target
 
 
 def ensure_view_snapshot(target, data):
-    """Upgrade an older cached export when a viewer is opened on its own."""
+    """Keep the cached-view API used by the twin and health modules."""
     target = Path(target)
-    snapshot = target.with_name(OFFLINE_VIEWS[target.name][0])
-    if not snapshot.is_file() or snapshot.stat().st_mtime_ns < target.stat().st_mtime_ns:
-        write_json_output(target, data)
-    return target
+    return target if target.is_file() else write_json_output(target, data)
 
 
 # Charts and analysis
@@ -2469,8 +2442,6 @@ def analyse_series(paths,output_dir,manual=None,independent_images=False,new_ref
                        ('results.csv','results.json','masks','overlays')]
             files_to_publish += [(staged_twin/TWIN_JSON_FILE, target_twin/TWIN_JSON_FILE),
                         (staged_health/HEALTH_JSON_FILE, target_health/HEALTH_JSON_FILE)]
-            files_to_publish += [(staged_twin/OFFLINE_VIEWS[TWIN_JSON_FILE][0], target_twin/OFFLINE_VIEWS[TWIN_JSON_FILE][0]),
-                                 (staged_health/OFFLINE_VIEWS[HEALTH_JSON_FILE][0], target_health/OFFLINE_VIEWS[HEALTH_JSON_FILE][0])]
             files_to_publish += [(staged_charts/name, target_chart_folder/name) for name in expected_charts]
             retired_outputs = [(None, path) for path in (output_dir/TWIN_JSON_FILE, output_dir/HEALTH_JSON_FILE)
                                if path.is_file()]
