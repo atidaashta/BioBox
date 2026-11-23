@@ -30,7 +30,7 @@ CHART_MANIFEST_FILE = "charts.json"
 CHART_FILES = ("01_leaf_area.png", "02_leaf_color.png", "03_plant_health.png", "04_health_subscores.png")
 RETIRED_CHART_FILES = ("02_growth_rate.png", "03_leaf_color.png", "04_plant_health.png",
                        "05_health_subscores.png", "06_digital_twin.png")
-WEB_VIEWS = {"digital_twin": "digital_twin_3d", "plant_health": "plant_health",
+WEB_VIEWS = {"digital_twin": "digital_twin", "plant_health": "plant_health",
                  "charts": "charts"}
 WEB_CONTENT_TYPES = {"html": "text/html; charset=utf-8", "css": "text/css; charset=utf-8",
              "js": "text/javascript; charset=utf-8", "json": "application/json",
@@ -2049,21 +2049,76 @@ def save_results(rows, ref, output_dir):
     return True
 
 
+def offline_page(target, data, work):
+    """Stage an updated snapshot in the existing Twin or Health page."""
+    pages = {TWIN_JSON_FILE: "digital_twin.html", HEALTH_JSON_FILE: "plant_health.html"}
+    if target.name not in pages:
+        return []
+    html = target.with_name(pages[target.name])
+    if not html.is_file():
+        return []
+    start = "<!-- BioBox snapshot begin -->"
+    end = "<!-- BioBox snapshot end -->"
+    original = html.read_text(encoding="utf-8")
+    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    payload = payload.replace("<", r"\u003c")
+    block = start + '\n<script id="biobox-snapshot" type="application/json">' + payload + "</script>\n"
+    # Older viewers already know how to open an exported File. Supply the
+    # embedded bytes through that handler when it asks for a local file.
+    block += """<script>
+document.addEventListener('DOMContentLoaded', () => {
+  if (location.protocol !== 'file:') return;
+  const input = document.getElementById('data-file');
+  const loader = document.getElementById('data-load');
+  if (!input || !loader || loader.hidden) return;
+  const data = document.getElementById('biobox-snapshot').textContent;
+  const transfer = new DataTransfer();
+  transfer.items.add(new File([data], '""" + target.name + """', {type: 'application/json'}));
+  input.files = transfer.files;
+  loader.hidden = true;
+  input.dispatchEvent(new Event('change', {bubbles: true}));
+});
+</script>
+""" + end
+    if start in original and end in original:
+        before, rest = original.split(start, 1)
+        _, after = rest.split(end, 1)
+        updated = before + block + after
+    else:
+        closing = re.search(r"</body\s*>", original, re.I)
+        if not closing:
+            raise ValueError(f"Missing closing body tag in {html}")
+        updated = original[:closing.start()] + block + "\n" + original[closing.start():]
+    if updated == original:
+        return []
+    staged = work / ("snapshot-" + html.name)
+    staged.write_text(updated, encoding="utf-8")
+    return [(staged, html)]
+
+
 def write_json_output(target, data):
-    """Atomically publish the JSON read by the viewer or selected in the browser."""
+    """Publish browser measurements and an offline page when its HTML exists."""
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".biobox-data-", dir=target.parent) as tmp:
-        saved = Path(tmp)/target.name
+        work = Path(tmp)
+        saved = work / target.name
         saved.write_text(json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-        saved.replace(target)
+        publish_files([(saved, target)] + offline_page(target, data, work), work)
     return target
 
 
 def ensure_view_snapshot(target, data):
-    """Keep the cached-view API used by the twin and health modules."""
+    """Refresh the HTML snapshot even when the JSON measurements are cached."""
     target = Path(target)
-    return target if target.is_file() else write_json_output(target, data)
+    if not target.is_file():
+        return write_json_output(target, data)
+    with tempfile.TemporaryDirectory(prefix=".biobox-data-", dir=target.parent) as tmp:
+        work = Path(tmp)
+        changes = offline_page(target, data, work)
+        if changes:
+            publish_files(changes, work)
+    return target
 
 
 # Charts and analysis
@@ -2443,6 +2498,10 @@ def analyse_series(paths,output_dir,manual=None,independent_images=False,new_ref
             files_to_publish += [(staged_twin/TWIN_JSON_FILE, target_twin/TWIN_JSON_FILE),
                         (staged_health/HEALTH_JSON_FILE, target_health/HEALTH_JSON_FILE)]
             files_to_publish += [(staged_charts/name, target_chart_folder/name) for name in expected_charts]
+            for staged, target in ((staged_twin, target_twin/TWIN_JSON_FILE),
+                                   (staged_health, target_health/HEALTH_JSON_FILE)):
+                data = json.loads((staged/target.name).read_text(encoding="utf-8"))
+                files_to_publish += offline_page(target, data, work)
             retired_outputs = [(None, path) for path in (output_dir/TWIN_JSON_FILE, output_dir/HEALTH_JSON_FILE)
                                if path.is_file()]
             retired_outputs += [(None, path) for path in retired_chart_paths(target_chart_folder)]
@@ -2465,7 +2524,7 @@ def analyse_series(paths,output_dir,manual=None,independent_images=False,new_ref
     print(f"\nAnalysed {len(paths)} {photo_label} and retained {retained_count} historical {history_label}.")
     print(f'{len(rows)} records in total -> {output_dir/"results.csv"}')
     print('Updated masks, overlays, charts, measurement history, and browser data.')
-    print("Open digital_twin/digital_twin_3d.html, plant_health/plant_health.html, or charts/charts.html in your browser.")
+    print("Open digital_twin/digital_twin.html, plant_health/plant_health.html, or charts/charts.html in your browser.")
     n_rate = sum(z.get("growth_rate_pct_per_day") is not None for z in rows)
     n_score = sum(z.get("health_score") is not None for z in rows)
     pixel_change_available = sum(z.get("visible_pixel_change_per_day") is not None for z in rows)
