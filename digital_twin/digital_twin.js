@@ -115,7 +115,7 @@
     };
   }
 
-  // Cartoon colours: a little more saturated than the photo, never grey.
+  // Slightly richer colours than the photo, which looks washed out under the grow light.
   function richer(rgb, amount = 1.35) {
     const lum = .3 * rgb[0] + .59 * rgb[1] + .11 * rgb[2];
     return rgb.map(v => clamp(lum + (v - lum) * amount, 0, 255));
@@ -206,12 +206,12 @@
             len: typical * scale * (apex ? small : 1.45 - .45 * lower * lower) * (.85 + .3 * rand()),
             roll: jitter(.8), rand
           });
-          const rgb = richer(tint(node[0], node[1] * cp), 1.6);
+          const rgb = richer(tint(node[0], node[1] * cp), 1.3);
           const young = apex ? .5 : .28 * lower * lower;
-          leaf.rgb = between(between(rgb, [132, 186, 70], .3), [170, 210, 92], young).map(v => v * (.94 + .12 * rand()));
-          leaf.under = between(leaf.rgb, [200, 216, 170], .45);
+          leaf.rgb = between(between(rgb, [124, 178, 68], .25), [172, 210, 100], young).map(v => v * (.94 + .12 * rand()));
+          leaf.under = between(leaf.rgb, [188, 204, 168], .4);
           const outer = Math.hypot((node[0] - centerX) / halfWidth, node[2] / halfDepth);
-          leaf.ao = .76 + .24 * clamp(Math.max(outer, .3 + .7 * lower), 0, 1);
+          leaf.ao = .8 + .2 * clamp(Math.max(outer, .3 + .7 * lower), 0, 1);
           blades.push(leaf);
 
           if (!side && !apex && s < .85 && rand() < .35) {
@@ -279,10 +279,10 @@
     g.stroke();
   }
 
-  // Draws a projected leaf in cartoon style: each half in one flat tone,
-  // light veins, a dark green ink outline.
+  // Draws a projected leaf. Each half is shaded from the midrib (where light
+  // catches the fold) to the edge (curling away), with a faint darker rim.
   function drawLeaf(g, ribs, look) {
-    const last = ribs.length - 1, vein = ribs.map(r => r[1]);
+    const last = ribs.length - 1, mid = last >> 1, vein = ribs.map(r => r[1]);
 
     function edge(points) {
       for (let k = 1; k < points.length - 1; k++) {
@@ -294,34 +294,51 @@
     }
 
     for (const [side, tone] of [[0, look.left], [2, look.right]]) {
+      const from = vein[mid], to = ribs[mid][side];
+      const shade = g.createLinearGradient(from[0], from[1], to[0] + .01, to[1]);
+      shade.addColorStop(0, tone[0]);
+      shade.addColorStop(.4, tone[1]);
+      shade.addColorStop(1, tone[2]);
       g.beginPath();
       g.moveTo(vein[0][0], vein[0][1]);
       edge(ribs.map(r => r[side]));
       edge(vein.slice().reverse());
       g.closePath();
-      g.fillStyle = tone;
+      g.fillStyle = shade;
       g.fill();
     }
 
     const length = Math.hypot(vein[last][0] - vein[0][0], vein[last][1] - vein[0][1]);
-    if (length > 16) {
-      for (const u of [.2, .4, .6]) {
+    g.globalAlpha = .55;
+    if (length > 22) {
+      for (const u of [.25, .45, .65]) {
         const j = Math.round(u * last), k = Math.min(last, j + 2);
         for (const side of [0, 2]) {
-          stroke(g, [vein[j], between(ribs[k][1], ribs[k][side], .7)], look.vein, look.width * .45);
+          stroke(g, [vein[j], between(ribs[k][1], ribs[k][side], .65)], look.vein, look.width * .35);
         }
       }
     }
-    if (length > 6) stroke(g, vein.slice(0, last), look.vein, look.width * .7);
+    if (length > 8) stroke(g, vein.slice(0, last), look.vein, look.width * .6);
 
+    g.globalAlpha = .35;
     g.beginPath();
     g.moveTo(vein[0][0], vein[0][1]);
     edge(ribs.map(r => r[0]));
     edge(ribs.map(r => r[2]).reverse());
     g.closePath();
     g.strokeStyle = look.ink;
-    g.lineWidth = look.width;
+    g.lineWidth = look.width * .6;
     g.stroke();
+    g.globalAlpha = 1;
+  }
+
+  // Three gradient stops for one leaf half: gloss at the midrib, body, darker edge.
+  function tones(rgb, light, gloss = 0) {
+    return [
+      color(between(rgb, [236, 244, 206], gloss), light * 1.04),
+      color(rgb, light),
+      color(rgb, light * .8)
+    ];
   }
 
   function paint() {
@@ -431,25 +448,28 @@
     const line = clamp(scale * .0016, .5, 1.5);
     const sun = unit([-.35, .8, .55]);
 
-    function tube(pts, width, body, rim) {
+    // A stem: a body stroke with a thin light streak, so it reads as round.
+    function tube(pts, width) {
       ctx.beginPath();
       ctx.moveTo(pts[0][0], pts[0][1]);
       for (const p of pts.slice(1)) ctx.lineTo(p[0], p[1]);
-      ctx.strokeStyle = rim;
-      ctx.lineWidth = width + 1.2 * line;
-      ctx.stroke();
-      ctx.strokeStyle = body;
+      ctx.strokeStyle = '#86a35a';
       ctx.lineWidth = width;
       ctx.stroke();
+      if (width > 2) {
+        ctx.strokeStyle = 'rgba(214,232,170,.55)';
+        ctx.lineWidth = width * .3;
+        ctx.stroke();
+      }
     }
 
     for (const shoot of shoots) {
       const pts = shoot.pts.map(p => project(p, size));
-      add(pts, () => tube(pts, Math.max(.9, 2 * shoot.r * scale * size), '#9cba68', '#5d7a3f'));
+      add(pts, () => tube(pts, Math.max(.9, 2 * shoot.r * scale * size)));
     }
 
-    // Cel shading: each leaf half is lit by a fixed light from the upper left.
-    // Three tones only, plus a darker tint deep inside the bush.
+    // Each leaf half is lit by a fixed light from the upper left; lit halves get
+    // a soft gloss, leaves deep inside the bush are darker.
     for (const leaf of blades) {
       const ribs = leaf.ribs.map(r => r.map(p => project(p, size)));
       const stalk = leaf.petiole.map(p => project(p, size));
@@ -457,16 +477,16 @@
         let v = view(n);
         const under = v[2] < 0;
         if (under) v = times(v, -1);
-        const d = dot(v, sun);
-        const band = d > .62 ? 1.1 : d > .25 ? .93 : .76;
-        return color(under ? leaf.under : leaf.rgb, band * leaf.ao);
+        const d = Math.max(0, dot(v, sun));
+        const light = (.8 + .34 * d) * leaf.ao;
+        return tones(under ? leaf.under : leaf.rgb, light, under ? 0 : .35 * d ** 3);
       });
       const look = {
         left, right, width: line,
-        ink: color(leaf.rgb, .4 * leaf.ao), vein: color(leaf.rgb, 1.2 * leaf.ao)
+        ink: color(leaf.rgb, .55 * leaf.ao), vein: color(leaf.rgb, 1.15 * leaf.ao)
       };
       add(ribs.map(r => r[1]), () => {
-        tube(stalk, Math.max(.7, .0026 * scale * size), '#9cba68', '#5d7a3f');
+        tube(stalk, Math.max(.7, .0026 * scale * size));
         drawLeaf(ctx, ribs, look);
       });
     }
@@ -497,7 +517,7 @@
         const ys = points.map(p => p[1] * Math.cos(homePitch) - p[2] * Math.sin(homePitch));
         const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
         const s = Math.min(88 / Math.max(.001, x1 - x0), 56 / Math.max(.001, y1 - y0));
-        const g = tile.getContext('2d'), rgb = richer(l.rgb);
+        const g = tile.getContext('2d'), rgb = richer(l.rgb, 1.15);
         g.lineCap = g.lineJoin = 'round';
 
         drawLeaf(g, l.ribs.map(r => r.map(([x, y, z]) => [
@@ -505,8 +525,8 @@
           35 - (y * Math.cos(homePitch) - z * Math.sin(homePitch) - (y0 + y1) / 2) * s,
           z
         ])), {
-          left: color(rgb, 1.06), right: color(rgb, .88), width: 1.2,
-          ink: color(rgb, .4), vein: color(rgb, 1.2)
+          left: tones(rgb, 1.02, .2), right: tones(rgb, .86), width: 1.4,
+          ink: color(rgb, .55), vein: color(rgb, 1.15)
         });
 
         item.append(tile, String(i + 1));
