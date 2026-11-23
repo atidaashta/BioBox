@@ -86,12 +86,18 @@
         });
       });
 
-      return {ribs, len, area: s.visible_pixels || 0, rgb: s.rgb?.length === 3 ? s.rgb : [76, 119, 54]};
+      const [px, py] = level(s.center), [dx, dy] = level([ax, ay]);
+      const half = Math.max(...s.profile.map(([lo, hi]) => hi - lo)) / 2;
+      return {
+        ribs, len, half, area: s.visible_pixels || 0,
+        at: [px - origin[0], origin[1] - py], dir: [dx, -dy],
+        rgb: s.rgb?.length === 3 ? s.rgb : [76, 119, 54]
+      };
     });
 
     const canopy = record.canopy || {};
     const extent = Math.max(canopy.width_px || 0, canopy.height_px || 0);
-    const grown = growPlant(record.capture_identity || record.file_name || 'basil', {centerX, halfWidth, cp, sp, extent});
+    const grown = buildPlant(record.capture_identity || record.file_name || 'basil', {centerX, halfWidth, cp, sp, extent});
     blades = grown.blades;
     shoots = grown.shoots;
 
@@ -115,147 +121,154 @@
     };
   }
 
-  // Slightly richer colours than the photo, which looks washed out under the grow light.
+  // Cartoon colours: a little more saturated than the photo, never grey.
   function richer(rgb, amount = 1.35) {
     const lum = .3 * rgb[0] + .59 * rgb[1] + .11 * rgb[2];
     return rgb.map(v => clamp(lum + (v - lum) * amount, 0, 255));
   }
 
-  // Grows a basil plant into the measured canopy: stems fan out of the soil,
-  // carry opposite leaf pairs (each pair turned 90° to the last) and end in
-  // a small cluster of young leaves. Size, outline, leaf count, leaf length
-  // and colour all come from the capture.
-  function growPlant(seed, frame) {
+  // Rebuilds the captured plant: every measured leaf becomes a 3D leaf at its
+  // measured position, direction, length and width. Only the depth is not
+  // in the photo; it is spread so the canopy is deepest in the middle.
+  // Stems are traced through the leaf attachment points down into the pot.
+  function buildPlant(seed, frame) {
     const {centerX, halfWidth, cp, sp, extent} = frame;
     const rand = seeded(seed), jitter = k => (rand() - .5) * 2 * k;
-    const halfDepth = halfWidth * .9;
-    const screenUp = p => p[1] * cp - p[2] * sp;
+    const halfDepth = halfWidth * .85;
+    const tops = leaves.map(l => l.at[1]), low = Math.min(0, ...tops), high = Math.max(...tops);
+    const fromCamera = ([right, up, front]) => [right, up * cp + front * sp, -up * sp + front * cp];
+    const toward = fromCamera([0, 0, 1]);
 
-    // Highest foliage per column of the capture: the outline the plant fills.
-    const bins = 18, left = centerX - halfWidth, roof = new Array(bins).fill(0);
-    for (const p of leaves.flatMap(l => l.ribs.flat())) {
-      const b = clamp(Math.floor((p[0] - left) / (2 * halfWidth) * bins), 0, bins - 1);
-      roof[b] = Math.max(roof[b], screenUp(p));
-    }
-    const filled = roof.map((v, i) => Math.max(v, .85 * Math.min(roof[i - 1] ?? v, roof[i + 1] ?? v)));
-    const fromAbove = cp < .5;
-    const peak = fromAbove ? halfWidth * 1.05 : Math.max(...filled) / cp;
-    const heightAt = x => {
-      if (fromAbove) return peak * Math.sqrt(Math.max(.1, 1 - ((x - centerX) / halfWidth) ** 2));
-      const t = clamp((x - left) / (2 * halfWidth) * bins - .5, 0, bins - 1), i = Math.floor(t);
-      return Math.max(.08, mix(filled[i], filled[Math.min(bins - 1, i + 1)], t - i) / cp);
+    // A measured patch can hold several leaves (older captures merge dense
+    // foliage). It gets as many basil-shaped leaves as it takes to cover its
+    // measured area; a single measured leaf stays one leaf.
+    const shrink = k => (k > 1 ? .85 : 1);
+    const copiesFor = m => {
+      if (!(m.area > 0 && extent > 0)) return 1;
+      const area = m.area / extent ** 2, one = .62 * m.len * 2 * clamp(m.half, .2 * m.len, .3 * m.len);
+      let best = 1;
+      for (let k = 2; k <= 4; k++) {
+        if (Math.abs(k * shrink(k) ** 2 * one - area) < Math.abs(best * shrink(best) ** 2 * one - area)) best = k;
+      }
+      return best;
     };
 
-    // Each grown leaf borrows the colour of the nearest measured blade.
-    const samples = leaves.map(l => {
-      const c = l.ribs[l.ribs.length >> 1][1];
-      return [c[0], screenUp(c), l.rgb];
-    });
-    const tint = (x, y) => samples.reduce((best, s) =>
-      (s[0] - x) ** 2 + (s[1] - y) ** 2 < (best[0] - x) ** 2 + (best[1] - y) ** 2 ? s : best)[2];
+    const blades = [], index = {n: 0};
+    for (const m of leaves) {
+      const copies = copiesFor(m);
+      for (let c = 0; c < copies; c++) {
+        const i = index.n++;
+        const spread = copies > 1;
+        const turn = spread ? jitter(.55) : 0;
+        const dir = [m.dir[0] * Math.cos(turn) - m.dir[1] * Math.sin(turn), m.dir[0] * Math.sin(turn) + m.dir[1] * Math.cos(turn)];
+        const along = spread ? jitter(.3) * m.len : 0, across = spread ? jitter(.8) * m.half : 0;
+        const at = [m.at[0] + m.dir[0] * along - m.dir[1] * across, m.at[1] + m.dir[1] * along + m.dir[0] * across];
+        const shown = m.len * shrink(copies);
 
-    const sizes = leaves.map(l => l.len).sort((a, b) => a - b);
-    const typical = sizes[Math.floor(sizes.length * .75)] || .06;
-    // The measured outlines in the dense middle are patches holding several
-    // leaves, so the count comes from the leaf area: visible area divided by
-    // the area of one typical leaf. Doubled, because leaves are seen at an
-    // angle (about half their area faces the camera) and some hide behind others.
-    const area = extent > 0 ? leaves.reduce((sum, l) => sum + l.area, 0) / extent ** 2 : 0;
-    const perLeaf = .62 * typical * typical * .56;
-    const target = Math.round(clamp(area ? 2 * area / perLeaf : leaves.length, leaves.length, 3 * leaves.length));
-    const count = clamp(Math.round(target / 22), 5, 30);
+        // Depth: deepest in the middle of the canopy, layered front to back.
+        const nx = (at[0] - centerX) / halfWidth, ny = 2 * (at[1] - low) / Math.max(.01, high - low) - 1;
+        const shell = Math.sqrt(Math.max(.04, 1 - nx * nx)) * Math.sqrt(Math.max(.15, 1 - .7 * ny * ny));
+        const layer = 2 * (((i + .5) * .61803398875) % 1) - 1;
+        const front = halfDepth * shell * layer;
 
-    // Stem tops are spread over the canopy, their feet gather in the pot.
-    const plan = Array.from({length: count}, (_, i) => {
-      const u = clamp(-1 + 2 * (i + .5) / count + jitter(.7 / count), -1, 1);
-      const v = jitter(1) * Math.sqrt(1 - u * u);
-      const tip = [centerX + u * halfWidth * .9, 0, v * halfDepth * .88];
-      tip[1] = heightAt(tip[0]) * (.35 + .65 * Math.sqrt(rand())) * Math.sqrt(1 - .3 * v * v) * .93;
-      let foot = [(u * .75 + jitter(.12)) * radius, -.012, (v * .7 + jitter(.12)) * radius];
-      const reach = Math.hypot(foot[0], foot[2]);
-      if (reach > .82 * radius) foot = [foot[0] * .82 * radius / reach, -.012, foot[2] * .82 * radius / reach];
-      return {tip, foot, length: Math.hypot(...plus(tip, times(foot, -1)))};
-    });
-    const total = plan.reduce((sum, s) => sum + s.length, 0);
-    const blades = [], shoots = [];
-
-    // One shoot: a curved stem with leaf pairs at its nodes, ending in young leaves.
-    // Lower nodes of a main stem also sprout a side shoot, as basil does.
-    function branch(foot, bend, tip, nodes, scale, side) {
-      const at = s => [0, 1, 2].map(k => (1 - s) ** 2 * foot[k] + 2 * (1 - s) * s * bend[k] + s * s * tip[k]);
-      const phase = rand() * pi, thick = (side ? .55 : .8) + .4 * rand();
-      const stops = [0];
-
-      for (let k = 0; k <= nodes; k++) {
-        const apex = k === nodes;
-        const s = apex ? 1 : side ? .35 + .5 * (k + 1) / (nodes + 1) : .1 + .82 * ((k + .5) / (nodes + .5)) ** .85;
-        const node = at(s);
-        if (!apex) stops.push(s);
-
-        // Each entry is [turn, size, rise]. A main stem tip carries two crossed
-        // pairs (a star of young leaves), a side shoot tip one pair.
-        const crown = apex && !side
-          ? [[0, .62, .7], [pi, .62, .7], [pi / 2, .42, 1.05], [-pi / 2, .42, 1.05]]
-          : apex ? [[0, .5, .9], [pi, .5, .9]] : [[0], [pi]];
-        for (const [turn, small, rise] of crown) {
-          const az = phase + k * pi / 2 + turn + jitter(.3);
-          const lower = clamp(node[1] / peak, 0, 1);
-          const leaf = blade(node, {
-            az,
-            lift: apex ? rise + jitter(.2) : mix(-.95, .75, lower) + jitter(.5),
-            len: typical * scale * (apex ? small : 1.45 - .45 * lower * lower) * (.85 + .3 * rand()),
-            roll: jitter(.8), rand
-          });
-          const rgb = richer(tint(node[0], node[1] * cp), 1.3);
-          const young = apex ? .5 : .28 * lower * lower;
-          leaf.rgb = between(between(rgb, [124, 178, 68], .25), [172, 210, 100], young).map(v => v * (.94 + .12 * rand()));
-          leaf.under = between(leaf.rgb, [188, 204, 168], .4);
-          const outer = Math.hypot((node[0] - centerX) / halfWidth, node[2] / halfDepth);
-          leaf.ao = .8 + .2 * clamp(Math.max(outer, .3 + .7 * lower), 0, 1);
-          blades.push(leaf);
-
-          if (!side && !apex && s < .85 && rand() < .35) {
-            const out = az + pi / 4 * (rand() < .5 ? 1 : -1);
-            const reach = (1 - s) * Math.hypot(...plus(tip, times(foot, -1))) * (.25 + .25 * rand());
-            const end = plus(node, [Math.cos(out) * reach * .55, reach * .85, Math.sin(out) * reach * .55]);
-            const mid = plus(between(node, end, .5), [0, -reach * .12, 0]);
-            branch(node, mid, end, 1 + (rand() < .5 ? 1 : 0), .72, true);
-          }
-        }
-      }
-
-      // Stem pieces between leaf nodes, so leaves can sit in front of or behind them.
-      stops.push(1);
-      for (let i = 1; i < stops.length; i++) {
-        const s0 = stops[i - 1], s1 = stops[i];
-        shoots.push({
-          pts: [0, .25, .5, .75, 1].map(t => at(mix(s0, s1, t))),
-          r: mix(.0027, .0011, (s0 + s1) / 2) * thick
+        // The leaf may lean towards or away from the camera; its length in the
+        // photo stays exactly as measured.
+        const lean = Math.tan(jitter(.6));
+        const forward = unit(fromCamera([dir[0], dir[1], lean]));
+        const len = shown * Math.hypot(1, lean);
+        const centre = fromCamera([at[0], at[1], front]);
+        const node = plus(centre, times(forward, -.66 * len));
+        const leaf = blade(node, {
+          forward, len, rand, facing: toward,
+          side: fromCamera([-dir[1], dir[0], 0]),
+          half: clamp(m.half * (spread ? .85 : 1), .2 * len, .3 * len)
         });
+
+        const height = clamp((at[1] - low) / Math.max(.01, high - low), 0, 1);
+        const rgb = richer(m.rgb, 1.3);
+        leaf.rgb = between(between(rgb, [124, 178, 68], .25), [172, 210, 100], .28 * height * height)
+          .map(v => v * (.95 + .1 * rand()));
+        leaf.under = between(leaf.rgb, [188, 204, 168], .4);
+        const outer = Math.hypot(nx, front / halfDepth);
+        leaf.ao = .8 + .2 * clamp(Math.max(outer, .3 + .7 * height), 0, 1);
+        blades.push(leaf);
       }
     }
 
-    // A main stem carries 4 crown leaves plus 2 leaves per node, and each of
-    // those leaves has a 35 % chance of a side shoot (~5 leaves): ~5.5 per node.
-    const nodes = Math.max(count, Math.round((target - 4 * count) / 5.5));
-    for (const {tip, foot, length} of plan) {
-      const bend = [mix(foot[0], tip[0], .22), tip[1] * .5, mix(foot[2], tip[2], .22)];
-      branch(foot, bend, tip, Math.max(1, Math.round(nodes * length / total)), 1, false);
+    // Stems: group attachment points into shoots, each rising from the soil.
+    const count = clamp(Math.round(blades.length / 4), 6, 90);
+    const flat = (a, b) => (a[0] - b[0]) ** 2 + (a[2] - b[2]) ** 2;
+    const nodes = blades.map(l => l.petiole[0]);
+    let centres = [nodes.reduce((a, b) => (flat(a, [centerX, 0, 0]) < flat(b, [centerX, 0, 0]) ? a : b))];
+    while (centres.length < count) {
+      const gap = nodes.map(p => Math.min(...centres.map(c => flat(c, p))));
+      const far = Math.max(...gap);
+      if (far < 1e-6) break;
+      centres.push(nodes[gap.indexOf(far)]);
+    }
+    let groups = [];
+    for (let pass = 0; pass < 5; pass++) {
+      groups = centres.map(() => []);
+      blades.forEach(l => {
+        const d = centres.map(c => flat(c, l.petiole[0]));
+        groups[d.indexOf(Math.min(...d))].push(l);
+      });
+      centres = groups.map((g, i) => g.length
+        ? [0, 1, 2].map(k => g.reduce((sum, l) => sum + l.petiole[0][k], 0) / g.length) : centres[i]);
+    }
+
+    const shoots = [];
+    for (const group of groups.filter(g => g.length)) {
+      group.sort((a, b) => a.petiole[0][1] - b.petiole[0][1]);
+      const top = group.at(-1).petiole[0];
+      const mean = [0, 2].map(k => group.reduce((sum, l) => sum + l.petiole[0][k], 0) / group.length);
+      let foot = [mean[0] * .55, -.012, mean[1] * .55];
+      const reach = Math.hypot(foot[0], foot[2]);
+      if (reach > .8 * radius) foot = [foot[0] * .8 * radius / reach, -.012, foot[2] * .8 * radius / reach];
+      // The stem passes the average position of the leaves at each height.
+      const path = [foot];
+      const steps = Math.min(7, group.length);
+      for (let j = 1; j <= steps; j++) {
+        const part = group.slice(Math.floor((j - 1) * group.length / steps), Math.floor(j * group.length / steps));
+        const p = [0, 1, 2].map(k => part.reduce((sum, l) => sum + l.petiole[0][k], 0) / part.length);
+        const prev = path.at(-1);
+        p[1] = Math.max(p[1], prev[1] + .01);
+        path.push(between(prev, p, .9));
+      }
+      path.push(top[1] > path.at(-1)[1] ? top : plus(path.at(-1), [0, .02, 0]));
+      for (let j = 1; j < path.length; j++) {
+        shoots.push({pts: [path[j - 1], between(path[j - 1], path[j], .5), path[j]],
+          r: mix(.0028, .0012, j / path.length)});
+      }
+      // Each leaf stalk reaches from the stem at its height to the leaf.
+      for (const l of group) {
+        const y = l.petiole[0][1];
+        let best = path[0];
+        for (let j = 1; j < path.length; j++) {
+          const a = path[j - 1], b = path[j];
+          const t = clamp((y - a[1]) / Math.max(1e-6, b[1] - a[1]), 0, 1);
+          const q = between(a, b, t);
+          if (Math.abs(q[1] - y) < Math.abs(best[1] - y)) best = q;
+        }
+        l.petiole[0] = best;
+      }
     }
     return {blades, shoots};
   }
 
-  // One basil leaf: short petiole, ovate blade with a pointed tip, the midrib
-  // arching so the tip droops, and the edges curled down (basil leaves are cupped).
-  function blade(node, {az, lift, len, roll, rand}) {
-    const forward = [Math.cos(az) * Math.cos(lift), Math.sin(lift), Math.sin(az) * Math.cos(lift)];
-    let side = unit(cross(forward, [0, 1, 0]));
+  // One basil leaf along a given direction: short petiole, ovate blade with a
+  // pointed tip, a slight droop and edges curled down (basil leaves are cupped).
+  // The blade's flat side is turned towards `facing` (the camera at capture).
+  function blade(node, {forward, len, half, side, facing, rand}) {
+    side = unit(plus(side, times(forward, -dot(side, forward))));
     let up = cross(side, forward);
+    if (dot(up, facing) < 0) [side, up] = [times(side, -1), times(up, -1)];
+    const roll = (rand() - .5) * .7;
     [side, up] = [plus(times(side, Math.cos(roll)), times(up, Math.sin(roll))),
       plus(times(up, Math.cos(roll)), times(side, -Math.sin(roll)))];
 
-    const half = len * (.27 + .06 * rand()), droop = .16 + .22 * rand(), cup = .2 + .14 * rand();
-    const start = plus(node, plus(times(forward, .16 * len), times(up, -.03 * len)));
+    const droop = .06 + .14 * rand(), cup = .16 + .12 * rand();
+    const start = plus(node, times(forward, .16 * len));
     const steps = 12;
     const ribs = Array.from({length: steps + 1}, (_, j) => {
       const u = j / steps;
@@ -463,9 +476,12 @@
       }
     }
 
+    // Stems and leaf stalks sit just behind the foliage: they show through the
+    // gaps between leaves, as in the photo, instead of crossing over them.
+    const behind = (pts, draw) => queue.push({z: pts.reduce((sum, p) => sum + p[2], 0) / pts.length - .08 * span, draw});
     for (const shoot of shoots) {
       const pts = shoot.pts.map(p => project(p, size));
-      add(pts, () => tube(pts, Math.max(.9, 2 * shoot.r * scale * size)));
+      behind(pts, () => tube(pts, Math.max(.9, 2 * shoot.r * scale * size)));
     }
 
     // Each leaf half is lit by a fixed light from the upper left; lit halves get
@@ -485,10 +501,8 @@
         left, right, width: line,
         ink: color(leaf.rgb, .55 * leaf.ao), vein: color(leaf.rgb, 1.15 * leaf.ao)
       };
-      add(ribs.map(r => r[1]), () => {
-        tube(stalk, Math.max(.7, .0026 * scale * size));
-        drawLeaf(ctx, ribs, look);
-      });
+      behind(stalk, () => tube(stalk, Math.max(.7, .0022 * scale * size)));
+      add(ribs.map(r => r[1]), () => drawLeaf(ctx, ribs, look));
     }
 
     queue.sort((a, b) => a.z - b.z).forEach(item => item.draw());

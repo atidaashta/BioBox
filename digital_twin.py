@@ -31,7 +31,12 @@ TWIN_3D_VERSION = "1.0.0"
 CONTOUR_UNITS = 16384
 TEXTURE_LIMIT = 1536
 TWIN_VERSION = "0.2.0"
-TWIN_MAX_LEAVES = 200
+TWIN_MAX_LEAVES = 400
+# Optional FastSAM leaf separation (pip install ultralytics). Without the model
+# file or the package, the contour method below is used instead.
+FASTSAM_MODEL = Path(__file__).resolve().parent/"models"/"FastSAM-s.pt"
+FASTSAM_CONFIDENCE = .12
+FASTSAM_IMAGE_SIZE = 1024
 TWIN_HORIZON_HOURS = 24
 TWIN_WINDOW_HOURS = 28*24
 TWIN_MIN_OBSERVATIONS = 4
@@ -781,6 +786,116 @@ def twin_leaf_labels(leaf_mask, image=None, annotations=None):
     return labels
 
 
+_fastsam = None
+
+
+def fastsam_model():
+    "Load the FastSAM model once per run; return None when it is not installed."
+    global _fastsam
+    if _fastsam is None:
+        _fastsam = False
+        if FASTSAM_MODEL.is_file():
+            try:
+                from ultralytics import FastSAM
+                _fastsam = FastSAM(str(FASTSAM_MODEL))
+            except Exception as error:  # Missing package or an incompatible install.
+                print("FastSAM unavailable, using the contour method:", str(error).splitlines()[0][:150])
+    return _fastsam or None
+
+
+def fastsam_segments(model, crop):
+    "Segment the canopy crop whole and in four overlapping tiles, so small leaves are found too."
+    h, w = crop.shape[:2]
+    views = [(0, 0, w, h)]
+    tw, th = round(w*.58), round(h*.58)
+    for x0 in (0, w-tw):
+        for y0 in (0, h-th):
+            views.append((x0, y0, tw, th))
+    segments = []
+    for x0, y0, vw, vh in views:
+        result = model(crop[y0:y0+vh, x0:x0+vw], retina_masks=True, imgsz=FASTSAM_IMAGE_SIZE,
+                       conf=FASTSAM_CONFIDENCE, iou=.7, verbose=False)[0]
+        if result.masks is None:
+            continue
+        masks = result.masks.data.cpu().numpy() > .5
+        scores = result.boxes.conf.cpu().numpy() if result.boxes is not None else np.ones(len(masks))
+        for m, score in zip(masks, scores):
+            if m.shape != (vh, vw):
+                m = cv2.resize(m.astype(np.uint8), (vw, vh), interpolation=cv2.INTER_NEAREST) > 0
+            full = np.zeros((h, w), bool)
+            full[y0:y0+vh, x0:x0+vw] = m
+            segments.append((full, float(score)))
+    return segments
+
+
+def twin_fastsam_labels(leaf_mask, image):
+    "Separate single leaves with FastSAM inside the measured leaf mask."
+    model = fastsam_model()
+    if model is None or image is None:
+        return None
+    x, y, w, h = cv2.boundingRect(leaf_mask)
+    if not w or not h:
+        return None
+    pad = round(.04*max(w, h))
+    x0, y0 = max(0, x-pad), max(0, y-pad)
+    x1, y1 = min(leaf_mask.shape[1], x+w+pad), min(leaf_mask.shape[0], y+h+pad)
+    fg = leaf_mask[y0:y1, x0:x1] > 0
+    try:
+        segments = fastsam_segments(model, image[y0:y1, x0:x1])
+    except Exception as error:  # A failing model must not stop the measurement.
+        print("FastSAM failed, using the contour method:", str(error).splitlines()[0][:150])
+        return None
+    total = int(np.count_nonzero(fg))
+    smallest = max(12, round(.00035*total))
+    largest = .06*total
+    candidates = []
+    for m, score in segments:
+        inside = m & fg
+        area = int(np.count_nonzero(inside))
+        # Keep leaf-sized segments that lie on the leaf mask: this drops the pot,
+        # the wall, clumps of several leaves and thin stems.
+        if area < smallest or area > largest or area < .7*np.count_nonzero(m):
+            continue
+        if cv2.distanceTransform(inside.astype(np.uint8), cv2.DIST_L2, 3).max() < 2.2:
+            continue
+        candidates.append((area, -score, inside))
+    labels = np.zeros(fg.shape, np.uint16)
+    count = 0
+    # Smaller segments first: a single leaf wins over a clump that contains it.
+    for area, _, inside in sorted(candidates, key=lambda c: (c[0], c[1])):
+        free = inside & (labels == 0)
+        if np.count_nonzero(free) < max(smallest, .55*area) or count == TWIN_MAX_LEAVES:
+            continue
+        count += 1
+        labels[free] = count
+    if count == 0:
+        return None
+    # Foliage the model did not separate keeps the contour method's regions.
+    rest = (fg & (labels == 0)).astype(np.uint8)*255
+    if count < TWIN_MAX_LEAVES and np.count_nonzero(rest) >= 4*smallest:
+        opened = cv2.morphologyEx(rest, cv2.MORPH_OPEN, _ellipse_kernel(5))
+        extra = twin_leaf_labels(opened, image[y0:y1, x0:x1]) if np.count_nonzero(opened) >= 4*smallest else None
+        if extra is not None:
+            ids = np.unique(extra[extra > 0])
+            sizes = np.bincount(extra.ravel())
+            for ident in ids:
+                if sizes[ident] >= 2*smallest and count < TWIN_MAX_LEAVES:
+                    count += 1
+                    labels[(extra == ident) & (labels == 0)] = count
+    gaps = fg & (labels == 0)
+    if gaps.any():
+        # Thin edges and leftover pixels join the nearest leaf.
+        _, ids = cv2.distanceTransformWithLabels((labels == 0).astype(np.uint8), cv2.DIST_L2, 5,
+                                                 labelType=cv2.DIST_LABEL_PIXEL)
+        lut = np.zeros(int(ids.max())+1, np.uint16)
+        lut[ids[labels > 0]] = labels[labels > 0]
+        labels[gaps] = lut[ids[gaps]]
+    result = np.zeros(leaf_mask.shape, np.uint16)
+    result[y0:y1, x0:x1] = labels
+    result[leaf_mask == 0] = 0
+    return result
+
+
 def twin_leaf_geometry(image, leaf_mask, label_path, points_path=None):
     "Return contours in shared photo coordinates, or no geometry if the mask is unusable."
     if not np.any(leaf_mask):
@@ -809,8 +924,14 @@ def twin_leaf_geometry(image, leaf_mask, label_path, points_path=None):
             labels = None
             note = "Leaf annotations could not be used: "+str(error).splitlines()[0]
     if labels is None:
-        note = note or "The count is uncertain when leaves are hidden or overlap."
-        labels = twin_leaf_labels(twin_geometry_mask(leaf_mask),image)
+        geometry_mask = twin_geometry_mask(leaf_mask)
+        labels = twin_fastsam_labels(geometry_mask, image)
+        if labels is not None:
+            source = "fastsam"
+            note = note or "Leaves were separated with FastSAM. Hidden leaves are not counted."
+        else:
+            note = note or "The count is uncertain when leaves are hidden or overlap."
+            labels = twin_leaf_labels(geometry_mask, image)
     if labels is None:
         return None
     x,y,w,h = cv2.boundingRect(leaf_mask)
@@ -1635,7 +1756,8 @@ def import_leaf_labels(photo, label, output_dir):
     if (label.suffix.lower() != ".png" or image is None or lab is None or lab.ndim != 2
             or lab.shape != image.shape[:2] or not np.any(lab)
             or np.count_nonzero(np.bincount(lab.ravel())[1:]) > TWIN_MAX_LEAVES):
-        raise ValueError("Provide a non-empty greyscale PNG matching the original dimensions, with at most 200 leaf IDs.")
+        raise ValueError("Provide a non-empty greyscale PNG matching the original dimensions, "
+                         f"with at most {TWIN_MAX_LEAVES} leaf IDs.")
     target = Path(output_dir)/"leaf_labels"
     target.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=target) as tmp:
