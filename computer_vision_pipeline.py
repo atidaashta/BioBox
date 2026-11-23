@@ -2050,50 +2050,9 @@ def save_results(rows, ref, output_dir):
 
 
 def offline_page(target, data, work):
-    """Stage an updated snapshot in the existing Twin or Health page."""
-    pages = {TWIN_JSON_FILE: "digital_twin.html", HEALTH_JSON_FILE: "plant_health.html"}
-    if target.name not in pages:
-        return []
-    html = target.with_name(pages[target.name])
-    if not html.is_file():
-        return []
-    start = "<!-- BioBox snapshot begin -->"
-    end = "<!-- BioBox snapshot end -->"
-    original = html.read_text(encoding="utf-8")
-    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-    payload = payload.replace("<", r"\u003c")
-    block = start + '\n<script id="biobox-snapshot" type="application/json">' + payload + "</script>\n"
-    # Older viewers already know how to open an exported File. Supply the
-    # embedded bytes through that handler when it asks for a local file.
-    block += """<script>
-document.addEventListener('DOMContentLoaded', () => {
-  if (location.protocol !== 'file:') return;
-  const input = document.getElementById('data-file');
-  const loader = document.getElementById('data-load');
-  if (!input || !loader || loader.hidden) return;
-  const data = document.getElementById('biobox-snapshot').textContent;
-  const transfer = new DataTransfer();
-  transfer.items.add(new File([data], '""" + target.name + """', {type: 'application/json'}));
-  input.files = transfer.files;
-  loader.hidden = true;
-  input.dispatchEvent(new Event('change', {bubbles: true}));
-});
-</script>
-""" + end
-    if start in original and end in original:
-        before, rest = original.split(start, 1)
-        _, after = rest.split(end, 1)
-        updated = before + block + after
-    else:
-        closing = re.search(r"</body\s*>", original, re.I)
-        if not closing:
-            raise ValueError(f"Missing closing body tag in {html}")
-        updated = original[:closing.start()] + block + "\n" + original[closing.start():]
-    if updated == original:
-        return []
-    staged = work / ("snapshot-" + html.name)
-    staged.write_text(updated, encoding="utf-8")
-    return [(staged, html)]
+    """The viewers load their JSON from the local server, so the HTML pages stay
+    unchanged templates. Kept so that the callers need no changes."""
+    return []
 
 
 def write_json_output(target, data):
