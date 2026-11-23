@@ -196,7 +196,7 @@
     }
 
     // Stems: group attachment points into shoots, each rising from the soil.
-    const count = clamp(Math.round(blades.length / 4), 6, 90);
+    const count = clamp(Math.round(blades.length / 7), 6, 60);
     const flat = (a, b) => (a[0] - b[0]) ** 2 + (a[2] - b[2]) ** 2;
     const nodes = blades.map(l => l.petiole[0]);
     let centres = [nodes.reduce((a, b) => (flat(a, [centerX, 0, 0]) < flat(b, [centerX, 0, 0]) ? a : b))];
@@ -238,7 +238,7 @@
       path.push(top[1] > path.at(-1)[1] ? top : plus(path.at(-1), [0, .02, 0]));
       for (let j = 1; j < path.length; j++) {
         shoots.push({pts: [path[j - 1], between(path[j - 1], path[j], .5), path[j]],
-          r: mix(.0028, .0012, j / path.length)});
+          r: mix(.0036, .0016, j / path.length)});
       }
       // Each leaf stalk reaches from the stem at its height to the leaf.
       for (const l of group) {
@@ -250,7 +250,9 @@
           const q = between(a, b, t);
           if (Math.abs(q[1] - y) < Math.abs(best[1] - y)) best = q;
         }
-        l.petiole[0] = best;
+        // A leaf far from the stem hangs on its own short stalk (its stem is hidden).
+        const reachOut = Math.hypot(...plus(best, times(l.petiole[1], -1)));
+        l.petiole[0] = reachOut < 1.3 * l.len ? best : plus(l.petiole[1], times(l.shape.forward, -.35 * l.len));
       }
     }
     return {blades, shoots};
@@ -278,7 +280,7 @@
     });
 
     return {
-      ribs, len, petiole: [node, start],
+      ribs, len, petiole: [node, start], shape: {start, forward, side, up, len, half, droop, cup},
       normals: [unit(plus(up, times(side, -cup * 1.6))), unit(plus(up, times(side, cup * 1.6)))]
     };
   }
@@ -352,6 +354,308 @@
       color(rgb, light),
       color(rgb, light * .8)
     ];
+  }
+
+  // Pot shape traced from the capture: tapered body, three grooves, a tall rim
+  // band and a saucer. Each entry is [radius, height, light] in rim units.
+  function potShapes() {
+    const body = y => mix(.68, .885, (y + .93) / .685);
+    const pot = [[body(-.965), -.965, 1]];
+    for (const g of [-.47, -.44, -.41]) {
+      pot.push([body(g - .012), g - .012, 1], [body(g) - .012, g, .55], [body(g + .012), g + .012, 1.25]);
+    }
+    pot.push([.885, -.245, 1], [.975, -.24, .8], [1, 0, 1.08], [.95, 0, 1.35]);
+    const saucer = [[1.08, -1, 1], [1.17, -.875, 1.05], [1.13, -.87, 1.3], [1.07, -.965, .7], [body(-.965), -.965, .8]];
+    return [pot, saucer];
+  }
+
+  // ---------------------------------------------------------------------------
+  // WebGL renderer: real 3D meshes with lighting, leaf-on-leaf shadows, gloss,
+  // light shining through leaves and fine veins. Drawn into an offscreen canvas
+  // and copied onto #plant, so the page itself does not change. Browsers
+  // without WebGL2 keep the canvas drawing further below.
+  const GL = {failed: false, dirty: true};
+  const LAYOUT = ['aPos', 'aNormal', 'aColor', 'aUv', 'aKind', 'aAo'], SIZES = [3, 3, 3, 2, 1, 1], STRIDE = 13;
+
+  const VERTEX = `#version 300 es
+    in vec3 aPos; in vec3 aNormal; in vec3 aColor; in vec2 aUv; in float aKind; in float aAo;
+    uniform mat4 uView, uLight; uniform float uGrowth;
+    out vec3 vPos, vNormal, vColor; out vec2 vUv; out float vKind, vAo; out vec4 vLight;
+    void main() {
+      vec3 p = aKind < 1.5 ? aPos * uGrowth : aPos;   // the plant grows, the pot does not
+      vPos = p; vNormal = aNormal; vColor = aColor; vUv = aUv; vKind = aKind; vAo = aAo;
+      vLight = uLight * vec4(p, 1.0);
+      gl_Position = uView * vec4(p, 1.0);
+    }`;
+
+  const FRAGMENT = `#version 300 es
+    precision highp float; precision highp sampler2DShadow;
+    in vec3 vPos, vNormal, vColor; in vec2 vUv; in float vKind, vAo; in vec4 vLight;
+    uniform vec3 uSun, uEye; uniform sampler2DShadow uShadow; uniform float uTexel;
+    out vec4 outColor;
+    vec3 linear(vec3 c) { return pow(c, vec3(2.2)); }
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float noise(vec2 p) {
+      vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
+      return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+    }
+    float shadow() {
+      vec3 c = vLight.xyz / vLight.w * .5 + .5;
+      if (c.x < 0. || c.x > 1. || c.y < 0. || c.y > 1. || c.z > 1.) return 1.;
+      float s = 0.;
+      for (int x = -2; x <= 2; x++) for (int y = -2; y <= 2; y++)
+        s += texture(uShadow, vec3(c.xy + vec2(x, y) * uTexel, c.z - .003));
+      return s / 25.;
+    }
+    void main() {
+      vec3 N = normalize(vNormal), V = normalize(uEye), L = normalize(uSun);
+      bool under = dot(N, V) < 0.;
+      if (under) N = -N;
+      vec3 base = linear(vColor);
+      float gloss = .1, glow = 0.;
+      if (vKind < .5) {
+        // Leaf surface: mottled green, a pale midrib, side veins running to the tip.
+        float u = vUv.x, v = abs(vUv.y);
+        base *= .95 + .1 * noise(vUv * vec2(6., 3.) + vColor.rg * 53.);
+        float midrib = smoothstep(.06, .0, v) * (1. - .6 * u);
+        float t = u * 7. - v * 2.3;
+        float side = smoothstep(.45, .5, abs(fract(t) - .5)) * smoothstep(.06, .14, v) * smoothstep(.85, .55, v) * step(.08, u) * step(u, .88);
+        base = mix(base, base * 1.35 + vec3(.012, .02, .0), (under ? .85 : .5) * max(midrib, .55 * side));
+        base *= mix(1., .85, smoothstep(.7, 1., v));
+        if (under) base = mix(base, linear(vec3(.66, .74, .58)), .3);
+        gloss = under ? .04 : .32; glow = 1.;
+      } else if (vKind < 1.5) {
+        base *= .92 + .12 * noise(vPos.xy * 900.);
+        gloss = .12; glow = .5;
+      } else if (vKind < 2.5) {
+        gloss = .45;
+      } else {
+        base *= .55 + .8 * noise(vPos.xz * 260.) * noise(vPos.zx * 61.);
+        gloss = 0.;
+      }
+      float sh = shadow();
+      float diffuse = max(dot(N, L), 0.) * sh;
+      float through = glow * max(dot(-N, L), 0.) * (.35 + .65 * sh);
+      float spec = pow(max(dot(N, normalize(L + V)), 0.), 70.) * gloss * sh;
+      vec3 sky = mix(vec3(.2, .22, .17), vec3(.56, .6, .55), N.y * .5 + .5);
+      vec3 colour = base * (sky * vAo + vec3(1.08, 1.02, .92) * diffuse * 1.3 + .3 * max(dot(N, V), 0.) * vAo)
+                  + base * vec3(1.2, 1.35, .5) * through * .55 + vec3(1., .98, .92) * spec;
+      float grey = dot(colour, vec3(.3, .59, .11));
+      colour = mix(vec3(grey), colour, 1.25);
+      colour = colour / (1. + .45 * colour);
+      outColor = vec4(pow(colour, vec3(1. / 2.2)), 1.);
+    }`;
+
+  const DEPTH_VERTEX = `#version 300 es
+    in vec3 aPos; in float aKind; uniform mat4 uLight; uniform float uGrowth;
+    void main() { gl_Position = uLight * vec4(aKind < 1.5 ? aPos * uGrowth : aPos, 1.0); }`;
+  const DEPTH_FRAGMENT = `#version 300 es
+    precision mediump float; void main() {}`;
+
+  function setupGL() {
+    const surface = document.createElement('canvas');
+    const gl = surface.getContext('webgl2', {antialias: true, premultipliedAlpha: true, alpha: true});
+    if (!gl) throw Error('WebGL2 unavailable');
+    const program = (vs, fs) => {
+      const p = gl.createProgram();
+      for (const [type, source] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
+        const sh = gl.createShader(type);
+        gl.shaderSource(sh, source);
+        gl.compileShader(sh);
+        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw Error(gl.getShaderInfoLog(sh));
+        gl.attachShader(p, sh);
+      }
+      LAYOUT.forEach((name, i) => gl.bindAttribLocation(p, i, name));
+      gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw Error(gl.getProgramInfoLog(p));
+      return p;
+    };
+    const size = 2048, depth = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, depth);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.DEPTH_COMPONENT24, size, size);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR],
+      [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE],
+      [gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE], [gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL]]) {
+      gl.texParameteri(gl.TEXTURE_2D, k, v);
+    }
+    const frame = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, frame);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depth, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    Object.assign(GL, {surface, gl, size, depth, frame,
+      main: program(VERTEX, FRAGMENT), shadow: program(DEPTH_VERTEX, DEPTH_FRAGMENT),
+      vao: gl.createVertexArray(), vertices: gl.createBuffer(), indices: gl.createBuffer()});
+  }
+
+  // One interleaved vertex list: position, normal, sRGB colour, uv, kind, ambient.
+  // Kinds: 0 leaf, 1 stem, 2 pot, 3 soil.
+  function buildMeshes() {
+    const data = [], index = [];
+    const vertex = (p, n, c, uv, kind, ao) => {
+      data.push(...p, ...n, ...c, ...uv, kind, ao);
+      return data.length / STRIDE - 1;
+    };
+    const grid = (rows, cols, at) => {
+      const first = data.length / STRIDE;
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) at(j, i);
+      for (let j = 0; j + 1 < rows; j++) for (let i = 0; i + 1 < cols; i++) {
+        const a = first + j * cols + i;
+        index.push(a, a + 1, a + cols, a + 1, a + cols + 1, a + cols);
+      }
+    };
+
+    // Leaves: a smooth curved blade with a drooping tip, cupped across and a
+    // faint ripple along the edge.
+    for (const leaf of blades) {
+      const {start, forward, side, up, len, half, droop, cup} = leaf.shape;
+      const rows = 15, cols = 9, rgb = leaf.rgb.map(v => clamp(v / 255, 0, 1));
+      const point = (u, k) => {
+        const w = half * Math.max(0, Math.sin(pi * u ** .72)) ** 1.1;
+        const ripple = .02 * len * Math.sin(u * 23 + k * 2) * Math.abs(k);
+        return plus(start, plus(times(forward, u * len), plus(times(side, k * w),
+          times(up, -droop * len * u * u - cup * w * k * k * 1.15 + ripple))));
+      };
+      grid(rows, cols, (j, i) => {
+        const u = j / (rows - 1), k = i / (cols - 1) * 2 - 1, e = .02;
+        const du = plus(point(Math.min(1, u + e), k), times(point(Math.max(0, u - e), k), -1));
+        const dk = plus(point(u, Math.min(1, k + e)), times(point(u, Math.max(-1, k - e)), -1));
+        let n = cross(dk, du);
+        n = Math.hypot(...n) < 1e-9 ? up : unit(n);
+        if (dot(n, up) < 0) n = times(n, -1);
+        vertex(point(u, k), n, rgb, [u, k], 0, leaf.ao);
+      });
+    }
+
+    // Stems and leaf stalks: thin round tubes.
+    const tubeMesh = (pts, r0, r1, colour) => {
+      const sides = 6;
+      grid(pts.length, sides + 1, (j, i) => {
+        const a = pts[Math.max(0, j - 1)], b = pts[Math.min(pts.length - 1, j + 1)];
+        const along = unit(plus(b, times(a, -1)));
+        const across = unit(cross(along, Math.abs(along[1]) < .9 ? [0, 1, 0] : [1, 0, 0]));
+        const other = cross(along, across), angle = i / sides * 2 * pi;
+        const n = plus(times(across, Math.cos(angle)), times(other, Math.sin(angle)));
+        const r = mix(r0, r1, j / Math.max(1, pts.length - 1));
+        vertex(plus(pts[j], times(n, r)), n, colour, [j / pts.length, i / sides], 1, 1);
+      });
+    };
+    for (const shoot of shoots) tubeMesh(shoot.pts, shoot.r, shoot.r * .9, [.53, .64, .35]);
+    for (const leaf of blades) tubeMesh(leaf.petiole, .0012, .0009, [.58, .69, .38]);
+
+    // Pot, saucer and soil: surfaces of revolution from the traced profile.
+    const sides = 72, potRgb = potColor.map(v => clamp(v / 255, 0, 1));
+    for (const shape of potShapes()) {
+      for (let j = 1; j < shape.length; j++) {
+        const [r0, y0] = shape[j - 1], [r1, y1, light] = shape[j];
+        const a = [r0 * radius, y0 * potHeight], b = [r1 * radius, y1 * potHeight];
+        const slope = unit([b[1] - a[1], -(b[0] - a[0])]);
+        const tint = potRgb.map(v => v * (.85 + .15 * light));
+        grid(2, sides + 1, (row, i) => {
+          const [r, y] = row ? b : a, angle = i / sides * 2 * pi;
+          const c = Math.cos(angle), s = Math.sin(angle);
+          vertex([r * c, y, r * s], [slope[0] * c, slope[1], slope[0] * s], tint, [0, 0], 2, 1);
+        });
+      }
+    }
+    const centre = vertex([0, -.012, 0], [0, 1, 0], [.33, .25, .19], [0, 0], 3, 1);
+    for (let i = 0; i <= sides; i++) {
+      const angle = i / sides * 2 * pi;
+      vertex([.94 * radius * Math.cos(angle), -.012, .94 * radius * Math.sin(angle)], [0, 1, 0], [.33, .25, .19], [0, 0], 3, 1);
+      if (i) index.push(centre, centre + i, centre + i + 1);
+    }
+
+    const gl = GL.gl;
+    gl.bindVertexArray(GL.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.vertices);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+    let offset = 0;
+    SIZES.forEach((n, i) => {
+      gl.enableVertexAttribArray(i);
+      gl.vertexAttribPointer(i, n, gl.FLOAT, false, STRIDE * 4, offset * 4);
+      offset += n;
+    });
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, GL.indices);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(index), gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    GL.count = index.length;
+    GL.dirty = false;
+  }
+
+  // Draws the scene with the same camera as the canvas renderer. Returns false
+  // when WebGL2 is unavailable, so the caller can fall back.
+  function renderGL(view) {
+    if (GL.failed) return false;
+    try {
+      if (!GL.gl) setupGL();
+      if (GL.dirty) buildMeshes();
+    } catch (error) {
+      GL.failed = true;
+      console.warn('BioBox: 3D rendering unavailable, using the drawing view.', error);
+      return false;
+    }
+    const {w, h, dpr, scale, cy, sy, cp, sp, cr, sr} = view, gl = GL.gl;
+    const depthRange = span * 3;
+    const clip = ([x, y, z]) => {
+      const right = x * cy + z * sy, depth = z * cy - x * sy, up = y - midY;
+      const down = depth * sp - up * cp, toward = up * sp + depth * cp;
+      return [(right * cr - down * sr) * scale / (w / 2), -(right * sr + down * cr) * scale / (h / 2), -toward / depthRange];
+    };
+    const matrix = map => {
+      const o = map([0, 0, 0]), cols = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map(e => map(e).map((v, i) => v - o[i]));
+      return new Float32Array([...cols[0], 0, ...cols[1], 0, ...cols[2], 0, ...o, 1]);
+    };
+    // Grow light fixed above the plant, slightly to the front left.
+    const sun = unit([-.35, 1, .5]);
+    const lightRight = unit(cross([0, 0, 1], sun)), lightUp = cross(sun, lightRight);
+    const reach = span * 2.1, centre = [0, midY, 0];
+    const light = matrix(p => {
+      const d = plus(p, times(centre, -1));
+      return [dot(d, lightRight) / reach, dot(d, lightUp) / reach, -dot(d, sun) / reach];
+    });
+
+    const width = Math.round(w * dpr), height = Math.round(h * dpr);
+    if (GL.surface.width !== width || GL.surface.height !== height) {
+      GL.surface.width = width;
+      GL.surface.height = height;
+    }
+    gl.enable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.bindVertexArray(GL.vao);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, GL.frame);
+    gl.viewport(0, 0, GL.size, GL.size);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(GL.shadow);
+    gl.uniformMatrix4fv(gl.getUniformLocation(GL.shadow, 'uLight'), false, light);
+    gl.uniform1f(gl.getUniformLocation(GL.shadow, 'uGrowth'), size);
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    gl.polygonOffset(1.5, 2);
+    gl.drawElements(gl.TRIANGLES, GL.count, gl.UNSIGNED_INT, 0);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, width, height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const p = GL.main, at = name => gl.getUniformLocation(p, name);
+    gl.useProgram(p);
+    gl.uniformMatrix4fv(at('uView'), false, matrix(clip));
+    gl.uniformMatrix4fv(at('uLight'), false, light);
+    gl.uniform1f(at('uGrowth'), size);
+    gl.uniform3fv(at('uSun'), sun);
+    gl.uniform3fv(at('uEye'), [-sy * cp, sp, cy * cp]);
+    gl.uniform1f(at('uTexel'), 1 / GL.size);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, GL.depth);
+    gl.uniform1i(at('uShadow'), 0);
+    gl.drawElements(gl.TRIANGLES, GL.count, gl.UNSIGNED_INT, 0);
+    gl.bindVertexArray(null);
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(GL.surface, 0, 0);
+    ctx.restore();
+    return true;
   }
 
   function paint() {
@@ -428,15 +732,12 @@
       add(base, () => fill(base, color(potColor, .67)));
     }
 
-    // Pot shape traced from the capture: tapered body, three grooves,
-    // a tall rim band and a saucer. Each entry is [radius, height, light].
-    const body = y => mix(.68, .885, (y + .93) / .685);
-    const pot = [[body(-.965), -.965, 1]];
-    for (const g of [-.47, -.44, -.41]) {
-      pot.push([body(g - .012), g - .012, 1], [body(g) - .012, g, .55], [body(g + .012), g + .012, 1.25]);
+    if (renderGL({w, h, dpr, scale, cy, sy, cp, sp, cr, sr})) {
+      if (t < 1 && size !== goal) redraw();
+      return;
     }
-    pot.push([.885, -.245, 1], [.975, -.24, .8], [1, 0, 1.08], [.95, 0, 1.35]);
-    const saucer = [[1.08, -1, 1], [1.17, -.875, 1.05], [1.13, -.87, 1.3], [1.07, -.965, .7], [body(-.965), -.965, .8]];
+
+    const [pot, saucer] = potShapes();
     const soil = project([0, -.012, 0]);
 
     for (let k = 0; k < 48; k++) {
@@ -624,6 +925,7 @@
     viewer = data?.viewer || data;
     if (!ctx || !viewer?.latest) throw Error('Für diese Aufnahme liegen keine 3D-Daten vor.');
     makeModel(viewer.latest);
+    GL.dirty = true;
 
     if (status) status.hidden = true;
     if (id('data-load')) id('data-load').hidden = true;
